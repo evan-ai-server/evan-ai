@@ -1642,6 +1642,24 @@ const [graveyardOpen, setGraveyardOpen] = useState(false);
 const graveyardOp = useRef(new RNAnimated.Value(0)).current;
 const graveyardY = useRef(new RNAnimated.Value(60)).current;
 
+// Feature 12: Auction Snipe Timer
+const [snipeData, setSnipeData] = useState<{ snipeAt: number; snipeInMs: number; maxBid: number | null; timeLabel: string; message: string } | null>(null);
+const [snipeOpen, setSnipeOpen] = useState(false);
+const snipeOp = useRef(new RNAnimated.Value(0)).current;
+const snipeY = useRef(new RNAnimated.Value(60)).current;
+
+// Feature 13: Duplicate Scan Warning
+const [dupeScan, setDupeScan] = useState<{ ageDays: number; previousPrice: number; priceDelta: number | null; cheaper: boolean; message: string } | null>(null);
+
+// Feature 14: Profit Per Hour
+const [profitPerHour, setProfitPerHour] = useState<{ effectiveHourlyRate: number; totalProfit: number; totalTimeHours: number; verdict: string; belowMinWage: boolean } | null>(null);
+const [profitOpen, setProfitOpen] = useState(false);
+const profitOp = useRef(new RNAnimated.Value(0)).current;
+const profitY = useRef(new RNAnimated.Value(60)).current;
+
+// Feature 15: Category Saturation Index
+const [saturation, setSaturation] = useState<{ saturationPct: number; level: string; trend: string; warning: string; hotAlternative: string | null; suggestion: string | null } | null>(null);
+
 const [showSplash, setShowSplash] = useState(true);
 // ✅ Keep splash visible minimum time
 const splashStartRef = useRef(Date.now());
@@ -2056,6 +2074,109 @@ const openGraveyard = useCallback(async () => {
 const closeGraveyard = useCallback(() => {
   RNAnimated.timing(graveyardOp, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setGraveyardOpen(false));
 }, [graveyardOp]);
+
+// Feature 12: auction snipe
+const openSnipe = useCallback(async (auctionEndTime: number) => {
+  try {
+    const res = await apiFetch("/intel/snipe-timer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        auctionEndTime,
+        currentBid: activeResult?.price,
+        avgMarket: activeResult?.avgMarket,
+        itemName: activeResult?.itemName,
+      }),
+    }) as any;
+    if (res && !res.expired) setSnipeData(res);
+  } catch {}
+  setSnipeOpen(true);
+  snipeOp.setValue(0);
+  snipeY.setValue(60);
+  RNAnimated.parallel([
+    RNAnimated.timing(snipeOp, { toValue: 1, duration: 280, useNativeDriver: true }),
+    RNAnimated.spring(snipeY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
+  ]).start();
+}, [activeResult, snipeOp, snipeY]);
+
+const closeSnipe = useCallback(() => {
+  RNAnimated.timing(snipeOp, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+    setSnipeOpen(false);
+    setSnipeData(null);
+  });
+}, [snipeOp]);
+
+// Feature 13: duplicate scan check — call after every scan
+const checkDuplicateScan = useCallback(async (itemName: string, price: number) => {
+  try {
+    const raw = await AsyncStorage.getItem("EVAN_SCAN_HISTORY_V1");
+    const history: Array<{ itemName: string; price: number; scannedAt: number; category: string }> = raw ? JSON.parse(raw) : [];
+    const res = await apiFetch("/intel/duplicate-scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemName, price, scanHistory: history.slice(-100) }),
+    }) as any;
+    if (res?.duplicate) setDupeScan(res);
+    else setDupeScan(null);
+    // Save this scan to history
+    const updated = [...history, { itemName, price, scannedAt: Date.now(), category: "" }].slice(-200);
+    await AsyncStorage.setItem("EVAN_SCAN_HISTORY_V1", JSON.stringify(updated));
+  } catch {}
+}, []);
+
+// Feature 14: compute profit per hour
+const computeProfitPerHour = useCallback(async () => {
+  try {
+    const raw = await AsyncStorage.getItem("EVAN_FLIP_SESSIONS_V1");
+    const sessions: Array<{ buyPrice: number; sellPrice: number; scanMins: number; listMins: number; shipMins: number }> = raw ? JSON.parse(raw) : [];
+    if (sessions.length === 0) {
+      setProfitPerHour({
+        effectiveHourlyRate: 0,
+        totalProfit: 0,
+        totalTimeHours: 0,
+        verdict: "No flip sessions logged yet. Start tracking your flips.",
+        belowMinWage: false,
+      });
+    } else {
+      const totalProfit = sessions.reduce((s, f) => s + (f.sellPrice - f.buyPrice), 0);
+      const totalMins = sessions.reduce((s, f) => s + (f.scanMins || 15) + (f.listMins || 20) + (f.shipMins || 30), 0);
+      const totalTimeHours = totalMins / 60;
+      const effectiveHourlyRate = totalTimeHours > 0 ? Math.round((totalProfit / totalTimeHours) * 100) / 100 : 0;
+      const belowMinWage = effectiveHourlyRate < 15 && effectiveHourlyRate > 0;
+      const verdict = effectiveHourlyRate <= 0
+        ? "You're losing money. Stop flipping these items."
+        : belowMinWage
+        ? `$${effectiveHourlyRate}/hr — below minimum wage. You're working for nothing.`
+        : `$${effectiveHourlyRate}/hr effective rate. Keep it up.`;
+      setProfitPerHour({ effectiveHourlyRate, totalProfit: Math.round(totalProfit), totalTimeHours: Math.round(totalTimeHours * 10) / 10, verdict, belowMinWage });
+    }
+  } catch {}
+  setProfitOpen(true);
+  profitOp.setValue(0);
+  profitY.setValue(60);
+  RNAnimated.parallel([
+    RNAnimated.timing(profitOp, { toValue: 1, duration: 280, useNativeDriver: true }),
+    RNAnimated.spring(profitY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
+  ]).start();
+}, [profitOp, profitY]);
+
+const closeProfitSheet = useCallback(() => {
+  RNAnimated.timing(profitOp, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setProfitOpen(false));
+}, [profitOp]);
+
+// Feature 15: category saturation — call after every scan
+const checkCategorySaturation = useCallback(async (category: string) => {
+  if (!category) return;
+  try {
+    const res = await apiFetch("/intel/category-saturation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category }),
+    }) as any;
+    if (res?.level === "high" || res?.level === "medium") setSaturation(res);
+    else setSaturation(null);
+  } catch {}
+}, []);
 
 useEffect(() => { computeFlipPersonality(); }, []);
 
@@ -7686,6 +7807,13 @@ setDeepAuthResult(null);
 setConditionAssessment(null);
 setCommunityComps(null);
 setHaggleResult(null);
+setDupeScan(null);
+setSaturation(null);
+
+// Feature 13: duplicate scan warning
+if (card?.itemName) checkDuplicateScan(card.itemName, card.price ?? 0);
+// Feature 15: category saturation
+if (card?.itemName) checkCategorySaturation(card.itemName);
 if (photoUri && (card?.category || (card as any)?.visionIdentity?.brand || (card as any)?.brand)) {
   const _photoUri     = photoUri;
   const _brand        = (card as any)?.visionIdentity?.brand || (card as any)?.brand || "";
@@ -9618,6 +9746,118 @@ transform: [
   </View>
 ) : null}
 
+{/* Feature 12: Snipe Timer Sheet */}
+{snipeOpen ? (
+  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 990 }}>
+    <Pressable
+      style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" }}
+      onPress={closeSnipe}
+    />
+    <RNAnimated.View style={{
+      backgroundColor: "#0f0f0f", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+      borderTopWidth: 1, borderColor: "rgba(255,220,60,0.15)",
+      padding: 24, paddingBottom: 40,
+      transform: [{ translateY: snipeY }], opacity: snipeOp,
+    }}>
+      <Text style={{ color: "rgba(255,220,60,0.5)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>EBAY AUCTION TOOL</Text>
+      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 20 }}>⏱️ Auction Snipe Timer</Text>
+      {snipeData ? (
+        <>
+          <View style={{
+            backgroundColor: "rgba(255,220,60,0.08)", borderRadius: 16,
+            borderWidth: 1, borderColor: "rgba(255,220,60,0.18)",
+            padding: 20, marginBottom: 16, alignItems: "center",
+          }}>
+            <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>TIME LEFT</Text>
+            <Text style={{ color: "#ffdc3c", fontWeight: "900", fontSize: 40, marginVertical: 8 }}>{snipeData.timeLabel}</Text>
+            <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 13 }}>Bid at exactly 8 seconds before end</Text>
+          </View>
+          {snipeData.maxBid ? (
+            <View style={{
+              backgroundColor: "rgba(80,255,150,0.06)", borderRadius: 14,
+              borderWidth: 1, borderColor: "rgba(80,255,150,0.12)",
+              padding: 16, marginBottom: 16, flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+            }}>
+              <View>
+                <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>MAX BID (92% of market)</Text>
+                <Text style={{ color: "#50ff96", fontWeight: "900", fontSize: 28, marginTop: 4 }}>${snipeData.maxBid}</Text>
+              </View>
+              <Text style={{ fontSize: 30 }}>🎯</Text>
+            </View>
+          ) : null}
+          <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, textAlign: "center", marginBottom: 20 }}>{snipeData.message}</Text>
+        </>
+      ) : (
+        <Text style={{ color: "rgba(255,255,255,0.3)", textAlign: "center", paddingVertical: 30 }}>Loading auction data…</Text>
+      )}
+      <Pressable onPress={closeSnipe} style={{
+        paddingVertical: 14, borderRadius: 14,
+        backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center",
+      }}>
+        <Text style={{ color: "rgba(255,255,255,0.5)", fontWeight: "700" }}>Close</Text>
+      </Pressable>
+    </RNAnimated.View>
+  </View>
+) : null}
+
+{/* Feature 14: Profit Per Hour Sheet */}
+{profitOpen ? (
+  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 990 }}>
+    <Pressable
+      style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" }}
+      onPress={closeProfitSheet}
+    />
+    <RNAnimated.View style={{
+      backgroundColor: "#0f0f0f", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+      borderTopWidth: 1, borderColor: "rgba(255,255,255,0.08)",
+      padding: 24, paddingBottom: 40,
+      transform: [{ translateY: profitY }], opacity: profitOp,
+    }}>
+      <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>HUSTLE REALITY CHECK</Text>
+      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 20 }}>💰 Profit Per Hour</Text>
+      {profitPerHour ? (
+        <>
+          <View style={{
+            backgroundColor: profitPerHour.belowMinWage ? "rgba(255,60,60,0.08)" : "rgba(80,255,150,0.06)",
+            borderRadius: 16, borderWidth: 1,
+            borderColor: profitPerHour.belowMinWage ? "rgba(255,60,60,0.18)" : "rgba(80,255,150,0.12)",
+            padding: 20, marginBottom: 16, alignItems: "center",
+          }}>
+            <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>EFFECTIVE HOURLY RATE</Text>
+            <Text style={{
+              fontWeight: "900", fontSize: 44, marginVertical: 8,
+              color: profitPerHour.belowMinWage ? "#ff6b6b" : "#50ff96",
+            }}>
+              {profitPerHour.effectiveHourlyRate > 0 ? `$${profitPerHour.effectiveHourlyRate}` : "$0"}
+            </Text>
+            <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 12 }}>per hour</Text>
+          </View>
+          <View style={{ flexDirection: "row", gap: 10, marginBottom: 16 }}>
+            <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.04)", borderRadius: 12, padding: 14, alignItems: "center" }}>
+              <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, textTransform: "uppercase" }}>Total Profit</Text>
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 20, marginTop: 4 }}>${profitPerHour.totalProfit}</Text>
+            </View>
+            <View style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.04)", borderRadius: 12, padding: 14, alignItems: "center" }}>
+              <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, textTransform: "uppercase" }}>Time Spent</Text>
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 20, marginTop: 4 }}>{profitPerHour.totalTimeHours}h</Text>
+            </View>
+          </View>
+          <Text style={{
+            color: profitPerHour.belowMinWage ? "#ff8080" : "rgba(255,255,255,0.5)",
+            fontSize: 14, textAlign: "center", marginBottom: 20, lineHeight: 20,
+          }}>{profitPerHour.verdict}</Text>
+        </>
+      ) : null}
+      <Pressable onPress={closeProfitSheet} style={{
+        paddingVertical: 14, borderRadius: 14,
+        backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center",
+      }}>
+        <Text style={{ color: "rgba(255,255,255,0.5)", fontWeight: "700" }}>Close</Text>
+      </Pressable>
+    </RNAnimated.View>
+  </View>
+) : null}
+
 {/* ── INTERACTIVE CINEMATIC TUTORIAL ───────────────────────────────────── */}
 {showITutorial ? (() => {
   const step = I_STEPS[Math.min(iTutStep, I_STEPS.length - 1)];
@@ -11006,6 +11246,79 @@ style={[
   </View>
 ) : null}
 
+{/* Feature 13: Duplicate Scan Warning */}
+{dupeScan && tab === "results" ? (
+  <View style={{
+    marginHorizontal: 16, marginBottom: 10,
+    backgroundColor: "rgba(200,160,255,0.10)",
+    borderRadius: 14, borderWidth: 1,
+    borderColor: "rgba(200,160,255,0.22)",
+    padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 10,
+  }}>
+    <Text style={{ fontSize: 18 }}>🔁</Text>
+    <View style={{ flex: 1 }}>
+      <Text style={{ color: "#c8a0ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>
+        DÉJÀ VU SCAN
+      </Text>
+      <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{dupeScan.message}</Text>
+    </View>
+    <Pressable onPress={() => setDupeScan(null)}>
+      <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 18 }}>×</Text>
+    </Pressable>
+  </View>
+) : null}
+
+{/* Feature 15: Category Saturation Badge */}
+{saturation && tab === "results" ? (
+  <View style={{
+    marginHorizontal: 16, marginBottom: 10,
+    backgroundColor: saturation.level === "high" ? "rgba(255,100,60,0.10)" : "rgba(255,200,60,0.08)",
+    borderRadius: 14, borderWidth: 1,
+    borderColor: saturation.level === "high" ? "rgba(255,100,60,0.25)" : "rgba(255,200,60,0.20)",
+    padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 10,
+  }}>
+    <Text style={{ fontSize: 18 }}>📊</Text>
+    <View style={{ flex: 1 }}>
+      <Text style={{ color: saturation.level === "high" ? "#ff6b3d" : "#ffc83d", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>
+        {saturation.level === "high" ? "OVERSATURATED MARKET" : "COMPETITIVE CATEGORY"}
+      </Text>
+      <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{saturation.warning}</Text>
+      {saturation.suggestion ? (
+        <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginTop: 4 }}>{saturation.suggestion}</Text>
+      ) : null}
+    </View>
+  </View>
+) : null}
+
+{/* Feature 12: Auction Snipe Timer */}
+{activeResult && tab === "results" ? (
+  <Pressable
+    onPress={() => {
+      // Use 24h from now as demo auction end if no real end time
+      const demoEnd = Date.now() + 24 * 3600 * 1000;
+      openSnipe((activeResult as any).auctionEndTime ?? demoEnd);
+    }}
+    style={{
+      marginHorizontal: 16, marginBottom: 10,
+      backgroundColor: "rgba(255,220,60,0.08)",
+      borderRadius: 14, borderWidth: 1,
+      borderColor: "rgba(255,220,60,0.18)",
+      padding: 14, flexDirection: "row", alignItems: "center", gap: 10,
+    }}
+  >
+    <Text style={{ fontSize: 16 }}>⏱️</Text>
+    <View style={{ flex: 1 }}>
+      <Text style={{ color: "#ffdc3c", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 2 }}>
+        AUCTION SNIPE TIMER
+      </Text>
+      <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>
+        Calculate optimal bid time + max bid
+      </Text>
+    </View>
+    <Text style={{ color: "rgba(255,220,60,0.4)", fontSize: 16 }}>→</Text>
+  </Pressable>
+) : null}
+
 {/* Feature 6: Lowball Script Button */}
 {activeResult && tab === "results" ? (
   <Pressable
@@ -11762,6 +12075,23 @@ setSavedToast("Checking…");
     <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>Items you passed that finally dropped</Text>
   </View>
   <Text style={{ color: "rgba(80,255,150,0.4)", fontSize: 16 }}>→</Text>
+</Pressable>
+
+{/* Feature 14: Profit Per Hour */}
+<Pressable
+  onPress={computeProfitPerHour}
+  style={{
+    backgroundColor: "rgba(255,255,255,0.04)", borderRadius: 14,
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.07)",
+    padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 12,
+  }}
+>
+  <Text style={{ fontSize: 18 }}>💰</Text>
+  <View style={{ flex: 1 }}>
+    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>Profit Per Hour</Text>
+    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>Are you working below minimum wage?</Text>
+  </View>
+  <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 16 }}>→</Text>
 </Pressable>
 
 <Pressable
