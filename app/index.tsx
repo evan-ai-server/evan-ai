@@ -1458,14 +1458,10 @@ useEffect(() => {
       if (status !== "granted") return;
       const token = await Notifications.getExpoPushTokenAsync();
       if (token?.data) {
-        await fetch(
-          `${process.env.EXPO_PUBLIC_API_URL ?? (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001")}/push/register`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId, pushToken: token.data }),
-          }
-        );
+        await apiFetch("/push/register", {
+          method: "POST",
+          body: JSON.stringify({ userId, pushToken: token.data }),
+        });
       }
     } catch {
       // non-fatal
@@ -1480,6 +1476,25 @@ useEffect(() => {
   isMountedRef.current = true;
   return () => {
     isMountedRef.current = false;
+  };
+}, []);
+
+// ── Foreground push notification handler ──────────────────────────────────
+useEffect(() => {
+  const sub = Notifications.addNotificationReceivedListener((notification) => {
+    const title = notification.request.content.title || "";
+    const body  = notification.request.content.body  || "";
+    if (title || body) {
+      setSavedToast(`${title}${title && body ? " — " : ""}${body}`.slice(0, 80));
+    }
+  });
+  const tapSub = Notifications.addNotificationResponseReceivedListener((response) => {
+    const data = response.notification.request.content.data as any;
+    if (data?.screen === "watchlist") setTab("watchlist");
+  });
+  return () => {
+    sub.remove();
+    tapSub.remove();
   };
 }, []);
 const nextScanReqId = () => {
@@ -2815,15 +2830,17 @@ const [priceChangeBanner, setPriceChangeBanner] = useState(null);
   const [profileModal, setProfileModal] = useState(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authInput, setAuthInput] = useState("");
-  const [authStep, setAuthStep] = useState<"input" | "otp">("input");
-  const [authMethod, setAuthMethod] = useState<"phone" | "email">("phone");
+  const [authStep, setAuthStep] = useState<"email" | "password">("email");
+  const [authMethod, setAuthMethod] = useState<"phone" | "email">("email");
   const [authEmail, setAuthEmail] = useState("");
   const [authPhone, setAuthPhone] = useState("");
-  const [authOtp, setAuthOtp] = useState("");
+  const [authOtp, setAuthOtp] = useState(""); // repurposed: password field
   const [authOtpTarget, setAuthOtpTarget] = useState("");
   const [authSimCode, setAuthSimCode] = useState("");
   const [authError, setAuthError] = useState("");
   const [authSending, setAuthSending] = useState(false);
+  const [authPwVisible, setAuthPwVisible] = useState(false);
+  const [authIsRegister, setAuthIsRegister] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
   // ✅ PAYWALL POP (premium: blur + scale + opacity)
 const paywallPop = useRef(new RNAnimated.Value(0)).current;
@@ -4972,6 +4989,26 @@ if (intelRaw) {
       );
       if (parsed?.activeResult) setActiveResult(parsed.activeResult);
       if (parsed?.lastScan) setLastScan(parsed.lastScan);
+
+      // Restore JWT session
+      try {
+        const jwt = await AsyncStorage.getItem("evan_jwt_v1");
+        if (jwt) {
+          // Quick expiry check (decode payload, no signature verify needed here)
+          const parts = jwt.split(".");
+          if (parts.length === 3) {
+            const payload = JSON.parse(atob(parts[1]));
+            const nowSec = Math.floor(Date.now() / 1000);
+            if (payload.exp && payload.exp > nowSec) {
+              _authJwt = jwt;
+              setIsSignedIn(true);
+              if (payload.sub) setUserId(payload.sub);
+            } else {
+              await AsyncStorage.removeItem("evan_jwt_v1");
+            }
+          }
+        }
+      } catch { /* non-fatal */ }
     } catch (e) {
       console.log("Failed to load persisted state:", e);
       // SAFE DEFAULTS
@@ -11868,6 +11905,8 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
       hapticSelect();
       if (isSignedIn) {
         setIsSignedIn(false);
+        _authJwt = null;
+        AsyncStorage.removeItem("evan_jwt_v1").catch(() => {});
         // NOTE: isPro is NOT cleared on sign-out — subscription is tied to
         // the device/app install. User keeps access after signing back in.
         setShowPaywall(false);
@@ -14145,21 +14184,21 @@ const pick = await ImagePicker.launchImageLibraryAsync({
   transparent
   onRequestClose={() => {
     setAuthModalOpen(false);
-    setAuthStep("input");
-    setAuthMethod("phone");
-    setAuthPhone("");
+    setAuthStep("email");
     setAuthEmail("");
     setAuthOtp("");
     setAuthError("");
     setAuthSending(false);
+    setAuthPwVisible(false);
+    setAuthIsRegister(false);
   }}
 >
   <View style={styles.modalBackdrop}>
     <View style={styles.modalCard}>
 
-      {authStep === "input" ? (
+      {authStep === "email" ? (
         <>
-          {/* Header icon + title */}
+          {/* Header */}
           <View style={{ alignItems: "center", marginBottom: 20 }}>
             <View style={{ width: 52, height: 52, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.07)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
               <Ionicons name="person-outline" size={24} color="white" />
@@ -14170,59 +14209,18 @@ const pick = await ImagePicker.launchImageLibraryAsync({
             </Text>
           </View>
 
-          {/* Method toggle */}
-          <View style={{ flexDirection: "row", backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 14, padding: 3, marginBottom: 16 }}>
-            {(["phone", "email"] as const).map((m) => (
-              <Pressable
-                key={m}
-                onPress={() => { setAuthMethod(m); setAuthError(""); }}
-                style={{
-                  flex: 1,
-                  paddingVertical: 10,
-                  borderRadius: 11,
-                  alignItems: "center",
-                  backgroundColor: authMethod === m ? "rgba(255,255,255,0.12)" : "transparent",
-                }}
-              >
-                <Text style={{ color: authMethod === m ? "white" : "rgba(255,255,255,0.4)", fontWeight: "700", fontSize: 13 }}>
-                  {m === "phone" ? "Phone" : "Email"}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {/* Input field */}
-          {authMethod === "phone" ? (
-            <TextInput
-              value={authPhone}
-              onChangeText={(t) => {
-                const d = t.replace(/\D/g, "").slice(0, 10);
-                let fmt = d;
-                if (d.length > 6) fmt = `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
-                else if (d.length > 3) fmt = `(${d.slice(0,3)}) ${d.slice(3)}`;
-                setAuthPhone(fmt);
-                setAuthError("");
-              }}
-              placeholder="(555) 555-5555"
-              placeholderTextColor="rgba(255,255,255,0.28)"
-              style={styles.authInput}
-              keyboardType="phone-pad"
-              autoComplete="tel"
-              autoFocus
-            />
-          ) : (
-            <TextInput
-              value={authEmail}
-              onChangeText={(t) => { setAuthEmail(t); setAuthError(""); }}
-              placeholder="you@example.com"
-              placeholderTextColor="rgba(255,255,255,0.28)"
-              style={styles.authInput}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoComplete="email"
-              autoFocus
-            />
-          )}
+          {/* Email input */}
+          <TextInput
+            value={authEmail}
+            onChangeText={(t) => { setAuthEmail(t); setAuthError(""); }}
+            placeholder="you@example.com"
+            placeholderTextColor="rgba(255,255,255,0.28)"
+            style={styles.authInput}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoComplete="email"
+            autoFocus
+          />
 
           {authError ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 }}>
@@ -14235,35 +14233,23 @@ const pick = await ImagePicker.launchImageLibraryAsync({
             disabled={authSending}
             onPress={() => {
               hapticSelect();
-              const phoneDigits = authPhone.replace(/\D/g, "");
-              if (authMethod === "phone") {
-                if (phoneDigits.length !== 10) {
-                  setAuthError("Enter a valid 10-digit US phone number");
-                  return;
-                }
-              } else {
-                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(authEmail.trim())) {
-                  setAuthError("Enter a valid email address");
-                  return;
-                }
+              if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(authEmail.trim())) {
+                setAuthError("Enter a valid email address");
+                return;
               }
               setAuthError("");
-              setAuthSending(true);
-              const code = String(Math.floor(100000 + Math.random() * 900000));
-              setAuthSimCode(code);
-              setAuthOtpTarget(authMethod === "phone" ? authPhone : authEmail.trim());
-              setTimeout(() => { setAuthStep("otp"); setAuthSending(false); }, 700);
+              setAuthStep("password");
             }}
             style={[styles.modalPrimary, { marginTop: 14, opacity: authSending ? 0.65 : 1 }]}
           >
-            <Text style={styles.modalPrimaryText}>{authSending ? "Sending…" : "Send code"}</Text>
+            <Text style={styles.modalPrimaryText}>Continue</Text>
           </Pressable>
 
           <Pressable
             onPress={() => {
               hapticSelect();
-              setAuthPhone(""); setAuthEmail(""); setAuthOtp("");
-              setAuthError(""); setAuthStep("input");
+              setAuthEmail(""); setAuthOtp("");
+              setAuthError(""); setAuthStep("email");
               setAuthModalOpen(false);
             }}
             style={[styles.modalSecondary, { marginTop: 8 }]}
@@ -14273,37 +14259,44 @@ const pick = await ImagePicker.launchImageLibraryAsync({
         </>
       ) : (
         <>
-          {/* Back button */}
+          {/* Back */}
           <Pressable
-            onPress={() => { setAuthStep("input"); setAuthOtp(""); setAuthError(""); }}
+            onPress={() => { setAuthStep("email"); setAuthOtp(""); setAuthError(""); setAuthIsRegister(false); }}
             style={{ flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 18 }}
           >
             <Ionicons name="chevron-back" size={16} color="rgba(255,255,255,0.45)" />
             <Text style={{ color: "rgba(255,255,255,0.45)", fontWeight: "700", fontSize: 13 }}>Back</Text>
           </Pressable>
 
-          {/* OTP header */}
+          {/* Header */}
           <View style={{ alignItems: "center", marginBottom: 20 }}>
             <View style={{ width: 52, height: 52, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.07)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
-              <Ionicons name="shield-checkmark-outline" size={24} color="white" />
+              <Ionicons name={authIsRegister ? "person-add-outline" : "shield-checkmark-outline"} size={24} color="white" />
             </View>
-            <Text style={styles.modalTitle}>Verify</Text>
+            <Text style={styles.modalTitle}>{authIsRegister ? "Create account" : "Welcome back"}</Text>
             <Text style={[styles.modalDesc, { textAlign: "center", marginTop: 5 }]}>
-              Enter the 6-digit code sent to{"\n"}{authOtpTarget}
+              {authIsRegister ? `Creating account for\n${authEmail}` : `Signing in as\n${authEmail}`}
             </Text>
           </View>
 
-          {/* OTP input */}
-          <TextInput
-            value={authOtp}
-            onChangeText={(t) => { setAuthOtp(t.replace(/\D/g, "").slice(0, 6)); setAuthError(""); }}
-            placeholder="000000"
-            placeholderTextColor="rgba(255,255,255,0.22)"
-            style={[styles.authInput, { textAlign: "center", fontSize: 30, fontWeight: "900", letterSpacing: 12 }]}
-            keyboardType="number-pad"
-            autoFocus
-            maxLength={6}
-          />
+          {/* Password input */}
+          <View style={{ position: "relative" }}>
+            <TextInput
+              value={authOtp}
+              onChangeText={(t) => { setAuthOtp(t); setAuthError(""); }}
+              placeholder="Password"
+              placeholderTextColor="rgba(255,255,255,0.28)"
+              style={[styles.authInput, { paddingRight: 48 }]}
+              secureTextEntry={!authPwVisible}
+              autoFocus
+            />
+            <Pressable
+              onPress={() => setAuthPwVisible((v) => !v)}
+              style={{ position: "absolute", right: 14, top: 0, bottom: 0, justifyContent: "center" }}
+            >
+              <Ionicons name={authPwVisible ? "eye-off-outline" : "eye-outline"} size={18} color="rgba(255,255,255,0.4)" />
+            </Pressable>
+          </View>
 
           {authError ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 }}>
@@ -14313,34 +14306,62 @@ const pick = await ImagePicker.launchImageLibraryAsync({
           ) : null}
 
           <Pressable
-            onPress={() => {
+            disabled={authSending || authOtp.length < 6}
+            onPress={async () => {
               hapticSelect();
-              if (authOtp.length !== 6) { setAuthError("Enter the full 6-digit code"); return; }
-              if (authOtp === authSimCode) {
+              if (authOtp.length < 6) { setAuthError("Password must be at least 6 characters"); return; }
+              setAuthSending(true);
+              setAuthError("");
+              try {
+                const endpoint = authIsRegister ? "/api/auth/register" : "/api/auth/login";
+                const body = authIsRegister
+                  ? { email: authEmail.trim(), password: authOtp }
+                  : { email: authEmail.trim(), password: authOtp };
+                const res = await fetch(
+                  `${API_URL.replace(/\/+$/, "")}${endpoint}`,
+                  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+                );
+                const data: any = await res.json();
+                if (!res.ok) {
+                  if (data?.error === "email_taken") {
+                    setAuthError("Email already in use — sign in instead");
+                    setAuthIsRegister(false);
+                  } else if (data?.error === "invalid_credentials") {
+                    setAuthError("Wrong password. New here? Create an account below.");
+                  } else {
+                    setAuthError(data?.error || "Something went wrong");
+                  }
+                  return;
+                }
+                // Success
+                _authJwt = data.token;
+                await AsyncStorage.setItem("evan_jwt_v1", data.token);
+                if (data.userId) setUserId(data.userId);
                 setIsSignedIn(true);
-                setAuthStep("input"); setAuthPhone(""); setAuthEmail("");
-                setAuthOtp(""); setAuthError(""); setAuthSimCode(""); setAuthSending(false);
+                setAuthStep("email"); setAuthEmail(""); setAuthOtp("");
+                setAuthError(""); setAuthSending(false); setAuthPwVisible(false); setAuthIsRegister(false);
                 setAuthModalOpen(false);
-              } else {
-                setAuthError("Incorrect code — please try again");
-                setAuthOtp("");
+                setSavedToast(authIsRegister ? "Account created ✓" : "Signed in ✓");
+              } catch (e: any) {
+                setAuthError("Network error — check your connection");
+              } finally {
+                setAuthSending(false);
               }
             }}
-            style={[styles.modalPrimary, { marginTop: 14, opacity: authOtp.length === 6 ? 1 : 0.45 }]}
+            style={[styles.modalPrimary, { marginTop: 14, opacity: (authSending || authOtp.length < 6) ? 0.45 : 1 }]}
           >
-            <Text style={styles.modalPrimaryText}>Verify</Text>
+            <Text style={styles.modalPrimaryText}>
+              {authSending ? (authIsRegister ? "Creating…" : "Signing in…") : (authIsRegister ? "Create account" : "Sign in")}
+            </Text>
           </Pressable>
 
           <Pressable
-            onPress={() => {
-              hapticSelect();
-              const code = String(Math.floor(100000 + Math.random() * 900000));
-              setAuthSimCode(code); setAuthOtp(""); setAuthError("");
-              setSavedToast("New code sent");
-            }}
+            onPress={() => { hapticSelect(); setAuthIsRegister((v) => !v); setAuthOtp(""); setAuthError(""); }}
             style={[styles.modalSecondary, { marginTop: 8 }]}
           >
-            <Text style={styles.modalSecondaryText}>Resend code</Text>
+            <Text style={styles.modalSecondaryText}>
+              {authIsRegister ? "Already have an account? Sign in" : "New here? Create account"}
+            </Text>
           </Pressable>
         </>
       )}
@@ -17300,6 +17321,9 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// ── Auth JWT (module-level, restored from AsyncStorage on boot) ──────────────
+let _authJwt: string | null = null;
+
 async function apiFetch<T>(
   path: string,
   opts: RequestInit & { timeoutMs?: number; retries?: number } = {}
@@ -17327,6 +17351,7 @@ async function apiFetch<T>(
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
+          ...(_authJwt ? { Authorization: `Bearer ${_authJwt}` } : {}),
           ...(opts.headers || {}),
         },
       });
