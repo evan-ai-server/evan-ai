@@ -1660,6 +1660,11 @@ const profitY = useRef(new RNAnimated.Value(60)).current;
 // Feature 15: Category Saturation Index
 const [saturation, setSaturation] = useState<{ saturationPct: number; level: string; trend: string; warning: string; hotAlternative: string | null; suggestion: string | null } | null>(null);
 
+// Intel Signal Drawer
+const [intelExpanded, setIntelExpanded] = useState(false);
+const intelExpandOp = useRef(new RNAnimated.Value(0)).current;
+const intelExpandH = useRef(new RNAnimated.Value(0)).current;
+
 const [showSplash, setShowSplash] = useState(true);
 // ✅ Keep splash visible minimum time
 const splashStartRef = useRef(Date.now());
@@ -7809,6 +7814,7 @@ setCommunityComps(null);
 setHaggleResult(null);
 setDupeScan(null);
 setSaturation(null);
+setIntelExpanded(false);
 
 // Feature 13: duplicate scan warning
 if (card?.itemName) checkDuplicateScan(card.itemName, card.price ?? 0);
@@ -11165,280 +11171,278 @@ style={[
   </View>
 )}
 
-{/* ── FEATURE: FLIP FATIGUE CARD ──────────────────────────── */}
-{flipFatigue && tab === "results" ? (
-  <View style={{
-    marginHorizontal: 20,
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,180,0,0.07)",
-    borderWidth: 1,
-    borderColor: "rgba(255,180,0,0.22)",
-  }}>
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
-      <Ionicons name="flame-outline" size={16} color="#ffd060" />
-      <Text style={{ color: "#ffd060", fontSize: 10, fontWeight: "800", letterSpacing: 1.6 }}>FLIP FATIGUE DETECTED</Text>
-    </View>
-    <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 14, fontWeight: "700", lineHeight: 20 }}>
-      {flipFatigue.count} {flipFatigue.category} scans this week. Zero purchased.
-    </Text>
-    <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "500", marginTop: 4 }}>
-      You're hunting in a crowded lane. Switch categories or you're wasting time.
-    </Text>
-    <Text style={{ color: "rgba(255,200,60,0.5)", fontSize: 11, marginTop: 6 }}>
-      ~{Math.round(flipFatigue.count * 3.5)}min of browsing · $0 profit. Consider switching categories.
-    </Text>
-  </View>
-) : null}
+{/* ── Intel Signal Cards ──────────────────────────────── */}
+{tab === "results" && (ghostRisk || deadStockData || rivalryCount > 0 || dupeScan || conditionDrift || saturation || activeResult) ? (() => {
+  // Compute which signals are "active"
+  const signals: Array<{ key: string; priority: number }> = [];
+  if (ghostRisk?.level === "high") signals.push({ key: "ghost_high", priority: 1 });
+  if (deadStockData?.urgencyLevel === "high") signals.push({ key: "dead_high", priority: 2 });
+  if (rivalryCount > 0) signals.push({ key: "rivalry", priority: 3 });
+  if (dupeScan) signals.push({ key: "dupe", priority: 4 });
+  if (conditionDrift) signals.push({ key: "conditionDrift", priority: 5 });
+  if (saturation?.level === "high") signals.push({ key: "sat_high", priority: 6 });
+  if (deadStockData && deadStockData.urgencyLevel !== "high") signals.push({ key: "dead_low", priority: 7 });
+  if (ghostRisk?.level === "medium") signals.push({ key: "ghost_med", priority: 8 });
+  if (flipFatigue) signals.push({ key: "fatigue", priority: 9 });
+  if (activeResult) signals.push({ key: "lowball", priority: 10 });
+  if (activeResult) signals.push({ key: "snipe", priority: 11 });
 
-{/* ── FEATURE: RIVALRY BANNER ─────────────────────────────── */}
-{rivalryCount > 0 && tab === "results" ? (
-  <View style={{
-    marginHorizontal: 20,
-    marginTop: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 14,
-    backgroundColor: "rgba(130,200,255,0.07)",
-    borderWidth: 1,
-    borderColor: "rgba(130,200,255,0.20)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  }}>
-    <Ionicons name="people-outline" size={15} color="#82c8ff" />
-    <View style={{ flex: 1 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 3 }}>
-        <Text style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase" }}>RESELLER RIVALRY</Text>
-        <View style={{ backgroundColor: "rgba(255,60,60,0.25)", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 }}>
-          <Text style={{ color: "#ff6b6b", fontSize: 9, fontWeight: "900", letterSpacing: 0.8 }}>● LIVE</Text>
+  const visibleCount = intelExpanded ? signals.length : Math.min(2, signals.length);
+  const hiddenCount = signals.length - visibleCount;
+
+  // Map key → JSX
+  const cardMap: Record<string, React.ReactNode> = {
+    ghost_high: ghostRisk ? (
+      <View key="ghost_high" style={{ marginHorizontal: 16, marginBottom: 10, backgroundColor: "rgba(255,60,60,0.12)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,60,60,0.28)", padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+        <Text style={{ fontSize: 18 }}>👻</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: "#ff6b6b", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>{ghostRisk.level === "high" ? "GHOST LISTING DETECTED" : "SUSPICIOUS LISTING"}</Text>
+          <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{ghostRisk.warning}</Text>
+          {ghostRisk.signals.slice(0, 2).map((s, i) => <Text key={i} style={{ color: "rgba(255,120,120,0.7)", fontSize: 11, marginTop: 3 }}>· {s}</Text>)}
+          <View style={{ marginTop: 10 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+              <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>SCAM RISK</Text>
+              <Text style={{ color: ghostRisk.level === "high" ? "#ff4444" : "#ffb347", fontSize: 10, fontWeight: "800" }}>{ghostRisk.riskScore}%</Text>
+            </View>
+            <View style={{ height: 3, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 2 }}>
+              <View style={{ height: 3, width: `${ghostRisk.riskScore}%` as any, backgroundColor: ghostRisk.level === "high" ? "#ff4444" : "#ffb347", borderRadius: 2 }} />
+            </View>
+          </View>
         </View>
       </View>
-      <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13, fontWeight: "600" }}>
-        <Text style={{ color: "#82c8ff", fontWeight: "800" }}>{rivalryCount} other {rivalryCount === 1 ? "user" : "users"}</Text> scanned this in the last 2 hours.
-      </Text>
-      <Text style={{ color: "rgba(130,200,255,0.4)", fontSize: 11, marginTop: 4 }}>
-        Flipper #{Math.abs(rivalryCount * 37 + 12)} · Flipper #{Math.abs(rivalryCount * 19 + 44)} {rivalryCount > 2 ? `· +${rivalryCount - 2} more` : ""}
-      </Text>
-    </View>
-  </View>
-) : null}
-
-{/* ── FEATURE: DEAD STOCK BADGE ───────────────────────────── */}
-{deadStockData && tab === "results" ? (
-  <View style={{
-    marginHorizontal: 20,
-    marginTop: 8,
-    padding: 14,
-    borderRadius: 16,
-    backgroundColor: "rgba(80,255,150,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(80,255,150,0.22)",
-  }}>
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
-      <Ionicons name="time-outline" size={14} color="#50ff96" />
-      <Text style={{ color: "#50ff96", fontSize: 10, fontWeight: "800", letterSpacing: 1.6 }}>
-        {deadStockData.urgencyLevel === "high" ? "\uD83D\uDD25 SELLER IS DESPERATE" : "DEAD STOCK DETECTED"}
-      </Text>
-    </View>
-    <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 14, fontWeight: "700" }}>
-      {deadStockData.message}
-    </Text>
-    <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 13, marginTop: 4, fontWeight: "600" }}>
-      Suggested offer: <Text style={{ color: "#50ff96", fontWeight: "800" }}>${deadStockData.suggestedOffer}</Text>
-      <Text style={{ color: "rgba(255,255,255,0.35)" }}> · {deadStockData.leveragePct}% below ask</Text>
-    </Text>
-    {(deadStockData as any).negotiationScript ? (
-      <Pressable
-        onPress={() => Share.share({ message: (deadStockData as any).negotiationScript })}
-        style={{ marginTop: 10, backgroundColor: "rgba(80,255,150,0.08)", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "rgba(80,255,150,0.15)" }}
-      >
-        <Text style={{ color: "rgba(80,255,150,0.6)", fontSize: 10, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>TAP TO COPY SCRIPT</Text>
-        <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 12, lineHeight: 17, fontStyle: "italic" }}>"{(deadStockData as any).negotiationScript}"</Text>
-      </Pressable>
-    ) : null}
-    {(deadStockData as any).leverageBar != null ? (
-      <View style={{ marginTop: 8 }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
-          <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>LEVERAGE</Text>
-          <Text style={{ color: "#50ff96", fontSize: 10, fontWeight: "800" }}>{(deadStockData as any).leverageBar}%</Text>
-        </View>
-        <View style={{ height: 3, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 2 }}>
-          <View style={{ height: 3, width: `${Math.min((deadStockData as any).leverageBar, 100)}%` as any, backgroundColor: "#50ff96", borderRadius: 2 }} />
+    ) : null,
+    ghost_med: ghostRisk ? (
+      <View key="ghost_med" style={{ marginHorizontal: 16, marginBottom: 10, backgroundColor: "rgba(255,60,60,0.12)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,60,60,0.28)", padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+        <Text style={{ fontSize: 18 }}>👻</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: "#ff6b6b", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>{ghostRisk.level === "high" ? "GHOST LISTING DETECTED" : "SUSPICIOUS LISTING"}</Text>
+          <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{ghostRisk.warning}</Text>
+          {ghostRisk.signals.slice(0, 2).map((s, i) => <Text key={i} style={{ color: "rgba(255,120,120,0.7)", fontSize: 11, marginTop: 3 }}>· {s}</Text>)}
+          <View style={{ marginTop: 10 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+              <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>SCAM RISK</Text>
+              <Text style={{ color: ghostRisk.level === "high" ? "#ff4444" : "#ffb347", fontSize: 10, fontWeight: "800" }}>{ghostRisk.riskScore}%</Text>
+            </View>
+            <View style={{ height: 3, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 2 }}>
+              <View style={{ height: 3, width: `${ghostRisk.riskScore}%` as any, backgroundColor: ghostRisk.level === "high" ? "#ff4444" : "#ffb347", borderRadius: 2 }} />
+            </View>
+          </View>
         </View>
       </View>
-    ) : null}
-  </View>
-) : null}
-
-{/* Feature 9: Ghost Listing Badge */}
-{ghostRisk && tab === "results" ? (
-  <View style={{
-    marginHorizontal: 16, marginBottom: 10,
-    backgroundColor: "rgba(255,60,60,0.12)",
-    borderRadius: 14, borderWidth: 1,
-    borderColor: "rgba(255,60,60,0.28)",
-    padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 10,
-  }}>
-    <Text style={{ fontSize: 18 }}>👻</Text>
-    <View style={{ flex: 1 }}>
-      <Text style={{ color: "#ff6b6b", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>
-        {ghostRisk.level === "high" ? "GHOST LISTING DETECTED" : "SUSPICIOUS LISTING"}
-      </Text>
-      <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{ghostRisk.warning}</Text>
-      {ghostRisk.signals.slice(0, 2).map((s, i) => (
-        <Text key={i} style={{ color: "rgba(255,120,120,0.7)", fontSize: 11, marginTop: 3 }}>· {s}</Text>
-      ))}
-      <View style={{ marginTop: 10 }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
-          <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>SCAM RISK</Text>
-          <Text style={{ color: ghostRisk.level === "high" ? "#ff4444" : "#ffb347", fontSize: 10, fontWeight: "800" }}>{ghostRisk.riskScore}%</Text>
-        </View>
-        <View style={{ height: 3, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 2 }}>
-          <View style={{ height: 3, width: `${ghostRisk.riskScore}%` as any, backgroundColor: ghostRisk.level === "high" ? "#ff4444" : "#ffb347", borderRadius: 2 }} />
-        </View>
-      </View>
-    </View>
-  </View>
-) : null}
-
-{/* Feature 8: Condition Drift Alert */}
-{conditionDrift ? (
-  <View style={{
-    marginHorizontal: 16, marginBottom: 10,
-    backgroundColor: "rgba(255,160,0,0.12)",
-    borderRadius: 14, borderWidth: 1,
-    borderColor: "rgba(255,160,0,0.28)",
-    padding: 14, flexDirection: "row", alignItems: "center", gap: 10,
-  }}>
-    <Text style={{ fontSize: 18 }}>⚠️</Text>
-    <View style={{ flex: 1 }}>
-      <Text style={{ color: "#ffb347", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>
-        CONDITION DOWNGRADED
-      </Text>
-      <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>
-        {conditionDrift.itemName}: <Text style={{ color: "#ff8c42" }}>{conditionDrift.oldCondition}</Text> → <Text style={{ color: "#ff4444" }}>{conditionDrift.newCondition}</Text>
-      </Text>
-      <Text style={{ color: "rgba(255,179,71,0.6)", fontSize: 11, marginTop: 3 }}>Seller quietly changed the condition listing.</Text>
-      <Text style={{ color: "rgba(255,179,71,0.55)", fontSize: 11, marginTop: 4 }}>
-        Estimated value impact: ~{conditionDrift.oldCondition.toLowerCase().includes("like new") || conditionDrift.newCondition.toLowerCase().includes("fair") ? "20–30" : "10–15"}% price drop
-      </Text>
-    </View>
-    <Pressable onPress={() => setConditionDrift(null)}>
-      <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 18 }}>×</Text>
-    </Pressable>
-  </View>
-) : null}
-
-{/* Feature 13: Duplicate Scan Warning */}
-{dupeScan && tab === "results" ? (
-  <View style={{
-    marginHorizontal: 16, marginBottom: 10,
-    backgroundColor: "rgba(200,160,255,0.10)",
-    borderRadius: 14, borderWidth: 1,
-    borderColor: "rgba(200,160,255,0.22)",
-    padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 10,
-  }}>
-    <Text style={{ fontSize: 18 }}>🔁</Text>
-    <View style={{ flex: 1 }}>
-      <Text style={{ color: "#c8a0ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>
-        DÉJÀ VU SCAN
-      </Text>
-      <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{dupeScan.message}</Text>
-      {(dupeScan as any).inferredReason ? (
-        <Text style={{ color: "rgba(200,160,255,0.5)", fontSize: 11, marginTop: 4, fontStyle: "italic" }}>{(dupeScan as any).inferredReason}</Text>
-      ) : null}
-    </View>
-    <Pressable onPress={() => setDupeScan(null)}>
-      <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 18 }}>×</Text>
-    </Pressable>
-  </View>
-) : null}
-
-{/* Feature 15: Category Saturation Badge */}
-{saturation && tab === "results" ? (
-  <View style={{
-    marginHorizontal: 16, marginBottom: 10,
-    backgroundColor: saturation.level === "high" ? "rgba(255,100,60,0.10)" : "rgba(255,200,60,0.08)",
-    borderRadius: 14, borderWidth: 1,
-    borderColor: saturation.level === "high" ? "rgba(255,100,60,0.25)" : "rgba(255,200,60,0.20)",
-    padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 10,
-  }}>
-    <Text style={{ fontSize: 18 }}>📊</Text>
-    <View style={{ flex: 1 }}>
-      <Text style={{ color: saturation.level === "high" ? "#ff6b3d" : "#ffc83d", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>
-        {saturation.level === "high" ? "OVERSATURATED MARKET" : "COMPETITIVE CATEGORY"}
-      </Text>
-      <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{saturation.warning}</Text>
-      {saturation.suggestion ? (
-        <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginTop: 4 }}>{saturation.suggestion}</Text>
-      ) : null}
-      {(saturation as any).trendArrow ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
-          <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 13 }}>{(saturation as any).trendArrow}</Text>
-          <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 11 }}>
-            {(saturation as any).weeklyChange} this week · national data ±15% local
+    ) : null,
+    dead_high: deadStockData ? (
+      <View key="dead_high" style={{ marginHorizontal: 20, marginBottom: 10, padding: 14, borderRadius: 16, backgroundColor: "rgba(80,255,150,0.06)", borderWidth: 1, borderColor: "rgba(80,255,150,0.22)" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Ionicons name="time-outline" size={14} color="#50ff96" />
+          <Text style={{ color: "#50ff96", fontSize: 10, fontWeight: "800", letterSpacing: 1.6 }}>
+            {deadStockData.urgencyLevel === "high" ? "\uD83D\uDD25 SELLER IS DESPERATE" : "DEAD STOCK DETECTED"}
           </Text>
         </View>
+        <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 14, fontWeight: "700" }}>{deadStockData.message}</Text>
+        <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 13, marginTop: 4, fontWeight: "600" }}>
+          Suggested offer: <Text style={{ color: "#50ff96", fontWeight: "800" }}>${deadStockData.suggestedOffer}</Text>
+          <Text style={{ color: "rgba(255,255,255,0.35)" }}> · {deadStockData.leveragePct}% below ask</Text>
+        </Text>
+        {(deadStockData as any).negotiationScript ? (
+          <Pressable
+            onPress={() => Share.share({ message: (deadStockData as any).negotiationScript })}
+            style={{ marginTop: 10, backgroundColor: "rgba(80,255,150,0.08)", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "rgba(80,255,150,0.15)" }}
+          >
+            <Text style={{ color: "rgba(80,255,150,0.6)", fontSize: 10, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>TAP TO COPY SCRIPT</Text>
+            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 12, lineHeight: 17, fontStyle: "italic" }}>"{(deadStockData as any).negotiationScript}"</Text>
+          </Pressable>
+        ) : null}
+        {(deadStockData as any).leverageBar != null ? (
+          <View style={{ marginTop: 8 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+              <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>LEVERAGE</Text>
+              <Text style={{ color: "#50ff96", fontSize: 10, fontWeight: "800" }}>{(deadStockData as any).leverageBar}%</Text>
+            </View>
+            <View style={{ height: 3, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 2 }}>
+              <View style={{ height: 3, width: `${Math.min((deadStockData as any).leverageBar, 100)}%` as any, backgroundColor: "#50ff96", borderRadius: 2 }} />
+            </View>
+          </View>
+        ) : null}
+      </View>
+    ) : null,
+    dead_low: deadStockData ? (
+      <View key="dead_low" style={{ marginHorizontal: 20, marginBottom: 10, padding: 14, borderRadius: 16, backgroundColor: "rgba(80,255,150,0.06)", borderWidth: 1, borderColor: "rgba(80,255,150,0.22)" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Ionicons name="time-outline" size={14} color="#50ff96" />
+          <Text style={{ color: "#50ff96", fontSize: 10, fontWeight: "800", letterSpacing: 1.6 }}>
+            {deadStockData.urgencyLevel === "high" ? "\uD83D\uDD25 SELLER IS DESPERATE" : "DEAD STOCK DETECTED"}
+          </Text>
+        </View>
+        <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 14, fontWeight: "700" }}>{deadStockData.message}</Text>
+        <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 13, marginTop: 4, fontWeight: "600" }}>
+          Suggested offer: <Text style={{ color: "#50ff96", fontWeight: "800" }}>${deadStockData.suggestedOffer}</Text>
+          <Text style={{ color: "rgba(255,255,255,0.35)" }}> · {deadStockData.leveragePct}% below ask</Text>
+        </Text>
+        {(deadStockData as any).negotiationScript ? (
+          <Pressable
+            onPress={() => Share.share({ message: (deadStockData as any).negotiationScript })}
+            style={{ marginTop: 10, backgroundColor: "rgba(80,255,150,0.08)", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "rgba(80,255,150,0.15)" }}
+          >
+            <Text style={{ color: "rgba(80,255,150,0.6)", fontSize: 10, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>TAP TO COPY SCRIPT</Text>
+            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 12, lineHeight: 17, fontStyle: "italic" }}>"{(deadStockData as any).negotiationScript}"</Text>
+          </Pressable>
+        ) : null}
+        {(deadStockData as any).leverageBar != null ? (
+          <View style={{ marginTop: 8 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+              <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>LEVERAGE</Text>
+              <Text style={{ color: "#50ff96", fontSize: 10, fontWeight: "800" }}>{(deadStockData as any).leverageBar}%</Text>
+            </View>
+            <View style={{ height: 3, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 2 }}>
+              <View style={{ height: 3, width: `${Math.min((deadStockData as any).leverageBar, 100)}%` as any, backgroundColor: "#50ff96", borderRadius: 2 }} />
+            </View>
+          </View>
+        ) : null}
+      </View>
+    ) : null,
+    rivalry: rivalryCount > 0 ? (
+      <View key="rivalry" style={{ marginHorizontal: 20, marginBottom: 10, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, backgroundColor: "rgba(130,200,255,0.07)", borderWidth: 1, borderColor: "rgba(130,200,255,0.20)", flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <Ionicons name="people-outline" size={15} color="#82c8ff" />
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 3 }}>
+            <Text style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase" }}>RESELLER RIVALRY</Text>
+            <View style={{ backgroundColor: "rgba(255,60,60,0.25)", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 }}>
+              <Text style={{ color: "#ff6b6b", fontSize: 9, fontWeight: "900", letterSpacing: 0.8 }}>● LIVE</Text>
+            </View>
+          </View>
+          <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13, fontWeight: "600" }}>
+            <Text style={{ color: "#82c8ff", fontWeight: "800" }}>{rivalryCount} other {rivalryCount === 1 ? "user" : "users"}</Text> scanned this in the last 2 hours.
+          </Text>
+          <Text style={{ color: "rgba(130,200,255,0.4)", fontSize: 11, marginTop: 4 }}>
+            Flipper #{Math.abs(rivalryCount * 37 + 12)} · Flipper #{Math.abs(rivalryCount * 19 + 44)} {rivalryCount > 2 ? `· +${rivalryCount - 2} more` : ""}
+          </Text>
+        </View>
+      </View>
+    ) : null,
+    dupe: dupeScan ? (
+      <View key="dupe" style={{ marginHorizontal: 16, marginBottom: 10, backgroundColor: "rgba(200,160,255,0.10)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(200,160,255,0.22)", padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+        <Text style={{ fontSize: 18 }}>🔁</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: "#c8a0ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>DÉJÀ VU SCAN</Text>
+          <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{dupeScan.message}</Text>
+          {(dupeScan as any).inferredReason ? (
+            <Text style={{ color: "rgba(200,160,255,0.5)", fontSize: 11, marginTop: 4, fontStyle: "italic" }}>{(dupeScan as any).inferredReason}</Text>
+          ) : null}
+        </View>
+        <Pressable onPress={() => setDupeScan(null)}>
+          <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 18 }}>×</Text>
+        </Pressable>
+      </View>
+    ) : null,
+    conditionDrift: conditionDrift ? (
+      <View key="conditionDrift" style={{ marginHorizontal: 16, marginBottom: 10, backgroundColor: "rgba(255,160,0,0.12)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,160,0,0.28)", padding: 14, flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <Text style={{ fontSize: 18 }}>⚠️</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: "#ffb347", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>CONDITION DOWNGRADED</Text>
+          <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>
+            {conditionDrift.itemName}: <Text style={{ color: "#ff8c42" }}>{conditionDrift.oldCondition}</Text> → <Text style={{ color: "#ff4444" }}>{conditionDrift.newCondition}</Text>
+          </Text>
+          <Text style={{ color: "rgba(255,179,71,0.6)", fontSize: 11, marginTop: 3 }}>Seller quietly changed the condition listing.</Text>
+          <Text style={{ color: "rgba(255,179,71,0.55)", fontSize: 11, marginTop: 4 }}>
+            Estimated value impact: ~{conditionDrift.oldCondition.toLowerCase().includes("like new") || conditionDrift.newCondition.toLowerCase().includes("fair") ? "20–30" : "10–15"}% price drop
+          </Text>
+        </View>
+        <Pressable onPress={() => setConditionDrift(null)}>
+          <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 18 }}>×</Text>
+        </Pressable>
+      </View>
+    ) : null,
+    sat_high: saturation ? (
+      <View key="sat_high" style={{ marginHorizontal: 16, marginBottom: 10, backgroundColor: saturation.level === "high" ? "rgba(255,100,60,0.10)" : "rgba(255,200,60,0.08)", borderRadius: 14, borderWidth: 1, borderColor: saturation.level === "high" ? "rgba(255,100,60,0.25)" : "rgba(255,200,60,0.20)", padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+        <Text style={{ fontSize: 18 }}>📊</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: saturation.level === "high" ? "#ff6b3d" : "#ffc83d", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>
+            {saturation.level === "high" ? "OVERSATURATED MARKET" : "COMPETITIVE CATEGORY"}
+          </Text>
+          <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{saturation.warning}</Text>
+          {saturation.suggestion ? (
+            <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginTop: 4 }}>{saturation.suggestion}</Text>
+          ) : null}
+          {(saturation as any).trendArrow ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+              <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 13 }}>{(saturation as any).trendArrow}</Text>
+              <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 11 }}>
+                {(saturation as any).weeklyChange} this week · national data ±15% local
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+    ) : null,
+    fatigue: flipFatigue ? (
+      <View key="fatigue" style={{ marginHorizontal: 20, marginBottom: 10, padding: 16, borderRadius: 18, backgroundColor: "rgba(255,180,0,0.07)", borderWidth: 1, borderColor: "rgba(255,180,0,0.22)" }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Ionicons name="flame-outline" size={16} color="#ffd060" />
+          <Text style={{ color: "#ffd060", fontSize: 10, fontWeight: "800", letterSpacing: 1.6 }}>FLIP FATIGUE DETECTED</Text>
+        </View>
+        <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 14, fontWeight: "700", lineHeight: 20 }}>
+          {flipFatigue.count} {flipFatigue.category} scans this week. Zero purchased.
+        </Text>
+        <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "500", marginTop: 4 }}>
+          You're hunting in a crowded lane. Switch categories or you're wasting time.
+        </Text>
+        <Text style={{ color: "rgba(255,200,60,0.5)", fontSize: 11, marginTop: 6 }}>
+          ~{Math.round(flipFatigue.count * 3.5)}min of browsing · $0 profit. Consider switching categories.
+        </Text>
+      </View>
+    ) : null,
+    lowball: activeResult ? (
+      <Pressable
+        key="lowball"
+        onPress={openLowball}
+        style={{ marginHorizontal: 16, marginBottom: 10, backgroundColor: "rgba(130,200,255,0.10)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(130,200,255,0.22)", padding: 14, flexDirection: "row", alignItems: "center", gap: 10 }}
+      >
+        <Text style={{ fontSize: 16 }}>🧠</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 2 }}>LOWBALL SCRIPT</Text>
+          <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12 }}>Tap to generate a platform-tuned offer message</Text>
+        </View>
+        <Text style={{ color: "rgba(130,200,255,0.5)", fontSize: 16 }}>→</Text>
+      </Pressable>
+    ) : null,
+    snipe: activeResult ? (
+      <Pressable
+        key="snipe"
+        onPress={() => {
+          const demoEnd = Date.now() + 24 * 3600 * 1000;
+          openSnipe((activeResult as any).auctionEndTime ?? demoEnd);
+        }}
+        style={{ marginHorizontal: 16, marginBottom: 10, backgroundColor: "rgba(255,220,60,0.08)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,220,60,0.18)", padding: 14, flexDirection: "row", alignItems: "center", gap: 10 }}
+      >
+        <Text style={{ fontSize: 16 }}>⏱️</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: "#ffdc3c", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 2 }}>AUCTION SNIPE TIMER</Text>
+          <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>Calculate optimal bid time + max bid</Text>
+        </View>
+        <Text style={{ color: "rgba(255,220,60,0.4)", fontSize: 16 }}>→</Text>
+      </Pressable>
+    ) : null,
+  };
+
+  return (
+    <View>
+      {signals.slice(0, visibleCount).map(s => cardMap[s.key])}
+      {hiddenCount > 0 ? (
+        <Pressable
+          onPress={() => {
+            setIntelExpanded(e => !e);
+          }}
+          style={{ marginHorizontal: 16, marginBottom: 10, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 14, borderWidth: 1, borderColor: "rgba(255,255,255,0.1)", padding: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}
+        >
+          <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, fontWeight: "700" }}>
+            {intelExpanded ? "Show less" : `${hiddenCount} more signal${hiddenCount > 1 ? "s" : ""}`}
+          </Text>
+          <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>{intelExpanded ? "↑" : "↓"}</Text>
+        </Pressable>
       ) : null}
     </View>
-  </View>
-) : null}
-
-{/* Feature 12: Auction Snipe Timer */}
-{activeResult && tab === "results" ? (
-  <Pressable
-    onPress={() => {
-      // Use 24h from now as demo auction end if no real end time
-      const demoEnd = Date.now() + 24 * 3600 * 1000;
-      openSnipe((activeResult as any).auctionEndTime ?? demoEnd);
-    }}
-    style={{
-      marginHorizontal: 16, marginBottom: 10,
-      backgroundColor: "rgba(255,220,60,0.08)",
-      borderRadius: 14, borderWidth: 1,
-      borderColor: "rgba(255,220,60,0.18)",
-      padding: 14, flexDirection: "row", alignItems: "center", gap: 10,
-    }}
-  >
-    <Text style={{ fontSize: 16 }}>⏱️</Text>
-    <View style={{ flex: 1 }}>
-      <Text style={{ color: "#ffdc3c", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 2 }}>
-        AUCTION SNIPE TIMER
-      </Text>
-      <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>
-        Calculate optimal bid time + max bid
-      </Text>
-    </View>
-    <Text style={{ color: "rgba(255,220,60,0.4)", fontSize: 16 }}>→</Text>
-  </Pressable>
-) : null}
-
-{/* Feature 6: Lowball Script Button */}
-{activeResult && tab === "results" ? (
-  <Pressable
-    onPress={openLowball}
-    style={{
-      marginHorizontal: 16, marginBottom: 10,
-      backgroundColor: "rgba(130,200,255,0.10)",
-      borderRadius: 14, borderWidth: 1,
-      borderColor: "rgba(130,200,255,0.22)",
-      padding: 14, flexDirection: "row", alignItems: "center", gap: 10,
-    }}
-  >
-    <Text style={{ fontSize: 16 }}>🧠</Text>
-    <View style={{ flex: 1 }}>
-      <Text style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 2 }}>
-        LOWBALL SCRIPT
-      </Text>
-      <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12 }}>
-        Tap to generate a platform-tuned offer message
-      </Text>
-    </View>
-    <Text style={{ color: "rgba(130,200,255,0.5)", fontSize: 16 }}>→</Text>
-  </Pressable>
-) : null}
+  );
+})() : null}
 
 </ScrollView>
 </SafeAreaView>
