@@ -529,7 +529,7 @@ export function ResultCard({
           {/* Alt: CTA bar */}
           {!isHero ? (
             <TouchableOpacity onPress={onPress} style={styles.viewListingBar} activeOpacity={0.7}>
-              <Ionicons name="arrow-up-right-circle" size={14} color={C.text3} />
+              <Ionicons name="arrow-up-circle" size={14} color={C.text3} />
               <Text style={styles.viewListingText}>View listing  →</Text>
             </TouchableOpacity>
           ) : null}

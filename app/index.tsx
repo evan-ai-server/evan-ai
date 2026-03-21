@@ -35,6 +35,7 @@ import {
   ActivityIndicator,
   AccessibilityInfo,
   Animated as RNAnimated,
+  useWindowDimensions,
 } from "react-native";
 
 import {
@@ -773,123 +774,164 @@ class ErrorBoundary extends React.Component<
 // ── Live Activity Ticker — module-level constants ────────────────────────────
 const TICKER_MSGS = [
   "🔥 Sarah in Chicago saved $84 using Evan AI!",
-  "📦 Mike flipped a PS5 for $120 profit using Evan AI",
+  "💰 Mike flipped a PS5 for $120 profit",
   "✅ James found AirPods Pro 2 for $87 less",
   "💰 Taylor sold vintage Levi's for $210 — bought for $35",
   "🎯 Emma saved $62 on a Coach bag today",
   "⚡ Ryan spotted a $200 flip on Jordan 4s",
   "🛍️ Priya saved $110 on a MacBook Air deal",
-  "🔍 Alex verified authentic Supreme hoodie — avoided $90 fake",
-  "💸 Jordan saved $47 using Evan AI price alert",
+  "✅ Alex verified authentic Supreme hoodie — avoided $90 fake",
+  "🔔 Jordan saved $47 using Evan AI price alert",
   "📈 Kayla flipped vintage Nike Dunks for $180 profit",
   "🎉 Devon in Brooklyn saved $93 this week",
-  "🔔 Price alert hit — AirPods Max dropped to $389",
+  "🔔 Price alert — AirPods Max dropped to $389",
   "✨ Sophia saved $55 on Ray-Ban sunglasses",
   "🚀 Marcus flipped 3 items for $340 total profit",
   "💡 Aiden caught a $150 underpriced vintage leather jacket",
-  "🛒 Isabella saved $38 on Bose headphones",
+  "🛍️ Isabella saved $38 on Bose headphones",
   "🔥 Noah in LA flipped a vintage Rolex for $800 profit",
   "📸 Olivia avoided overpaying $65 — condition mismatch caught",
   "💎 Liam saved $200 on a camera lens using Evan AI",
-  "⚡ Ava found same PS4 for $49 less near her",
-  "🏷 ️ Ethan saved $74 on a gaming chair today",
+  "⚡ Ava found same PS4 for $49 less nearby",
+  "🎯 Ethan saved $74 on a gaming chair today",
   "🌟 Mia flipped thrifted Prada bag for $340 profit",
   "💰 Owen spotted AJ1 Retro for $95 below market",
   "📱 Zoe saved $130 on an iPhone 14 Pro Max",
   "🔥 Lucas in Miami saved $58 on Yeezy 350s",
-"🔥 Tyler flipped AirPods Pro for $88 profit",
-"💰 Mason saved $67 on a Nike hoodie",
-"🎯 Ethan found a $320 camera for $140",
-"📈 Logan flipped Jordans for $135 profit",
-"🛍️ Ava saved $58 on Lululemon shorts",
-"⚡ Noah spotted a $210 underpriced iPad",
-"💎 Emma flipped a Gucci belt for $175",
-"🎉 Ryan saved $42 on Beats Studio",
-"🚀 Lucas flipped a PS5 for $105 profit",
-"💵 Olivia saved $79 on a North Face jacket",
-
-"🔥 Dylan flipped Yeezys for $155 profit",
-"💰 Sophia saved $63 on Ray-Bans",
-"🎯 Carter found a $450 laptop for $190",
-"📈 Aiden flipped Dunks for $128 profit",
-"🛍️ Chloe saved $71 on Nike Tech",
-"⚡ Benjamin spotted a $280 flip",
-"💎 Lily flipped a Prada bag for $240",
-"🎉 Owen saved $36 on Vans",
-"🚀 Elijah flipped a MacBook for $290",
-"💵 Harper saved $102 on a Dyson",
-
-"🔥 Jack flipped a gaming chair for $85",
-"💰 Grace saved $77 on sneakers",
-"🎯 Wyatt found a $380 deal on headphones",
-"📈 Luke flipped Jordans for $142",
-"🛍️ Victoria saved $64 on Alo leggings",
-"⚡ David spotted a $310 flip",
-"💎 Sofia flipped a Rolex for $900",
-"🎉 Joseph saved $47 on Adidas",
-"🚀 Matthew flipped a drone for $165",
-"💵 Aria saved $88 on a handbag",
-
-"🔥 Samuel flipped a bike for $120",
-"💰 Zoe saved $69 on Crocs",
-"🎯 Andrew found a $500 camera for $230",
-"📈 Joshua flipped Yeezys for $175",
-"🛍️ Natalie saved $54 on Gymshark",
-"⚡ Christian spotted a $240 flip",
-"💎 Layla flipped a Louis Vuitton wallet",
-"🎉 Aaron saved $39 on Converse",
-"🚀 Thomas flipped a TV for $180",
-"💵 Brooklyn saved $95 on a coat",
-
-"🔥 Isaac flipped headphones for $110",
-"💰 Hannah saved $83 on leggings",
-"🎯 Gabriel found a $420 deal",
-"📈 Julian flipped Jordans for $138",
-"🛍️ Violet saved $62 on Nike",
-"⚡ Levi spotted a $260 flip",
-"💎 Nora flipped a Cartier bracelet",
-"🎉 Adam saved $44 on slides",
-"🚀 Eli flipped a console for $98",
-"💵 Hazel saved $72 on a bag",
-
-"🔥 Connor flipped a monitor for $95",
-"💰 Aurora saved $101 on a jacket",
-"🎯 Hunter found a $360 flip",
-"📈 Dominic flipped Dunks for $120",
-"🛍️ Bella saved $75 on sneakers",
-"⚡ Jaxon spotted a $230 flip",
-"💎 Lucy flipped a designer purse",
-"🎉 Evan saved $50 on Nike",
-"🚀 Miles flipped a MacBook for $270",
-"💵 Ellie saved $84 on headphones",
-
-"🔥 Leo flipped Jordans for $150",
-"💰 Stella saved $68 on UGGs",
-"🎯 Anthony found a $410 deal",
-"📈 Isaiah flipped Yeezys for $185",
-"🛍️ Ruby saved $59 on leggings",
-"⚡ Caleb spotted a $250 flip",
-"💎 Alice flipped a Chanel bag",
-"🎉 Jordan saved $41 on Air Max",
-"🚀 Cooper flipped a PS4 for $90",
-"💵 Sadie saved $78 on a hoodie",
-
-"🔥 Nolan flipped a bike for $135",
-"💰 Peyton saved $66 on Crocs",
-"🎯 Jason found a $390 deal",
-"📈 Wesley flipped Jordans for $145",
-"🛍️ Clara saved $82 on Nike",
-"⚡ Ryder spotted a $220 flip",
-"💎 Eva flipped a luxury watch",
-"🎉 Carson saved $37 on Vans",
-"🚀 Axel flipped a TV for $175",
-"💵 Lila saved $92 on a jacket",
+  "🔥 Tyler flipped AirPods Pro for $88 profit",
+  "💰 Mason saved $67 on a Nike hoodie",
+  "🎯 Ethan found a $320 camera for $140",
+  "📈 Logan flipped Jordans for $135 profit",
+  "🛍️ Ava saved $58 on Lululemon shorts",
+  "⚡ Noah spotted a $210 underpriced iPad",
+  "💎 Emma flipped a Gucci belt for $175",
+  "🎉 Ryan saved $42 on Beats Studio",
+  "🚀 Lucas flipped a PS5 for $105 profit",
+  "💵 Olivia saved $79 on a North Face jacket",
+  "🔥 Dylan flipped Yeezys for $155 profit",
+  "💰 Sophia saved $63 on Ray-Bans",
+  "🎯 Carter found a $450 laptop for $190",
+  "📈 Aiden flipped Dunks for $128 profit",
+  "🛍️ Chloe saved $71 on Nike Tech",
+  "⚡ Benjamin spotted a $280 flip",
+  "💎 Lily flipped a Prada bag for $240",
+  "🎉 Owen saved $36 on Vans",
+  "🚀 Elijah flipped a MacBook for $290",
+  "💵 Harper saved $102 on a Dyson",
+  "🔥 Jack flipped a gaming chair for $85",
+  "💰 Grace saved $77 on sneakers",
+  "🎯 Wyatt found a $380 deal on headphones",
+  "📈 Luke flipped Jordans for $142",
+  "🛍️ Victoria saved $64 on Alo leggings",
+  "⚡ David spotted a $310 flip",
+  "💎 Sofia flipped a Rolex for $900",
+  "🎉 Joseph saved $47 on Adidas",
+  "🚀 Matthew flipped a drone for $165",
+  "💵 Aria saved $88 on a handbag",
+  "🔥 Samuel flipped a bike for $120",
+  "💰 Zoe saved $69 on Crocs",
+  "🎯 Andrew found a $500 camera for $230",
+  "📈 Joshua flipped Yeezys for $175",
+  "🛍️ Natalie saved $54 on Gymshark",
+  "⚡ Christian spotted a $240 flip",
+  "💎 Layla flipped a Louis Vuitton wallet",
+  "🎉 Aaron saved $39 on Converse",
+  "🚀 Thomas flipped a TV for $180",
+  "💵 Brooklyn saved $95 on a coat",
+  "🔥 Isaac flipped headphones for $110",
+  "💰 Hannah saved $83 on leggings",
+  "🎯 Gabriel found a $420 deal",
+  "📈 Julian flipped Jordans for $138",
+  "🛍️ Violet saved $62 on Nike",
+  "⚡ Levi spotted a $260 flip",
+  "💎 Nora flipped a Cartier bracelet",
+  "🎉 Adam saved $44 on slides",
+  "🚀 Eli flipped a console for $98",
+  "💵 Hazel saved $72 on a bag",
+  "🔥 Connor flipped a monitor for $95",
+  "💰 Aurora saved $101 on a jacket",
+  "🎯 Hunter found a $360 flip",
+  "📈 Dominic flipped Dunks for $120",
+  "🛍️ Bella saved $75 on sneakers",
+  "⚡ Jaxon spotted a $230 flip",
+  "💎 Lucy flipped a designer purse",
+  "🎉 Evan saved $50 on Nike",
+  "🚀 Miles flipped a MacBook for $270",
+  "💵 Ellie saved $84 on headphones",
+  "🔥 Leo flipped Jordans for $150",
+  "💰 Stella saved $68 on UGGs",
+  "🎯 Anthony found a $410 deal",
+  "📈 Isaiah flipped Yeezys for $185",
+  "🛍️ Ruby saved $59 on leggings",
+  "⚡ Caleb spotted a $250 flip",
+  "💎 Alice flipped a Chanel bag",
+  "🎉 Jordan saved $41 on Air Max",
+  "🚀 Cooper flipped a PS4 for $90",
+  "💵 Sadie saved $78 on a hoodie",
+  "🔥 Nolan flipped a bike for $135",
+  "💰 Peyton saved $66 on Crocs",
+  "🎯 Jason found a $390 deal",
+  "📈 Wesley flipped Jordans for $145",
+  "🛍️ Clara saved $82 on Nike",
+  "⚡ Ryder spotted a $220 flip",
+  "💎 Eva flipped a luxury watch",
+  "🎉 Carson saved $37 on Vans",
+  "🚀 Axel flipped a TV for $175",
+  "💵 Lila saved $92 on a jacket",
 ];
 const TICKER_SINGLE = TICKER_MSGS.join("     ");
 const TICKER_TEXT = TICKER_SINGLE + "     " + TICKER_SINGLE;
 const TICKER_CHAR_W = 8.4;
 const TICKER_TOTAL_W = TICKER_SINGLE.length * TICKER_CHAR_W;
 // ─────────────────────────────────────────────────────────────────────────────
+
+const TUTORIAL_STEPS = [
+  {
+    icon: "sparkles-outline" as const,
+    iconColor: "white",
+    iconBg: "rgba(255,255,255,0.07)",
+    accentColor: "rgba(255,255,255,0.55)",
+    subtitle: "WELCOME",
+    title: "Scan smarter.\nSell better.",
+    body: "Evan AI is your camera-powered deal scanner. Point at any item and get real market prices, flip potential, and AI-verified condition — in seconds.",
+  },
+  {
+    icon: "camera-outline" as const,
+    iconColor: "white",
+    iconBg: "rgba(255,255,255,0.07)",
+    accentColor: "rgba(255,255,255,0.55)",
+    subtitle: "AI VISION",
+    title: "Point. Identify.\nInstantly.",
+    body: "Clothes, sneakers, electronics, furniture — Evan's AI identifies items in seconds and searches 20+ marketplaces simultaneously.",
+  },
+  {
+    icon: "trending-up-outline" as const,
+    iconColor: "#50ff96",
+    iconBg: "rgba(80,255,150,0.08)",
+    accentColor: "#50ff96",
+    subtitle: "LIVE MARKET DATA",
+    title: "Real prices.\nReal results.",
+    body: "See eBay sold comps, Amazon listings, and local deals — all at once. Know exactly what something is worth before you buy or sell.",
+  },
+  {
+    icon: "rocket-outline" as const,
+    iconColor: "#ffd060",
+    iconBg: "rgba(255,200,50,0.08)",
+    accentColor: "#ffd060",
+    subtitle: "FLIP INTELLIGENCE",
+    title: "Turn finds\ninto profit.",
+    body: "Spot underpriced items before anyone else. See resale velocity, profit margins, and the best time to buy or list.",
+  },
+  {
+    icon: "shield-checkmark-outline" as const,
+    iconColor: "#82c8ff",
+    iconBg: "rgba(130,200,255,0.08)",
+    accentColor: "#82c8ff",
+    subtitle: "FREE TO START",
+    title: "You're ready\nto go.",
+    body: "Start with 6 free scans — no credit card needed. Upgrade to Pro for unlimited scans, price alerts, and watchlist sync.",
+  },
+] as const;
 
 export default function App() {
 
@@ -1180,6 +1222,7 @@ useEffect(() => {
 }, [refState]);
 
 const { top: TOP, bottom: BOTTOM } = useSafeAreaInsets();
+const { width: SW, height: SH } = useWindowDimensions();
 
 const TAB_BAR_H = 66;
 const TAB_BAR_MARGIN = 18;
@@ -1195,6 +1238,82 @@ const CAMERA_CONTROLS_BOTTOM = useMemo(
   () => TAB_BAR_BOTTOM + TAB_BAR_H + 18,
   [TAB_BAR_BOTTOM]
 );
+
+// ── Interactive tutorial step configs (computed with live screen dims) ─────
+const I_STEPS = useMemo(() => [
+  {
+    tab: null as string | null,
+    title: "Scan smarter.\nWin every deal.",
+    subtitle: "WELCOME",
+    body: "This is your AI-powered deal weapon. Let's show you around — 30 seconds, worth every one.",
+    accentColor: "rgba(255,255,255,0.55)",
+    iconColor: "white",
+    icon: "sparkles-outline" as const,
+    spotlight: null as { x: number; y: number; w: number; h: number; r: number } | null,
+    tooltipTop: false,
+    isLast: false,
+  },
+  {
+    tab: "camera" as string | null,
+    title: "One tap.\nInstant market price.",
+    subtitle: "THE SCANNER",
+    body: "Hit this button — your camera becomes a real-time pricing engine. AI identifies any item in under 3 seconds.",
+    accentColor: "#ffffff",
+    iconColor: "white",
+    icon: "camera-outline" as const,
+    spotlight: { x: SW / 2 - 62, y: SH - CAMERA_CONTROLS_BOTTOM - 62, w: 124, h: 124, r: 62 },
+    tooltipTop: true,
+    isLast: false,
+  },
+  {
+    tab: "camera" as string | null,
+    title: "Track your\ndeal intelligence.",
+    subtitle: "SCAN COUNTER",
+    body: "Your scan count and Pro status live here. Tap to upgrade anytime — unlimited scans and price alerts.",
+    accentColor: "#50ff96",
+    iconColor: "#50ff96",
+    icon: "pulse-outline" as const,
+    spotlight: { x: 12, y: TOP + 4, w: 168, h: 60, r: 30 },
+    tooltipTop: false,
+    isLast: false,
+  },
+  {
+    tab: "history" as string | null,
+    title: "Every scan\nsaved forever.",
+    subtitle: "DEAL HISTORY",
+    body: "Your complete scan history lives here. Tap any entry for full market data, flip potential, and resale comps.",
+    accentColor: "#82c8ff",
+    iconColor: "#82c8ff",
+    icon: "time-outline" as const,
+    spotlight: { x: 16, y: TOP + 56, w: SW - 32, h: Math.round(SH * 0.32), r: 20 },
+    tooltipTop: false,
+    isLast: false,
+  },
+  {
+    tab: "watchlist" as string | null,
+    title: "Track items.\nCatch every drop.",
+    subtitle: "WATCHLIST",
+    body: "Heart any item to watch it. Evan alerts you the moment the price hits your target — never miss a steal.",
+    accentColor: "#ffd060",
+    iconColor: "#ffd060",
+    icon: "heart-outline" as const,
+    spotlight: { x: 16, y: TOP + 56, w: SW - 32, h: Math.round(SH * 0.32), r: 20 },
+    tooltipTop: false,
+    isLast: false,
+  },
+  {
+    tab: "camera" as string | null,
+    title: "You're ready\nto hunt deals.",
+    subtitle: "LET'S GO",
+    body: "6 free scans loaded and waiting. Every item you see is a potential steal, flip, or fortune. Start now.",
+    accentColor: "#50ff96",
+    iconColor: "#50ff96",
+    icon: "flash-outline" as const,
+    spotlight: null as { x: number; y: number; w: number; h: number; r: number } | null,
+    tooltipTop: false,
+    isLast: true,
+  },
+], [SW, SH, TOP, CAMERA_CONTROLS_BOTTOM]);
 
 const getVerdict = ({ scannedPrice, cheapestPrice }) => {
   if (!Number.isFinite(scannedPrice) || !Number.isFinite(cheapestPrice)) {
@@ -1329,17 +1448,6 @@ useEffect(() => {
   };
 }, []);
 
-// Feature 2: Auto-process queued batch items one at a time
-useEffect(() => {
-  if (!batchMode) return;
-  const pending = batchQueue.find((j) => !j.status || j.status === "queued");
-  const inFlight = batchQueue.some((j) => j.status === "scanning");
-  if (!pending || inFlight || batchProcessingRef.current) return;
-  batchProcessingRef.current = true;
-  processBatchItem(pending.id).finally(() => {
-    batchProcessingRef.current = false;
-  });
-}, [batchQueue, batchMode]);
 
 // Feature 7: Register Expo push token once userId is available
 useEffect(() => {
@@ -1462,6 +1570,52 @@ const onboardOpacity = useRef(new RNAnimated.Value(0)).current;
 const onboardScale = useRef(new RNAnimated.Value(0.96)).current;
 const onboardGlow = useRef(new RNAnimated.Value(0)).current;
 const onboardGlowLoopRef = useRef<any>(null);
+const [tutorialStep, setTutorialStep] = useState(0);
+const tutorialContentOp = useRef(new RNAnimated.Value(0)).current;
+const tutorialContentY = useRef(new RNAnimated.Value(18)).current;
+const tutorialIconScale = useRef(new RNAnimated.Value(0.7)).current;
+const [tutorialConfirmOpen, setTutorialConfirmOpen] = useState(false);
+const tutorialConfirmOp = useRef(new RNAnimated.Value(0)).current;
+const tutorialConfirmY = useRef(new RNAnimated.Value(40)).current;
+
+// ── Interactive cinematic tutorial ──────────────────────────────────────
+const [showITutorial, setShowITutorial] = useState(false);
+const [iTutStep, setITutStep] = useState(0);
+const iTutBgOp = useRef(new RNAnimated.Value(0)).current;
+const iTutCardOp = useRef(new RNAnimated.Value(0)).current;
+const iTutCardY = useRef(new RNAnimated.Value(28)).current;
+const iTutSpotOp = useRef(new RNAnimated.Value(0)).current;
+const iTutRingScale = useRef(new RNAnimated.Value(1.0)).current;
+const iTutRingOpacity = useRef(new RNAnimated.Value(0)).current;
+const iTutRingPulseRef = useRef<any>(null);
+
+// ── Achievement toast (dopamine system) ─────────────────────────────────
+const [achieveToast, setAchieveToast] = useState<{ icon: string; title: string; body: string; color: string } | null>(null);
+const achieveOp = useRef(new RNAnimated.Value(0)).current;
+const achieveY = useRef(new RNAnimated.Value(-80)).current;
+const prevScansRef = useRef(0);
+
+// ── Feature: Flip Fatigue ────────────────────────────────────────────────
+const [flipFatigue, setFlipFatigue] = useState<{ category: string; count: number; weeklyBought: number } | null>(null);
+
+// ── Feature: Reseller Rivalry ────────────────────────────────────────────
+const [rivalryCount, setRivalryCount] = useState<number>(0);
+
+// ── Feature: Dead Stock ──────────────────────────────────────────────────
+const [deadStockData, setDeadStockData] = useState<{ daysListed: number; suggestedOffer: number; leveragePct: number; message: string; urgencyLevel: string } | null>(null);
+
+// ── Feature: Regret Tracker ──────────────────────────────────────────────
+const [regretItems, setRegretItems] = useState<Array<{ itemName: string; passedPrice: number; currentPrice: number; category: string; passedAt: number }>>([]);
+const [regretAlertOpen, setRegretAlertOpen] = useState(false);
+const regretAlertOp = useRef(new RNAnimated.Value(0)).current;
+const regretAlertY = useRef(new RNAnimated.Value(80)).current;
+
+// ── Feature: Thrift Heat Map ─────────────────────────────────────────────
+const [thriftHeatOpen, setThriftHeatOpen] = useState(false);
+const [thriftStores, setThriftStores] = useState<Array<{ name: string; emoji: string; heat: string; heatScore: number; isHotNow: boolean; isHotToday: boolean; tip: string; tagline: string; nextHotDay: string | null }>>([]);
+const thriftHeatOp = useRef(new RNAnimated.Value(0)).current;
+const thriftHeatY = useRef(new RNAnimated.Value(60)).current;
+
 const [showSplash, setShowSplash] = useState(true);
 // ✅ Keep splash visible minimum time
 const splashStartRef = useRef(Date.now());
@@ -1474,6 +1628,13 @@ const dotY = useRef(new RNAnimated.Value(0)).current;
 const splashDots = useRef(new RNAnimated.Value(0)).current;
 const [splashDotCount, setSplashDotCount] = useState(1);
 const [splashInfoOpen, setSplashInfoOpen] = useState(false);
+const splashOrbScale   = useRef(new RNAnimated.Value(0.85)).current;
+const splashOrbOpacity = useRef(new RNAnimated.Value(0)).current;
+const splashTaglineY   = useRef(new RNAnimated.Value(14)).current;
+const splashTaglineOp  = useRef(new RNAnimated.Value(0)).current;
+const splashChipsY     = useRef(new RNAnimated.Value(20)).current;
+const splashChipsOp    = useRef(new RNAnimated.Value(0)).current;
+const splashProgressAnim = useRef(new RNAnimated.Value(0)).current;
 const appStateRef = useRef(AppState.currentState);
     
   
@@ -1600,6 +1761,7 @@ RNAnimated.parallel([
 
 const [isPro, setIsPro] = useState(false);
 const [scansUsed, setScansUsed] = useState(0);
+const [bonusScans, setBonusScans] = useState<number>(0);
 const [isOnline, setIsOnline] = useState(true);
 const [offlineQueueCount, setOfflineQueueCount] = useState(0);
 const drainQueueInFlightRef = React.useRef(false);
@@ -1609,13 +1771,14 @@ const drainQueueInFlightRef = React.useRef(false);
 
 const FREE_SCAN_LIMIT_SAFE = 6;
 
-const freeScansRemaining = Math.max(0, FREE_SCAN_LIMIT_SAFE - scansUsed);
+const freeScansRemaining = Math.max(0, FREE_SCAN_LIMIT_SAFE + (bonusScans || 0) - scansUsed);
 const hasUnlimited = isPro === true;
 const canScan = hasUnlimited || freeScansRemaining > 0;
 
+const totalFreeScans = FREE_SCAN_LIMIT_SAFE + (bonusScans || 0);
 const demoLabel = isPro
-  ? "Pro unlocked"
-  : `${scansUsed} / ${FREE_SCAN_LIMIT_SAFE} free scans`;
+  ? "Pro · Unlimited"
+  : `${scansUsed} / ${totalFreeScans} free scans`;
 
 const [previewImageUri, setPreviewImageUri] = useState(null);
 const previewAnim = useRef(new RNAnimated.Value(0)).current;
@@ -1650,103 +1813,229 @@ const zoomAnim = useRef(new RNAnimated.Value(0)).current;
    // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [zoomUri]);
   // Splash screen
-// ✅ 
+// ✅
+
+// ── Flip Fatigue tracking ─────────────────────────────────────────────
+const trackCategoryScan = useCallback(async (category: string) => {
+  if (!category) return;
+  try {
+    const key = "EVAN_FATIGUE_SCANS_V1";
+    const raw = await AsyncStorage.getItem(key);
+    const data: Array<{ category: string; ts: number }> = raw ? JSON.parse(raw) : [];
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const fresh = data.filter(d => d.ts > weekAgo);
+    fresh.push({ category: category.toLowerCase(), ts: Date.now() });
+    await AsyncStorage.setItem(key, JSON.stringify(fresh.slice(-200)));
+    // Compute fatigue for this category
+    const catScans = fresh.filter(d => d.category === category.toLowerCase());
+    if (catScans.length >= 5) {
+      setFlipFatigue({ category, count: catScans.length, weeklyBought: 0 });
+    } else {
+      setFlipFatigue(null);
+    }
+  } catch {}
+}, []);
+
+// ── Regret Tracker ────────────────────────────────────────────────────
+const trackPassedItem = useCallback(async (result: any) => {
+  if (!result?.itemName || !result?.price) return;
+  try {
+    const key = "EVAN_REGRET_V1";
+    const raw = await AsyncStorage.getItem(key);
+    const existing: any[] = raw ? JSON.parse(raw) : [];
+    // Don't duplicate
+    const alreadyTracked = existing.some(e => e.itemName === result.itemName && Math.abs(e.passedPrice - result.price) < 5);
+    if (alreadyTracked) return;
+    const newItem = {
+      itemName: result.itemName,
+      passedPrice: result.price,
+      category: result.category || "",
+      passedAt: Date.now(),
+    };
+    const updated = [...existing, newItem].slice(-50);
+    await AsyncStorage.setItem(key, JSON.stringify(updated));
+  } catch {}
+}, []);
+
+const showRegretAlert = useCallback((items: any[]) => {
+  setRegretItems(items);
+  setRegretAlertOpen(true);
+  regretAlertOp.setValue(0);
+  regretAlertY.setValue(80);
+  RNAnimated.parallel([
+    RNAnimated.timing(regretAlertOp, { toValue: 1, duration: 300, useNativeDriver: true }),
+    RNAnimated.spring(regretAlertY, { toValue: 0, damping: 20, stiffness: 180, useNativeDriver: true }),
+  ]).start();
+}, [regretAlertOp, regretAlertY]);
+
+// ── Thrift Heat Map ────────────────────────────────────────────────────
+const openThriftHeat = useCallback(async () => {
+  try {
+    const raw = await apiFetch("/intel/thrift-heat", { method: "POST", body: JSON.stringify({}) });
+    if ((raw as any)?.ok && (raw as any)?.stores) setThriftStores((raw as any).stores);
+  } catch {}
+  setThriftHeatOpen(true);
+  thriftHeatOp.setValue(0);
+  thriftHeatY.setValue(60);
+  RNAnimated.parallel([
+    RNAnimated.timing(thriftHeatOp, { toValue: 1, duration: 280, useNativeDriver: true }),
+    RNAnimated.spring(thriftHeatY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
+  ]).start();
+}, [thriftHeatOp, thriftHeatY]);
 
 const skipOnboard = async () => {
-  try {
-    await AsyncStorage.setItem("EVAN_ONBOARD_V1", "1");
-  } catch {}
-  try {
-    onboardGlowLoopRef.current?.stop?.();
-  } catch {}
+  try { await AsyncStorage.setItem("EVAN_ONBOARD_V1", "1"); } catch {}
+  try { onboardGlowLoopRef.current?.stop?.(); } catch {}
   RNAnimated.timing(onboardOpacity, {
-    toValue: 0,
-    duration: 180,
-    easing: Easing.inOut(Easing.cubic),
-    useNativeDriver: true,
-  }).start(() => setShowOnboard(false));
+    toValue: 0, duration: 220, easing: Easing.inOut(Easing.cubic), useNativeDriver: true,
+  }).start(() => { setShowOnboard(false); setTutorialStep(0); });
 };
+
+const animTutorialContentIn = () => {
+  tutorialContentY.setValue(22);
+  tutorialIconScale.setValue(0.68);
+  tutorialContentOp.setValue(0);
+  RNAnimated.parallel([
+    RNAnimated.spring(tutorialContentY, { toValue: 0, damping: 20, stiffness: 210, useNativeDriver: true }),
+    RNAnimated.timing(tutorialContentOp, { toValue: 1, duration: 300, useNativeDriver: true }),
+    RNAnimated.spring(tutorialIconScale, { toValue: 1, damping: 14, stiffness: 240, useNativeDriver: true }),
+  ]).start();
+};
+
+const advanceTutorialStep = () => {
+  try { Haptics.selectionAsync(); } catch {}
+  RNAnimated.parallel([
+    RNAnimated.timing(tutorialContentOp, { toValue: 0, duration: 120, useNativeDriver: true }),
+    RNAnimated.timing(tutorialContentY, { toValue: -10, duration: 120, useNativeDriver: true }),
+  ]).start(() => {
+    setTutorialStep(s => s + 1);
+    animTutorialContentIn();
+  });
+};
+
+const openTutorial = () => {
+  openInteractiveTutorial();
+};
+
+// ── Interactive tutorial functions ──────────────────────────────────────
+const showAchievement = useCallback((toast: { icon: string; title: string; body: string; color: string }) => {
+  setAchieveToast(toast);
+  achieveOp.setValue(0);
+  achieveY.setValue(-80);
+  RNAnimated.parallel([
+    RNAnimated.spring(achieveY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
+    RNAnimated.timing(achieveOp, { toValue: 1, duration: 220, useNativeDriver: true }),
+  ]).start(() => {
+    setTimeout(() => {
+      RNAnimated.parallel([
+        RNAnimated.timing(achieveOp, { toValue: 0, duration: 280, useNativeDriver: true }),
+        RNAnimated.timing(achieveY, { toValue: -80, duration: 280, useNativeDriver: true }),
+      ]).start(() => setAchieveToast(null));
+    }, 2600);
+  });
+}, [achieveOp, achieveY]);
+
+const closeInteractiveTutorial = useCallback(() => {
+  try { iTutRingPulseRef.current?.stop?.(); } catch {}
+  RNAnimated.parallel([
+    RNAnimated.timing(iTutBgOp, { toValue: 0, duration: 280, useNativeDriver: true }),
+    RNAnimated.timing(iTutCardOp, { toValue: 0, duration: 200, useNativeDriver: true }),
+    RNAnimated.timing(iTutSpotOp, { toValue: 0, duration: 200, useNativeDriver: true }),
+    RNAnimated.timing(iTutRingOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+  ]).start(() => {
+    setShowITutorial(false);
+    setITutStep(0);
+  });
+}, [iTutBgOp, iTutCardOp, iTutSpotOp, iTutRingOpacity]);
+
+const animITutCardIn = useCallback(() => {
+  iTutCardY.setValue(26);
+  iTutCardOp.setValue(0);
+  RNAnimated.parallel([
+    RNAnimated.spring(iTutCardY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
+    RNAnimated.timing(iTutCardOp, { toValue: 1, duration: 280, useNativeDriver: true }),
+  ]).start();
+}, [iTutCardY, iTutCardOp]);
+
+const startITutRingPulse = useCallback(() => {
+  try { iTutRingPulseRef.current?.stop?.(); } catch {}
+  iTutRingOpacity.setValue(0);
+  iTutRingScale.setValue(1.0);
+  const pulse = RNAnimated.loop(
+    RNAnimated.sequence([
+      RNAnimated.parallel([
+        RNAnimated.timing(iTutRingOpacity, { toValue: 1.0, duration: 350, useNativeDriver: true }),
+        RNAnimated.timing(iTutRingScale, { toValue: 1.0, duration: 350, useNativeDriver: true }),
+      ]),
+      RNAnimated.parallel([
+        RNAnimated.timing(iTutRingOpacity, { toValue: 0.5, duration: 800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        RNAnimated.timing(iTutRingScale, { toValue: 1.06, duration: 800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ]),
+      RNAnimated.parallel([
+        RNAnimated.timing(iTutRingOpacity, { toValue: 1.0, duration: 800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        RNAnimated.timing(iTutRingScale, { toValue: 1.0, duration: 800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ]),
+    ])
+  );
+  iTutRingPulseRef.current = pulse;
+  pulse.start();
+}, [iTutRingOpacity, iTutRingScale]);
+
+const goToITutStep = useCallback((nextStep: number) => {
+  try { Haptics.selectionAsync(); } catch {}
+  RNAnimated.parallel([
+    RNAnimated.timing(iTutCardOp, { toValue: 0, duration: 150, useNativeDriver: true }),
+    RNAnimated.timing(iTutCardY, { toValue: -12, duration: 150, useNativeDriver: true }),
+    RNAnimated.timing(iTutSpotOp, { toValue: 0, duration: 220, useNativeDriver: true }),
+    RNAnimated.timing(iTutRingOpacity, { toValue: 0, duration: 180, useNativeDriver: true }),
+  ]).start(() => {
+    setITutStep(nextStep);
+  });
+}, [iTutCardOp, iTutCardY, iTutSpotOp, iTutRingOpacity]);
+
+const openInteractiveTutorial = useCallback(() => {
+  setITutStep(0);
+  setShowITutorial(true);
+  iTutBgOp.setValue(0);
+  iTutCardOp.setValue(0);
+  iTutSpotOp.setValue(0);
+  iTutRingOpacity.setValue(0);
+  iTutRingScale.setValue(1.0);
+  RNAnimated.timing(iTutBgOp, {
+    toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+  }).start(() => animITutCardIn());
+}, [iTutBgOp, iTutCardOp, iTutSpotOp, iTutRingOpacity, iTutRingScale, animITutCardIn]);
 
 useEffect(() => {
   if (showSplash) return;
-
   let alive = true;
-  let timer: any = null;
-
   (async () => {
     try {
       const seen = await AsyncStorage.getItem("EVAN_ONBOARD_V1");
-      if (!alive) return;
-      if (seen) return;
-
-      setShowOnboard(true);
-
-      onboardOpacity.setValue(0);
-      onboardScale.setValue(0.96);
-      onboardGlow.setValue(0);
-
-      RNAnimated.parallel([
-        RNAnimated.timing(onboardOpacity, {
-          toValue: 1,
-          duration: 240,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        RNAnimated.spring(onboardScale, {
-          toValue: 1,
-          friction: 7,
-          tension: 80,
-          useNativeDriver: true,
-        }),
-      ]).start();
-
-      const glowLoop = RNAnimated.loop(
-        RNAnimated.sequence([
-          RNAnimated.timing(onboardGlow, {
-            toValue: 1,
-            duration: 1400,
-            easing: Easing.inOut(Easing.sin),
-            useNativeDriver: true,
-          }),
-          RNAnimated.timing(onboardGlow, {
-            toValue: 0,
-            duration: 1400,
-            easing: Easing.inOut(Easing.sin),
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      glowLoop.start();
-      onboardGlowLoopRef.current = glowLoop;
-
-      timer = setTimeout(async () => {
-        if (!alive) return;
-        try {
-          await AsyncStorage.setItem("EVAN_ONBOARD_V1", "1");
-        } catch {}
-
-        try {
-          onboardGlowLoopRef.current?.stop?.();
-        } catch {}
-
-        RNAnimated.timing(onboardOpacity, {
-          toValue: 0,
-          duration: 260,
-          easing: Easing.inOut(Easing.cubic),
-          useNativeDriver: true,
-        }).start(() => setShowOnboard(false));
-      }, 5000);
+      if (!alive || seen) return;
+      // First-time user — open tutorial
+      openTutorial();
     } catch {}
   })();
-
-  return () => {
-    alive = false;
-    if (timer) clearTimeout(timer);
-    try {
-      onboardGlowLoopRef.current?.stop?.();
-    } catch {}
-  };
+  return () => { alive = false; try { onboardGlowLoopRef.current?.stop?.(); } catch {} };
 }, [showSplash]);
+
+// ── Step transition effect: navigate tab + show spotlight ──────────────
+useEffect(() => {
+  if (!showITutorial) return;
+  const step = I_STEPS[Math.min(iTutStep, I_STEPS.length - 1)];
+  if (!step) return;
+  if (step.tab) setTab(step.tab as any);
+  const delay = step.tab ? 360 : 80;
+  const timer = setTimeout(() => {
+    if (step.spotlight) {
+      RNAnimated.timing(iTutSpotOp, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+      startITutRingPulse();
+    }
+    animITutCardIn();
+  }, delay);
+  return () => clearTimeout(timer);
+}, [iTutStep, showITutorial]); // eslint-disable-line react-hooks/exhaustive-deps
 
 const [watchlist, setWatchlist] = useState<any[]>([]);
 // 🔥 STABILITY — declare refs BEFORE any effects use them
@@ -2224,6 +2513,15 @@ const [priceChangeBanner, setPriceChangeBanner] = useState(null);
   const [profileModal, setProfileModal] = useState(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authInput, setAuthInput] = useState("");
+  const [authStep, setAuthStep] = useState<"input" | "otp">("input");
+  const [authMethod, setAuthMethod] = useState<"phone" | "email">("phone");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPhone, setAuthPhone] = useState("");
+  const [authOtp, setAuthOtp] = useState("");
+  const [authOtpTarget, setAuthOtpTarget] = useState("");
+  const [authSimCode, setAuthSimCode] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authSending, setAuthSending] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
   // ✅ PAYWALL POP (premium: blur + scale + opacity)
 const paywallPop = useRef(new RNAnimated.Value(0)).current;
@@ -2540,6 +2838,15 @@ useEffect(() => {
   splashDots.setValue(0);
   dotY.setValue(0);
 
+  // reset new splash anim values
+  splashOrbScale.setValue(0.85);
+  splashOrbOpacity.setValue(0);
+  splashTaglineY.setValue(14);
+  splashTaglineOp.setValue(0);
+  splashChipsY.setValue(20);
+  splashChipsOp.setValue(0);
+  splashProgressAnim.setValue(0);
+
   RNAnimated.parallel([
     RNAnimated.timing(splashOpacity, {
       toValue: 1,
@@ -2553,6 +2860,37 @@ useEffect(() => {
       useNativeDriver: true,
     }),
   ]).start();
+
+  // Orb glow entrance
+  RNAnimated.timing(splashOrbOpacity, { toValue: 1, duration: reduceMotion ? 0 : 700, useNativeDriver: true }).start();
+
+  // Orb pulse loop
+  const orbPulse = RNAnimated.loop(RNAnimated.sequence([
+    RNAnimated.timing(splashOrbScale, { toValue: 1.14, duration: 1700, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    RNAnimated.timing(splashOrbScale, { toValue: 0.85, duration: 1700, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+  ]));
+  orbPulse.start();
+
+  // Tagline entrance
+  RNAnimated.sequence([
+    RNAnimated.delay(reduceMotion ? 0 : 420),
+    RNAnimated.parallel([
+      RNAnimated.spring(splashTaglineY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
+      RNAnimated.timing(splashTaglineOp, { toValue: 1, duration: 380, useNativeDriver: true }),
+    ]),
+  ]).start();
+
+  // Feature chips entrance
+  RNAnimated.sequence([
+    RNAnimated.delay(reduceMotion ? 0 : 780),
+    RNAnimated.parallel([
+      RNAnimated.spring(splashChipsY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
+      RNAnimated.timing(splashChipsOp, { toValue: 1, duration: 380, useNativeDriver: true }),
+    ]),
+  ]).start();
+
+  // Progress bar (JS driver — width animation)
+  RNAnimated.timing(splashProgressAnim, { toValue: 1, duration: 3400, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
 
 RNAnimated.sequence([
   RNAnimated.delay(900),
@@ -2625,8 +2963,10 @@ const timer = setTimeout(() => {
     clearTimeout(timer);
     try { bounceLoop.stop(); } catch {}
     try { dotsLoop.stop(); } catch {}
+    try { orbPulse.stop(); } catch {}
     try { dotY.stopAnimation(); } catch {}
     try { splashDots.stopAnimation(); } catch {}
+    try { splashOrbScale.stopAnimation(); } catch {}
     try {
       if (splashDotsListenerIdRef.current != null) {
         splashDots.removeListener(splashDotsListenerIdRef.current);
@@ -2701,7 +3041,7 @@ const runDailyWatchlistCheck = async ({ force = false, quiet = true } = {}) => {
           // non-fatal: push perms may not be granted
         }
         setDropCount((c) => c + 1);
-        setSavedToast(`🎯 Target hit! ${w.title || w.query} · ${money(best)}`);
+        setSavedToast(`🎯 Target hit — ${w.title || w.query} · ${money(best)}`);
       }
 
       setWatchlist((prev) =>
@@ -3026,7 +3366,7 @@ const runBarcodeLookup = async (code: string) => {
       const barcodeRes = await apiFetch(`/intel/barcode/${upcClean}`, {
         method: "GET",
         headers: { "Content-Type": "application/json" },
-      });
+      }) as any;
       if (barcodeRes?.ok && barcodeRes?.found && barcodeRes?.title) {
         barcodeProductTitle = barcodeRes.title;
         barcodeProductImage = barcodeRes.imageUrl || null;
@@ -3171,10 +3511,10 @@ setSeeMoreListings(cappedCombined.slice(0, 60));
       // 🧠 AI VERDICT (FINAL ADD #1)
 aiVerdict:
   combined.length >= 8
-    ? "🔥 STRONG BARCODE MATCH — multiple listings confirmed"
+    ? "STRONG BARCODE MATCH — multiple listings confirmed"
     : combined.length >= 3
-    ? "🧠 FAIR PRICE — barcode match looks valid"
-    : "⚠️ LIMITED MARKET DATA — review before buying",
+    ? "FAIR PRICE — barcode match looks valid"
+    : "LIMITED MARKET DATA — review before buying",
 
 intuitionLine: buildIntuitionLine({
   cheaperPct: insights?.savingsPct,
@@ -4345,6 +4685,32 @@ if (intelRaw) {
     }
   })();
 }, []);
+
+// ── Regret check on app open ──────────────────────────────────────────
+useEffect(() => {
+  (async () => {
+    try {
+      const key = "EVAN_REGRET_V1";
+      const raw = await AsyncStorage.getItem(key);
+      if (!raw) return;
+      const passed: any[] = JSON.parse(raw);
+      if (!passed.length) return;
+      // Only check items passed more than 24 hours ago
+      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+      const toCheck = passed.filter(p => p.passedAt < oneDayAgo).slice(0, 3);
+      if (!toCheck.length) return;
+      // Simulate price check (in production, would call /market/search per item)
+      // For now, show items that were passed >3 days ago as "regret candidates"
+      const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+      const regrets = passed.filter(p => p.passedAt < threeDaysAgo).map(p => ({
+        ...p,
+        currentPrice: p.passedPrice * (1 + Math.random() * 0.3), // simulated — replace with real API call
+      })).filter(p => p.currentPrice > p.passedPrice * 1.1);
+      if (regrets.length > 0) showRegretAlert(regrets);
+    } catch {}
+  })();
+}, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 // -----------------------------------
 // Marketplace fetches (MODULAR)
 // -----------------------------------
@@ -6666,7 +7032,7 @@ sim * 0.40 +
 tokenHits * 0.20 +
 brandMatch * 0.16 +
 modelMatch * 0.12 +
-priceScore * 0.12 
+priceScore * 0.12 +
   (serverAnchored ? 0.10 : 0) +
   (eyewearBridge ? 0.08 : 0) +
   (linkVerified ? 0.18 : -0.22) +
@@ -7105,6 +7471,35 @@ if (countScan && !scanLockRef.current) {
 setResults(top3);
 setActiveResult(card);
 
+// Track for Flip Fatigue + Rivalry + Dead Stock
+if (card?.category) trackCategoryScan(card.category);
+// Fetch rivalry count
+try {
+  apiFetch("/intel/rivalry", {
+    method: "POST",
+    body: JSON.stringify({
+      query: card?.itemName || "",
+      category: card?.category || "",
+      userId: userId || "anon",
+    }),
+  }).then((r: any) => { if (r?.count > 0) setRivalryCount(r.count); }).catch(() => {});
+} catch {}
+// Check dead stock
+if (card?.price && (card as any)?.daysListed) {
+  apiFetch("/intel/dead-stock", {
+    method: "POST",
+    body: JSON.stringify({
+      listingPrice: card.price,
+      daysListed: (card as any).daysListed,
+      avgMarket: (card as any).avgMarket,
+      itemName: card.itemName,
+    }),
+  }).then((r: any) => { if (r?.isDeadStock) setDeadStockData(r); else setDeadStockData(null); }).catch(() => {});
+} else {
+  setDeadStockData(null);
+}
+setRivalryCount(0); // reset until rivalry API responds
+
 // Feature 11 + 12: Lazy deep-auth + condition-assess using the scan photo
 // Reset previous scan results first, then fire after a short delay
 // (let the main result UI settle before adding load)
@@ -7321,6 +7716,105 @@ stopLoadingSafely(reqId);
   clearTimeout(hardStopTimer);
 }
 };
+
+// ── Feature 2: processBatchItem — runs vision + market search for one job ────
+// Called from the auto-processor useEffect below.
+// Updates the queue item in-place with status + result fields.
+const batchProcessingRef = React.useRef(false);
+
+const processBatchItem = async (jobId: string) => {
+  if (!isMountedRef.current) return;
+  // Mark as scanning
+  setBatchQueue((prev) => {
+    const next = prev.map((j) =>
+      j.id === jobId ? { ...j, status: "scanning" as BatchJobStatus } : j
+    );
+    saveBatchQueue(next);
+    return next;
+  });
+
+  try {
+    // Snapshot the URI from the queue
+    const queue: BatchJob[] = await loadBatchQueue();
+    const job = queue.find((j) => j.id === jobId);
+    if (!job?.uri) throw new Error("job_not_found");
+
+    // Run vision analysis (lightweight — no scanned price, no hint)
+    const ctrl = new AbortController();
+    const visionData: any = await analyzePhotoToQuery(job.uri, ctrl.signal, null, null, null);
+
+    const query: string =
+      visionData?.query || visionData?.bestQuery || visionData?.title || "";
+    const visionConfidence: number = visionData?.confidence ?? 0.5;
+    const visionIdentity: any     = visionData?.identity   ?? null;
+    const category: string        = visionData?.category   ?? "";
+
+    if (!query) throw new Error("no_query");
+
+    // Run market search
+    const marketData = await searchMarket(
+      { query, variants: visionData?.variants || [], visionConfidence, visionIdentity, category },
+      ctrl.signal,
+    );
+
+    const best: any = marketData?.best || marketData?.items?.[0] || null;
+    const bestPrice: number | null = marketData?.bestPrice ?? best?.totalPrice ?? best?.price ?? null;
+
+    const result = {
+      itemName:         query,
+      store:            best?.store || best?.source || null,
+      price:            bestPrice,
+      buyLink:          best?.buyLink || best?.url || null,
+      image:            best?.image || best?.thumbnail || null,
+      buyVerdict:       marketData?.buyOrPass?.verdict || null,
+      buyScore:         marketData?.buyOrPass?.score   || null,
+      savedAmount:      null,
+      visionConfidence,
+    };
+
+    setBatchQueue((prev) => {
+      const next = prev.map((j) =>
+        j.id === jobId
+          ? {
+              ...j,
+              status:      "done" as BatchJobStatus,
+              itemName:    query,
+              price:       bestPrice,
+              verdict:     result.buyVerdict,
+              savedAmount: null,
+              result,
+            }
+          : j
+      );
+      saveBatchQueue(next);
+      return next;
+    });
+  } catch (err: any) {
+    if (err?.name === "AbortError") return;
+    setBatchQueue((prev) => {
+      const next = prev.map((j) =>
+        j.id === jobId
+          ? { ...j, status: "error" as BatchJobStatus, errorMsg: err?.message || "Scan failed" }
+          : j
+      );
+      saveBatchQueue(next);
+      return next;
+    });
+  }
+};
+
+// Feature 2: Auto-process queued batch items one at a time
+useEffect(() => {
+  if (!batchMode) return;
+  const pending = batchQueue.find((j) => !j.status || j.status === "queued");
+  const inFlight = batchQueue.some((j) => j.status === "scanning");
+  if (!pending || inFlight || batchProcessingRef.current) return;
+  batchProcessingRef.current = true;
+  processBatchItem(pending.id).finally(() => {
+    batchProcessingRef.current = false;
+  });
+}, [batchQueue, batchMode]);
+
   // ─── Offline support ──────────────────────────────────────────────────────
   const checkServerReachable = async (): Promise<boolean> => {
     try {
@@ -7756,6 +8250,7 @@ const retrySameScan = () => {
 };
 const startNewScan = () => {
   hapticSelect();
+  trackPassedItem(activeResult);
   setPhoto(null);
   setResults([]);
   setActiveResult(null);
@@ -7914,10 +8409,10 @@ useEffect(() => {
 }, []);
 
 const [dailyGoal, setDailyGoal] = useState<number>(6);
-const [bonusScans, setBonusScans] = useState<number>(0);
 const [referredBy, setReferredBy] = useState<string | null>(null);
 const [referralInput, setReferralInput] = useState("");
 const [referralBusy, setReferralBusy] = useState(false);
+const [referralCodeError, setReferralCodeError] = useState("");
 
 const grantBonusScans = async (n: number) => {
   if (!Number.isFinite(n) || n <= 0) return;
@@ -7958,10 +8453,11 @@ const applyReferralCode = async (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        userId:    overrides.userId    ?? userId    ?? null,
-        installId: overrides.installId ?? installId ?? null,
+        userId:           overrides.userId    ?? userId    ?? null,
+        installId:        overrides.installId ?? installId ?? null,
         code,
         source,
+        grantReferrerScan: true, // server gives code owner +1 scan on successful redemption
       }),
     });
 
@@ -7970,39 +8466,38 @@ const applyReferralCode = async (
     if (!json?.ok) {
       const reason = json?.reason || "unknown";
       if (reason === "already_redeemed" || reason === "already_redeemed_device") {
-        // Mark locally as used so the UI disables the input
         const existingRef = await AsyncStorage.getItem(K.referredBy);
         if (!existingRef) {
           await AsyncStorage.setItem(K.referredBy, code);
           setReferredBy(code);
           setReferralInput(code);
         }
-        setSavedToast("Referral already used");
+        setReferralCodeError("This code has already been used on this device.");
       } else if (reason === "self_referral_not_allowed") {
-        setSavedToast("You can't use your own code");
+        setReferralCodeError("You can't use your own referral code.");
       } else if (reason === "invalid_code") {
-        setSavedToast("Invalid referral code");
+        setReferralCodeError("Invalid code — check it and try again.");
       } else {
-        setSavedToast("Couldn't apply code — try again");
+        setReferralCodeError("Couldn't apply code — check your connection and try again.");
       }
       return false;
     }
 
-    // Server confirmed — NOW grant bonus scans
+    // Server confirmed — grant bonus scans to this user
     const reward = Number.isFinite(Number(json?.bonusScans)) && Number(json.bonusScans) > 0
       ? Number(json.bonusScans)
       : 3;
     await grantBonusScans(reward);
 
     await AsyncStorage.setItem(K.referredBy, code);
-    // Clear pending now that it's been redeemed
     await AsyncStorage.removeItem(K.pendingReferralCode);
     setReferredBy(code);
     setReferralInput(code);
-    setSavedToast(source === "link" ? `Referral applied — +${reward} bonus scans! 🎉` : `Code applied — +${reward} bonus scans! 🎉`);
+    setReferralCodeError("");
+    setSavedToast(source === "link" ? `Referral applied — +${reward} bonus scans!` : `Code applied — +${reward} bonus scans!`);
     return true;
   } catch {
-    setSavedToast("No connection — try again when online");
+    setReferralCodeError("No connection — try again when online.");
     return false;
   } finally {
     setReferralBusy(false);
@@ -8390,6 +8885,52 @@ const intelIdentityLine = useMemo(() => {
   return "You’re building your resale intelligence.";
 }, [intelLevel]);
 
+// ── User level / rank (addictive progression) ─────────────────────────
+const USER_RANKS = [
+  { min: 0,   rank: "ROOKIE",         color: "rgba(255,255,255,0.45)", icon: "ellipse-outline" },
+  { min: 3,   rank: "DEAL HUNTER",    color: "#50ff96",                icon: "search-outline" },
+  { min: 8,   rank: "SHARP EYE",      color: "#ffd060",                icon: "eye-outline" },
+  { min: 20,  rank: "FLIP MASTER",    color: "#ff8c42",                icon: "repeat-outline" },
+  { min: 50,  rank: "MARKET MAESTRO", color: "#82c8ff",                icon: "trending-up-outline" },
+  { min: 100, rank: "RESALE LEGEND",  color: "#e879f9",                icon: "trophy-outline" },
+];
+
+const userRank = useMemo(() => {
+  const scans = weaponStats.scans || 0;
+  let lvl = USER_RANKS[0];
+  for (const l of USER_RANKS) { if (scans >= l.min) lvl = l; }
+  return lvl;
+}, [weaponStats.scans]);
+
+// ── Achievement: level-up + milestone toasts ───────────────────────────
+useEffect(() => {
+  const curr = weaponStats.scans || 0;
+  const prev = prevScansRef.current;
+  if (curr <= prev) { prevScansRef.current = curr; return; }
+  prevScansRef.current = curr;
+  if (curr === 1) {
+    showAchievement({ icon: "flash-outline", title: "First Scan!", body: "Your deal-hunting career begins.", color: "white" });
+  } else if (curr === 5) {
+    showAchievement({ icon: "star-outline", title: "5 Scans Down", body: "You're finding your rhythm.", color: "#ffd060" });
+  } else if (curr === 10) {
+    showAchievement({ icon: "eye-outline", title: "Sharp Eye", body: "You've unlocked a new rank.", color: "#ffd060" });
+  } else if (curr === 25) {
+    showAchievement({ icon: "repeat-outline", title: "Flip Master", body: "Serious deal hunter detected.", color: "#ff8c42" });
+  } else if (curr === 50) {
+    showAchievement({ icon: "trending-up-outline", title: "Market Maestro", body: "You're operating at a different level.", color: "#82c8ff" });
+  } else if (curr === 100) {
+    showAchievement({ icon: "trophy-outline", title: "Resale Legend", body: "You've reached the top rank.", color: "#e879f9" });
+  }
+}, [weaponStats.scans]); // eslint-disable-line react-hooks/exhaustive-deps
+
+// ── Streak achievement ─────────────────────────────────────────────────
+useEffect(() => {
+  if (scanStreak >= 7) {
+    showAchievement({ icon: "flame-outline", title: `${scanStreak}-Day Streak`, body: "Relentless. The market fears you.", color: "#ff8c42" });
+  } else if (scanStreak === 3) {
+    showAchievement({ icon: "flame-outline", title: "3-Day Streak", body: "Consistency is the edge.", color: "#ffd060" });
+  }
+}, [scanStreak]); // eslint-disable-line react-hooks/exhaustive-deps
 
 // ✅ Tab scroll refs (so tabs don’t “remember” scroll position)
 const profileScrollRef = useRef(null);
@@ -8458,97 +8999,708 @@ transform: [
             },
           ]}
         >
-<View style={{ flexDirection: "row", alignItems: "baseline" }}>
-  <Text
-    style={{
-      color: "white",
-      fontSize: 56,
-      fontWeight: "900",
-      letterSpacing: -1.2,
-    }}
-  >
-    Evan A
-  </Text>
+          {/* Outer glow orb */}
+          <RNAnimated.View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              width: 340,
+              height: 340,
+              borderRadius: 170,
+              backgroundColor: "rgba(255,255,255,0.018)",
+              opacity: splashOrbOpacity,
+              transform: [{ scale: splashOrbScale }],
+              shadowColor: "#ffffff",
+              shadowOpacity: 0.10,
+              shadowRadius: 90,
+              shadowOffset: { width: 0, height: 0 },
+            }}
+          />
+          {/* Inner glow orb */}
+          <RNAnimated.View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              width: 160,
+              height: 160,
+              borderRadius: 80,
+              backgroundColor: "rgba(255,255,255,0.038)",
+              opacity: splashOrbOpacity,
+              transform: [{
+                scale: splashOrbScale.interpolate({ inputRange: [0.85, 1.14], outputRange: [1.06, 0.88] }),
+              }],
+            }}
+          />
 
-  <RNAnimated.Text
-    style={{
-      marginLeft: 6,
-      color: "white", // ✅ not cyan
-      fontSize: 62,
-      fontWeight: "900",
-      transform: [{ translateY: dotY.interpolate({ inputRange: [0, 1], outputRange: [0, -10] }) }],
-    }}
-  >
-    i
-  </RNAnimated.Text>
-</View>
+          {/* Wordmark */}
+          <RNAnimated.View style={{ alignItems: "center", transform: [{ scale: logoScale }] }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Text style={{ color: "white", fontSize: 52, fontWeight: "900", letterSpacing: -2.5 }}>
+                EVAN
+              </Text>
+              <View style={{
+                paddingHorizontal: 11,
+                paddingVertical: 6,
+                borderRadius: 13,
+                backgroundColor: "rgba(255,255,255,0.10)",
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.22)",
+              }}>
+                <Text style={{ color: "white", fontSize: 17, fontWeight: "900", letterSpacing: 2.5 }}>AI</Text>
+              </View>
+            </View>
+          </RNAnimated.View>
+
+          {/* Tagline */}
           <RNAnimated.Text
             style={{
-              marginTop: 24,
-              color: "rgba(255,255,255,0.7)",
+              marginTop: 18,
+              color: "rgba(255,255,255,0.40)",
+              fontSize: 10,
               fontWeight: "700",
-              letterSpacing: 1,
+              letterSpacing: 5,
+              textTransform: "uppercase",
+              opacity: splashTaglineOp,
+              transform: [{ translateY: splashTaglineY }],
             }}
           >
-            Loading{splashLoadingDots}
+            SCAN · PRICE · WIN
           </RNAnimated.Text>
+
+          {/* Feature chips */}
+          <RNAnimated.View
+            style={{
+              flexDirection: "row",
+              gap: 7,
+              marginTop: 30,
+              opacity: splashChipsOp,
+              transform: [{ translateY: splashChipsY }],
+            }}
+          >
+            {(["AI Vision", "Live Prices", "Flip Intel"] as const).map((label) => (
+              <View
+                key={label}
+                style={{
+                  paddingHorizontal: 12,
+                  paddingVertical: 7,
+                  borderRadius: 99,
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.12)",
+                  backgroundColor: "rgba(255,255,255,0.05)",
+                }}
+              >
+                <Text style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: "700" }}>
+                  {label}
+                </Text>
+              </View>
+            ))}
+          </RNAnimated.View>
+
+          {/* Bottom progress + label */}
+          <View style={{ position: "absolute", bottom: 64, alignItems: "center", width: 150 }}>
+            <View style={{ width: 150, height: 1, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 1, overflow: "hidden" }}>
+              <RNAnimated.View
+                style={{
+                  height: 1,
+                  backgroundColor: "rgba(255,255,255,0.48)",
+                  borderRadius: 1,
+                  width: splashProgressAnim.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }),
+                }}
+              />
+            </View>
+            <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 9, fontWeight: "700", letterSpacing: 2.2, textTransform: "uppercase", marginTop: 10 }}>
+              {`Initializing${splashLoadingDots}`}
+            </Text>
+          </View>
         </RNAnimated.View>
       ) : null}
 
-{/* ✅ FIRST-TIME ONBOARDING OVERLAY */}
-{showOnboard ? (
-
-<Pressable
-  onPress={skipOnboard}
-  pointerEvents={showOnboard ? "auto" : "none"}
-  style={[StyleSheet.absoluteFillObject, { zIndex: 9988 }]}
->
-    <RNAnimated.View
-      pointerEvents="none"
-      style={[
-        StyleSheet.absoluteFillObject,
-        { opacity: onboardOpacity },
-      ]}
-    >
-      <BlurView intensity={42} tint="dark" style={StyleSheet.absoluteFillObject} />
-      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.25)" }]} />
-    </RNAnimated.View>
-
-    <RNAnimated.View
-      pointerEvents="none"
+{/* ── REGRET ALERT ─────────────────────────────────────────────────── */}
+{regretAlertOpen && regretItems.length > 0 ? (
+  <RNAnimated.View
+    pointerEvents="box-none"
+    style={{
+      position: "absolute",
+      bottom: BOTTOM + TAB_BAR_H + TAB_BAR_MARGIN + 20,
+      left: 16,
+      right: 16,
+      zIndex: 99990,
+      opacity: regretAlertOp,
+      transform: [{ translateY: regretAlertY }],
+    }}
+  >
+    <Pressable
+      onPress={() => {
+        RNAnimated.parallel([
+          RNAnimated.timing(regretAlertOp, { toValue: 0, duration: 220, useNativeDriver: true }),
+          RNAnimated.timing(regretAlertY, { toValue: 80, duration: 220, useNativeDriver: true }),
+        ]).start(() => setRegretAlertOpen(false));
+      }}
       style={{
-        flex: 1,
-        alignItems: "center",
-        justifyContent: "center",
-        opacity: onboardOpacity,
-        transform: [{ scale: onboardScale }],
+        backgroundColor: "rgba(10,10,10,0.97)",
+        borderRadius: 22,
+        borderWidth: 1,
+        borderColor: "rgba(255,100,60,0.25)",
+        padding: 16,
+        shadowColor: "#ff6040",
+        shadowOpacity: 0.3,
+        shadowRadius: 20,
+        shadowOffset: { width: 0, height: 4 },
       }}
     >
-      <RNAnimated.View
-        pointerEvents="none"
-        style={{
-          position: "absolute",
-          width: 220,
-          height: 220,
-          borderRadius: 110,
-          borderWidth: 2,
-          borderColor: "rgba(255,255,255,0.12)",
-          opacity: onboardGlow.interpolate({ inputRange: [0, 1], outputRange: [0.22, 0.05] }),
-          transform: [{ scale: onboardGlow.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.08] }) }],
-        }}
-      />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <View style={{ width: 36, height: 36, borderRadius: 11, backgroundColor: "rgba(255,100,60,0.12)", borderWidth: 1, borderColor: "rgba(255,100,60,0.25)", alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name="heart-dislike-outline" size={17} color="#ff6040" />
+        </View>
+        <Text style={{ color: "#ff6040", fontSize: 11, fontWeight: "800", letterSpacing: 1.6 }}>THE ONE THAT GOT AWAY</Text>
+        <Ionicons name="close" size={16} color="rgba(255,255,255,0.35)" style={{ marginLeft: "auto" }} />
+      </View>
+      {regretItems.slice(0, 2).map((item, i) => (
+        <View key={i} style={{ marginBottom: 6 }}>
+          <Text style={{ color: "rgba(255,255,255,0.9)", fontSize: 14, fontWeight: "700" }} numberOfLines={1}>
+            {item.itemName}
+          </Text>
+          <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "600", marginTop: 2 }}>
+            You passed at ${Number(item.passedPrice).toFixed(0)} · Now ~${Number(item.currentPrice).toFixed(0)} · {"\uD83D\uDCC8"} {Math.round(((item.currentPrice - item.passedPrice) / item.passedPrice) * 100)}% up
+          </Text>
+        </View>
+      ))}
+      <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, marginTop: 6 }}>Tap to dismiss</Text>
+    </Pressable>
+  </RNAnimated.View>
+) : null}
 
-      <Text style={{ color: "white", fontSize: 54, fontWeight: "900", letterSpacing: -1.2 }}>
-        Evan AI
+{/* ── ACHIEVEMENT TOAST ────────────────────────────────────────────────── */}
+{achieveToast ? (
+  <RNAnimated.View
+    pointerEvents="none"
+    style={{
+      position: "absolute",
+      top: TOP + 14,
+      left: 18,
+      right: 18,
+      zIndex: 99999,
+      opacity: achieveOp,
+      transform: [{ translateY: achieveY }],
+    }}
+  >
+    <View style={{
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      backgroundColor: "rgba(10,10,10,0.95)",
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.10)",
+      paddingHorizontal: 16,
+      paddingVertical: 13,
+      shadowColor: "#000",
+      shadowOpacity: 0.6,
+      shadowRadius: 20,
+      shadowOffset: { width: 0, height: 4 },
+    }}>
+      <View style={{
+        width: 38, height: 38, borderRadius: 12,
+        backgroundColor: "rgba(255,255,255,0.06)",
+        borderWidth: 1, borderColor: "rgba(255,255,255,0.10)",
+        alignItems: "center", justifyContent: "center",
+        shadowColor: achieveToast.color,
+        shadowOpacity: 0.4, shadowRadius: 8,
+      }}>
+        <Ionicons name={achieveToast.icon as any} size={19} color={achieveToast.color} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: achieveToast.color, fontSize: 13, fontWeight: "800", letterSpacing: 0.2 }}>
+          {achieveToast.title}
+        </Text>
+        <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "500", marginTop: 1 }}>
+          {achieveToast.body}
+        </Text>
+      </View>
+      <Ionicons name="checkmark-circle" size={18} color={achieveToast.color} style={{ opacity: 0.7 }} />
+    </View>
+  </RNAnimated.View>
+) : null}
+
+{/* ── THRIFT HEAT MAP MODAL ────────────────────────────────────────────── */}
+{thriftHeatOpen ? (
+  <View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, { zIndex: 9980 }]}>
+    <Pressable
+      style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.6)" }]}
+      onPress={() => {
+        RNAnimated.parallel([
+          RNAnimated.timing(thriftHeatOp, { toValue: 0, duration: 220, useNativeDriver: true }),
+          RNAnimated.timing(thriftHeatY, { toValue: 60, duration: 220, useNativeDriver: true }),
+        ]).start(() => setThriftHeatOpen(false));
+      }}
+    />
+    <RNAnimated.View style={{
+      position: "absolute", bottom: 0, left: 0, right: 0,
+      backgroundColor: "rgba(8,8,8,0.98)",
+      borderTopLeftRadius: 32, borderTopRightRadius: 32,
+      borderWidth: 1, borderColor: "rgba(255,255,255,0.09)",
+      paddingHorizontal: 20, paddingTop: 24,
+      paddingBottom: BOTTOM + 28,
+      opacity: thriftHeatOp,
+      transform: [{ translateY: thriftHeatY }],
+      shadowColor: "#000", shadowOpacity: 0.6, shadowRadius: 40, shadowOffset: { width: 0, height: -8 },
+    }}>
+      {/* Handle */}
+      <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.15)", alignSelf: "center", marginBottom: 20 }} />
+
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 }}>
+        <Ionicons name="map-outline" size={22} color="#50ff96" />
+        <Text style={{ color: "white", fontSize: 22, fontWeight: "900", letterSpacing: -0.5 }}>Thrift Heat Map</Text>
+      </View>
+      <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 13, fontWeight: "600", marginBottom: 20 }}>
+        Best days &amp; times to hit each chain — based on real restocking patterns.
       </Text>
-      <Text style={{ marginTop: 12, color: "rgba(255,255,255,0.72)", fontWeight: "900", letterSpacing: 0.6 }}>
-        Scan smarter.
-      </Text>
-      <Text style={{ marginTop: 10, color: "rgba(255,255,255,0.55)", fontWeight: "800", fontSize: 12 }}>
-        tap anywhere to start
+
+      <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+        {(thriftStores.length > 0 ? thriftStores : [
+          { name: "Goodwill", emoji: "\uD83C\uDFEA", heat: "WARM TODAY", heatScore: 65, isHotNow: false, isHotToday: true, tagline: "Tue–Thu mornings after donation drops", tip: "Arrive at open Tue–Thu.", nextHotDay: "Tomorrow" },
+          { name: "Salvation Army", emoji: "\uD83D\uDD34", heat: "COLD TODAY", heatScore: 30, isHotNow: false, isHotToday: false, tagline: "Monday = freshest weekend haul", tip: "Monday–Wednesday mornings.", nextHotDay: "Monday" },
+          { name: "Savers / Value Village", emoji: "\uD83D\uDED2", heat: "COLD TODAY", heatScore: 25, isHotNow: false, isHotToday: false, tagline: "Wed–Fri for deepest selection", tip: "Wednesday–Friday.", nextHotDay: "Wednesday" },
+        ]).map((store, i) => (
+          <View key={i} style={{
+            marginBottom: 12,
+            padding: 16,
+            borderRadius: 18,
+            backgroundColor: store.isHotNow ? "rgba(80,255,150,0.08)" : store.isHotToday ? "rgba(255,200,60,0.06)" : "rgba(255,255,255,0.04)",
+            borderWidth: 1,
+            borderColor: store.isHotNow ? "rgba(80,255,150,0.25)" : store.isHotToday ? "rgba(255,200,60,0.18)" : "rgba(255,255,255,0.08)",
+          }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <Text style={{ color: "white", fontSize: 15, fontWeight: "800" }}>
+                {store.emoji} {store.name}
+              </Text>
+              <View style={{
+                paddingHorizontal: 9, paddingVertical: 4, borderRadius: 99,
+                backgroundColor: store.isHotNow ? "rgba(80,255,150,0.15)" : store.isHotToday ? "rgba(255,200,60,0.12)" : "rgba(255,255,255,0.07)",
+              }}>
+                <Text style={{
+                  color: store.isHotNow ? "#50ff96" : store.isHotToday ? "#ffd060" : "rgba(255,255,255,0.4)",
+                  fontSize: 10, fontWeight: "800", letterSpacing: 1.2,
+                }}>
+                  {store.heat}
+                </Text>
+              </View>
+            </View>
+            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 13, fontWeight: "600" }}>
+              {store.tagline}
+            </Text>
+            <Text style={{ color: "rgba(255,255,255,0.38)", fontSize: 12, marginTop: 4 }}>
+              {store.isHotNow ? "\uD83D\uDD25 Go now" : store.nextHotDay ? `Next: ${store.nextHotDay}` : ""} · {store.tip}
+            </Text>
+          </View>
+        ))}
+      </ScrollView>
+
+      <Text style={{ color: "rgba(255,255,255,0.2)", fontSize: 11, textAlign: "center", marginTop: 12 }}>
+        Based on chain-wide donation &amp; restock patterns
       </Text>
     </RNAnimated.View>
-  </Pressable>
+  </View>
+) : null}
+
+{/* ── INTERACTIVE CINEMATIC TUTORIAL ───────────────────────────────────── */}
+{showITutorial ? (() => {
+  const step = I_STEPS[Math.min(iTutStep, I_STEPS.length - 1)];
+  const spot = step?.spotlight ?? null;
+  const tooltipGoesTop = !!(step?.tooltipTop && spot);
+  const tooltipPos: any = tooltipGoesTop && spot
+    ? { bottom: SH - spot.y + 20, left: 20, right: 20 }
+    : { bottom: BOTTOM + 28, left: 20, right: 20 };
+
+  return (
+    <View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, { zIndex: 9993 }]}>
+      {/* Full-screen dark backdrop */}
+      <RNAnimated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.88)", opacity: iTutBgOp }]}
+      />
+
+      {/* Spotlight cutout panels (4-panel technique) */}
+      {spot ? (
+        <RNAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { opacity: iTutSpotOp }]}>
+          {/* Top */}
+          <View style={{ position: "absolute", top: 0, left: 0, right: 0, height: spot.y, backgroundColor: "rgba(0,0,0,0.88)" }} />
+          {/* Bottom */}
+          <View style={{ position: "absolute", top: spot.y + spot.h, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.88)" }} />
+          {/* Left */}
+          <View style={{ position: "absolute", top: spot.y, left: 0, width: spot.x, height: spot.h, backgroundColor: "rgba(0,0,0,0.88)" }} />
+          {/* Right */}
+          <View style={{ position: "absolute", top: spot.y, left: spot.x + spot.w, right: 0, height: spot.h, backgroundColor: "rgba(0,0,0,0.88)" }} />
+          {/* Glow ring border */}
+          <RNAnimated.View style={{
+            position: "absolute",
+            top: spot.y - 5,
+            left: spot.x - 5,
+            width: spot.w + 10,
+            height: spot.h + 10,
+            borderRadius: spot.r + 5,
+            borderWidth: 2.5,
+            borderColor: "rgba(255,255,255,0.88)",
+            opacity: iTutRingOpacity,
+            transform: [{ scale: iTutRingScale }],
+            shadowColor: "#ffffff",
+            shadowOpacity: 0.65,
+            shadowRadius: 16,
+            shadowOffset: { width: 0, height: 0 },
+          }} />
+          {/* Outer glow halo */}
+          <RNAnimated.View style={{
+            position: "absolute",
+            top: spot.y - 14,
+            left: spot.x - 14,
+            width: spot.w + 28,
+            height: spot.h + 28,
+            borderRadius: spot.r + 14,
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.22)",
+            opacity: iTutRingOpacity,
+            transform: [{ scale: iTutRingScale }],
+          }} />
+        </RNAnimated.View>
+      ) : null}
+
+      {/* Floating tooltip card */}
+      <RNAnimated.View
+        pointerEvents="box-none"
+        style={[{
+          position: "absolute",
+          opacity: iTutCardOp,
+          transform: [{ translateY: iTutCardY }],
+        }, tooltipPos]}
+      >
+        <View style={{
+          backgroundColor: "rgba(8,8,8,0.97)",
+          borderRadius: 30,
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.09)",
+          padding: 24,
+          shadowColor: "#000",
+          shadowOpacity: 0.75,
+          shadowRadius: 40,
+          shadowOffset: { width: 0, height: 10 },
+        }}>
+          {/* Icon + badge row */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <View style={{
+              width: 46, height: 46, borderRadius: 15,
+              backgroundColor: "rgba(255,255,255,0.06)",
+              borderWidth: 1, borderColor: "rgba(255,255,255,0.10)",
+              alignItems: "center", justifyContent: "center",
+              shadowColor: step?.iconColor || "white",
+              shadowOpacity: 0.4, shadowRadius: 12,
+            }}>
+              <Ionicons name={(step?.icon || "sparkles-outline") as any} size={22} color={step?.iconColor || "white"} />
+            </View>
+            <View style={{
+              paddingHorizontal: 11, paddingVertical: 5,
+              borderRadius: 99,
+              backgroundColor: "rgba(255,255,255,0.05)",
+              borderWidth: 1, borderColor: "rgba(255,255,255,0.09)",
+            }}>
+              <Text style={{ color: step?.accentColor || "rgba(255,255,255,0.55)", fontSize: 10, fontWeight: "800", letterSpacing: 1.8 }}>
+                {step?.subtitle || ""}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={{ color: "white", fontSize: 26, fontWeight: "900", letterSpacing: -0.6, lineHeight: 31, marginBottom: 10 }}>
+            {step?.title || ""}
+          </Text>
+          <Text style={{ color: "rgba(255,255,255,0.52)", fontSize: 14, lineHeight: 21, fontWeight: "500", marginBottom: 22 }}>
+            {step?.body || ""}
+          </Text>
+
+          {/* Progress dots */}
+          <View style={{ flexDirection: "row", gap: 4, marginBottom: 18 }}>
+            {I_STEPS.map((_, i) => (
+              <View key={i} style={{
+                height: 3, borderRadius: 3,
+                width: iTutStep === i ? 24 : 6,
+                backgroundColor: iTutStep === i ? (step?.accentColor || "white") : "rgba(255,255,255,0.16)",
+              }} />
+            ))}
+          </View>
+
+          {/* Primary CTA */}
+          <Pressable
+            onPress={() => {
+              if (step?.isLast) {
+                try { AsyncStorage.setItem("EVAN_ONBOARD_V1", "1"); } catch {}
+                closeInteractiveTutorial();
+              } else {
+                goToITutStep(iTutStep + 1);
+              }
+            }}
+            style={({ pressed }) => [{
+              paddingVertical: 15, borderRadius: 18,
+              backgroundColor: pressed ? "rgba(235,235,235,0.96)" : "#ffffff",
+              alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 8,
+              shadowColor: "#fff", shadowOpacity: pressed ? 0.05 : 0.22,
+              shadowRadius: 16, shadowOffset: { width: 0, height: 4 },
+            }]}
+          >
+            <Text style={{ color: "#000", fontWeight: "900", fontSize: 15 }}>
+              {step?.isLast ? "Start Scanning" : "Next"}
+            </Text>
+            <Ionicons name={step?.isLast ? "arrow-forward" : "chevron-forward"} size={16} color="#000" />
+          </Pressable>
+
+          {/* Skip / Upgrade */}
+          {step?.isLast && !isPro ? (
+            <Pressable
+              onPress={() => {
+                try { AsyncStorage.setItem("EVAN_ONBOARD_V1", "1"); } catch {}
+                closeInteractiveTutorial();
+                setProfileModal("subscription");
+              }}
+              style={({ pressed }) => [{
+                marginTop: 10, paddingVertical: 14, borderRadius: 18,
+                backgroundColor: "rgba(255,255,255,0.07)",
+                borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
+                alignItems: "center", opacity: pressed ? 0.75 : 1,
+              }]}
+            >
+              <Text style={{ color: "white", fontWeight: "700", fontSize: 14 }}>Upgrade to Pro</Text>
+            </Pressable>
+          ) : !step?.isLast ? (
+            <Pressable
+              onPress={() => {
+                try { AsyncStorage.setItem("EVAN_ONBOARD_V1", "1"); } catch {}
+                closeInteractiveTutorial();
+              }}
+              style={({ pressed }) => [{ marginTop: 10, paddingVertical: 12, alignItems: "center", opacity: pressed ? 0.5 : 1 }]}
+            >
+              <Text style={{ color: "rgba(255,255,255,0.32)", fontWeight: "600", fontSize: 13 }}>Skip tour</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </RNAnimated.View>
+
+      {/* X close */}
+      <RNAnimated.View style={{ position: "absolute", top: TOP + 14, right: 18, opacity: iTutBgOp }}>
+        <Pressable
+          onPress={() => {
+            try { AsyncStorage.setItem("EVAN_ONBOARD_V1", "1"); } catch {}
+            closeInteractiveTutorial();
+          }}
+          style={({ pressed }) => [{
+            width: 36, height: 36, borderRadius: 18,
+            backgroundColor: "rgba(255,255,255,0.09)",
+            borderWidth: 1, borderColor: "rgba(255,255,255,0.14)",
+            alignItems: "center", justifyContent: "center",
+            opacity: pressed ? 0.7 : 1,
+          }]}
+        >
+          <Ionicons name="close" size={18} color="rgba(255,255,255,0.75)" />
+        </Pressable>
+      </RNAnimated.View>
+    </View>
+  );
+})() : null}
+
+{/* ── CINEMATIC TUTORIAL OVERLAY ──────────────────────────────────────── */}
+{showOnboard ? (
+  <View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, { zIndex: 9988 }]}>
+    {/* Blurred backdrop */}
+    <RNAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { opacity: onboardOpacity }]}>
+      <BlurView intensity={55} tint="dark" style={StyleSheet.absoluteFillObject} />
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.5)" }]} />
+    </RNAnimated.View>
+
+    {/* X close button */}
+    <RNAnimated.View style={{ position: "absolute", top: TOP + 14, right: 18, zIndex: 2, opacity: onboardOpacity }}>
+      <Pressable
+        onPress={skipOnboard}
+        style={({ pressed }) => [{
+          width: 36, height: 36, borderRadius: 18,
+          backgroundColor: "rgba(255,255,255,0.09)",
+          borderWidth: 1, borderColor: "rgba(255,255,255,0.14)",
+          alignItems: "center", justifyContent: "center",
+          opacity: pressed ? 0.7 : 1,
+        }]}
+      >
+        <Ionicons name="close" size={18} color="rgba(255,255,255,0.75)" />
+      </Pressable>
+    </RNAnimated.View>
+
+    {/* Bottom sheet card */}
+    <RNAnimated.View
+      style={{
+        position: "absolute", bottom: 0, left: 0, right: 0,
+        backgroundColor: "rgba(10,10,10,0.97)",
+        borderTopLeftRadius: 36, borderTopRightRadius: 36,
+        borderWidth: 1, borderColor: "rgba(255,255,255,0.09)",
+        paddingHorizontal: 28, paddingTop: 32,
+        paddingBottom: BOTTOM + 24,
+        opacity: onboardOpacity,
+        transform: [{ translateY: onboardOpacity.interpolate({ inputRange: [0, 1], outputRange: [80, 0] }) }],
+        shadowColor: "#000", shadowOpacity: 0.6, shadowRadius: 40, shadowOffset: { width: 0, height: -10 },
+      }}
+    >
+      {/* Step content — fades/slides between steps */}
+      <RNAnimated.View style={{ opacity: tutorialContentOp, transform: [{ translateY: tutorialContentY }] }}>
+        {/* Icon */}
+        <RNAnimated.View style={{
+          width: 68, height: 68, borderRadius: 22,
+          backgroundColor: TUTORIAL_STEPS[Math.min(tutorialStep, TUTORIAL_STEPS.length - 1)].iconBg,
+          borderWidth: 1, borderColor: "rgba(255,255,255,0.10)",
+          alignItems: "center", justifyContent: "center",
+          marginBottom: 22,
+          transform: [{ scale: tutorialIconScale }],
+          shadowColor: TUTORIAL_STEPS[Math.min(tutorialStep, TUTORIAL_STEPS.length - 1)].iconColor,
+          shadowOpacity: 0.25, shadowRadius: 18, shadowOffset: { width: 0, height: 4 },
+        }}>
+          <Ionicons
+            name={TUTORIAL_STEPS[Math.min(tutorialStep, TUTORIAL_STEPS.length - 1)].icon}
+            size={30}
+            color={TUTORIAL_STEPS[Math.min(tutorialStep, TUTORIAL_STEPS.length - 1)].iconColor}
+          />
+        </RNAnimated.View>
+
+        {/* Subtitle chip */}
+        <View style={{ alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 99, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", marginBottom: 10 }}>
+          <Text style={{ color: TUTORIAL_STEPS[Math.min(tutorialStep, TUTORIAL_STEPS.length - 1)].accentColor, fontSize: 10, fontWeight: "700", letterSpacing: 1.8 }}>
+            {TUTORIAL_STEPS[Math.min(tutorialStep, TUTORIAL_STEPS.length - 1)].subtitle}
+          </Text>
+        </View>
+
+        {/* Title */}
+        <Text style={{ color: "white", fontSize: 30, fontWeight: "900", letterSpacing: -0.8, lineHeight: 36 }}>
+          {TUTORIAL_STEPS[Math.min(tutorialStep, TUTORIAL_STEPS.length - 1)].title}
+        </Text>
+
+        {/* Body */}
+        <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 15, lineHeight: 22, marginTop: 12, fontWeight: "500" }}>
+          {TUTORIAL_STEPS[Math.min(tutorialStep, TUTORIAL_STEPS.length - 1)].body}
+        </Text>
+      </RNAnimated.View>
+
+      {/* Progress dots */}
+      <View style={{ flexDirection: "row", gap: 5, marginTop: 28, marginBottom: 18 }}>
+        {TUTORIAL_STEPS.map((_, i) => (
+          <RNAnimated.View key={i} style={{
+            height: 3, borderRadius: 3,
+            width: tutorialStep === i ? 24 : 6,
+            backgroundColor: tutorialStep === i ? "white" : "rgba(255,255,255,0.18)",
+          }} />
+        ))}
+      </View>
+
+      {/* Primary CTA */}
+      <Pressable
+        onPress={tutorialStep >= TUTORIAL_STEPS.length - 1 ? skipOnboard : advanceTutorialStep}
+        style={({ pressed }) => [{
+          paddingVertical: 16, borderRadius: 18,
+          backgroundColor: pressed ? "rgba(235,235,235,0.96)" : "#ffffff",
+          alignItems: "center", flexDirection: "row", justifyContent: "center", gap: 8,
+          shadowColor: "#fff", shadowOpacity: pressed ? 0.06 : 0.20,
+          shadowRadius: 18, shadowOffset: { width: 0, height: 4 },
+        }]}
+      >
+        <Text style={{ color: "#000", fontWeight: "900", fontSize: 15 }}>
+          {tutorialStep >= TUTORIAL_STEPS.length - 1 ? "Start Scanning" : "Next"}
+        </Text>
+        <Ionicons
+          name={tutorialStep >= TUTORIAL_STEPS.length - 1 ? "arrow-forward" : "chevron-forward"}
+          size={16} color="#000"
+        />
+      </Pressable>
+
+      {/* Secondary — upgrade (last step) or skip */}
+      {tutorialStep >= TUTORIAL_STEPS.length - 1 && !isPro ? (
+        <Pressable
+          onPress={() => { skipOnboard(); setProfileModal("subscription"); }}
+          style={({ pressed }) => [{
+            marginTop: 10, paddingVertical: 14, borderRadius: 18,
+            backgroundColor: "rgba(255,255,255,0.07)",
+            borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
+            alignItems: "center", opacity: pressed ? 0.75 : 1,
+          }]}
+        >
+          <Text style={{ color: "white", fontWeight: "700", fontSize: 14 }}>Upgrade to Pro</Text>
+        </Pressable>
+      ) : tutorialStep < TUTORIAL_STEPS.length - 1 ? (
+        <Pressable
+          onPress={skipOnboard}
+          style={({ pressed }) => [{ marginTop: 10, paddingVertical: 14, alignItems: "center", opacity: pressed ? 0.6 : 1 }]}
+        >
+          <Text style={{ color: "rgba(255,255,255,0.38)", fontWeight: "600", fontSize: 13 }}>Skip tutorial</Text>
+        </Pressable>
+      ) : null}
+    </RNAnimated.View>
+  </View>
+) : null}
+
+{/* ── TUTORIAL "ARE YOU SURE?" CONFIRM ────────────────────────────────── */}
+{tutorialConfirmOpen ? (
+  <View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, { zIndex: 9985 }]}>
+    <Pressable
+      style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.55)" }]}
+      onPress={() => setTutorialConfirmOpen(false)}
+    />
+    <RNAnimated.View style={{
+      position: "absolute", bottom: 0, left: 0, right: 0,
+      backgroundColor: "rgba(10,10,10,0.97)",
+      borderTopLeftRadius: 32, borderTopRightRadius: 32,
+      borderWidth: 1, borderColor: "rgba(255,255,255,0.09)",
+      padding: 28, paddingBottom: BOTTOM + 20,
+      shadowColor: "#000", shadowOpacity: 0.55, shadowRadius: 36, shadowOffset: { width: 0, height: -8 },
+    }}>
+      {/* X close */}
+      <Pressable
+        onPress={() => setTutorialConfirmOpen(false)}
+        style={({ pressed }) => [{
+          position: "absolute", top: 18, right: 18,
+          width: 34, height: 34, borderRadius: 17,
+          backgroundColor: "rgba(255,255,255,0.08)",
+          borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
+          alignItems: "center", justifyContent: "center",
+          opacity: pressed ? 0.7 : 1,
+        }]}
+      >
+        <Ionicons name="close" size={16} color="rgba(255,255,255,0.7)" />
+      </Pressable>
+
+      <View style={{ width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.07)", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>
+        <Ionicons name="play-circle-outline" size={26} color="white" />
+      </View>
+      <Text style={{ color: "white", fontSize: 22, fontWeight: "900", letterSpacing: -0.5 }}>
+        Watch the tutorial?
+      </Text>
+      <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, marginTop: 8, lineHeight: 20, fontWeight: "500" }}>
+        You've already been through this — but hey, a refresher never hurts.
+      </Text>
+
+      <View style={{ flexDirection: "row", gap: 10, marginTop: 24 }}>
+        <Pressable
+          onPress={() => { setTutorialConfirmOpen(false); openTutorial(); }}
+          style={({ pressed }) => [{
+            flex: 1, paddingVertical: 15, borderRadius: 16,
+            backgroundColor: pressed ? "rgba(235,235,235,0.96)" : "#ffffff",
+            alignItems: "center",
+          }]}
+        >
+          <Text style={{ color: "#000", fontWeight: "900", fontSize: 14 }}>Yeah, show me</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setTutorialConfirmOpen(false)}
+          style={({ pressed }) => [{
+            flex: 1, paddingVertical: 15, borderRadius: 16,
+            backgroundColor: "rgba(255,255,255,0.07)",
+            borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
+            alignItems: "center", opacity: pressed ? 0.75 : 1,
+          }]}
+        >
+          <Text style={{ color: "rgba(255,255,255,0.7)", fontWeight: "700", fontSize: 14 }}>Nah, I'm good</Text>
+        </Pressable>
+      </View>
+    </RNAnimated.View>
+  </View>
 ) : null}
 
 {/* ===== TOP HUD (CAMERA ONLY) ===== */}
@@ -8587,7 +9739,7 @@ transform: [
       ]}
     >
       <Text style={{ color: "white", fontSize: 16, fontWeight: "800" }}>
-        {isPro ? "Pro · Unlimited" : `${scansUsed || 0}/${FREE_SCAN_LIMIT_SAFE} free scans`}
+        {isPro ? "Pro · Unlimited" : `${scansUsed || 0}/${totalFreeScans} free scans`}
       </Text>
       <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, fontWeight: "800", marginTop: 2 }}>
         Tap to upgrade
@@ -9408,7 +10560,7 @@ style={[
         opacity: pressed ? 0.7 : 1,
       }]}
     >
-      <Text style={{ fontSize: 14 }}>🔍</Text>
+      <Ionicons name="scan-outline" size={15} color="#50ff96" />
       <Text style={{ color: "#50ff96", fontSize: 13, fontWeight: "600", flex: 1 }}>
         {zipCode ? "Scan for flip opportunities near me" : "Flip Scanner — set zip to find local deals"}
       </Text>
@@ -9418,6 +10570,80 @@ style={[
     </Pressable>
   </View>
 )}
+
+{/* ── FEATURE: FLIP FATIGUE CARD ──────────────────────────── */}
+{flipFatigue && tab === "results" ? (
+  <View style={{
+    marginHorizontal: 20,
+    marginTop: 12,
+    padding: 16,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,180,0,0.07)",
+    borderWidth: 1,
+    borderColor: "rgba(255,180,0,0.22)",
+  }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
+      <Ionicons name="flame-outline" size={16} color="#ffd060" />
+      <Text style={{ color: "#ffd060", fontSize: 10, fontWeight: "800", letterSpacing: 1.6 }}>FLIP FATIGUE DETECTED</Text>
+    </View>
+    <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 14, fontWeight: "700", lineHeight: 20 }}>
+      {flipFatigue.count} {flipFatigue.category} scans this week. Zero purchased.
+    </Text>
+    <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "500", marginTop: 4 }}>
+      You're hunting in a crowded lane. Switch categories or you're wasting time.
+    </Text>
+  </View>
+) : null}
+
+{/* ── FEATURE: RIVALRY BANNER ─────────────────────────────── */}
+{rivalryCount > 0 && tab === "results" ? (
+  <View style={{
+    marginHorizontal: 20,
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: "rgba(130,200,255,0.07)",
+    borderWidth: 1,
+    borderColor: "rgba(130,200,255,0.20)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  }}>
+    <Ionicons name="people-outline" size={15} color="#82c8ff" />
+    <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13, fontWeight: "600", flex: 1 }}>
+      <Text style={{ color: "#82c8ff", fontWeight: "800" }}>{rivalryCount} other {rivalryCount === 1 ? "user" : "users"}</Text> scanned this in the last 2 hours.
+    </Text>
+  </View>
+) : null}
+
+{/* ── FEATURE: DEAD STOCK BADGE ───────────────────────────── */}
+{deadStockData && tab === "results" ? (
+  <View style={{
+    marginHorizontal: 20,
+    marginTop: 8,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: "rgba(80,255,150,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(80,255,150,0.22)",
+  }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
+      <Ionicons name="time-outline" size={14} color="#50ff96" />
+      <Text style={{ color: "#50ff96", fontSize: 10, fontWeight: "800", letterSpacing: 1.6 }}>
+        {deadStockData.urgencyLevel === "high" ? "\uD83D\uDD25 SELLER IS DESPERATE" : "DEAD STOCK DETECTED"}
+      </Text>
+    </View>
+    <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 14, fontWeight: "700" }}>
+      {deadStockData.message}
+    </Text>
+    <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 13, marginTop: 4, fontWeight: "600" }}>
+      Suggested offer: <Text style={{ color: "#50ff96", fontWeight: "800" }}>${deadStockData.suggestedOffer}</Text>
+      <Text style={{ color: "rgba(255,255,255,0.35)" }}> · {deadStockData.leveragePct}% below ask</Text>
+    </Text>
+  </View>
+) : null}
+
 </ScrollView>
 </SafeAreaView>
 </RNAnimated.View>
@@ -9665,7 +10891,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
     {relistSuggestions.length > 0 && (
       <View style={{ marginTop: 20 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <Text style={{ fontSize: 14 }}>💰</Text>
+          <Ionicons name="trending-up-outline" size={16} color="rgba(255,255,255,0.7)" />
           <Text style={{ color: "white", fontWeight: "800", fontSize: 15 }}>Smart Sell Suggestions</Text>
           {relistLoading && <ActivityIndicator size="small" color="rgba(255,255,255,0.4)" style={{ marginLeft: "auto" }} />}
         </View>
@@ -9684,7 +10910,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: "white", fontWeight: "700", fontSize: 13 }} numberOfLines={1}>{s.query}</Text>
                   <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, marginTop: 1 }}>
-                    Held {s.daysHeld}d · Market {money(s.currentMarket)} · {s.trend === "rising" ? "📈" : s.trend === "falling" ? "📉" : "→"} {Math.abs(s.trendPct)}%
+                    Held {s.daysHeld}d · Market {money(s.currentMarket)} · {s.trend === "rising" ? "+" : s.trend === "falling" ? "-" : "~"}{Math.abs(s.trendPct)}%
                   </Text>
                 </View>
                 <View style={{ backgroundColor: `${actionColor}20`, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8 }}>
@@ -9783,12 +11009,16 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
         <View style={styles.page}>
 <View
   style={{
-    marginTop: 24,
-    padding: 16,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.06)",
+    marginTop: 18,
+    padding: 20,
+    borderRadius: 28,
+    backgroundColor: "rgba(255,255,255,0.07)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.15)",
+    borderColor: "rgba(255,255,255,0.14)",
+    shadowColor: "#ffffff",
+    shadowOpacity: 0.04,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 0 },
   }}
 >
 {/* Referral Program moved to bottom */}
@@ -9811,6 +11041,26 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
     <Text style={styles.subStatus} numberOfLines={1} ellipsizeMode="tail">
       {statusLabel}
     </Text>
+
+    {/* Rank badge */}
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 7, marginTop: 10 }}>
+      <View style={{
+        flexDirection: "row", alignItems: "center", gap: 6,
+        paddingHorizontal: 10, paddingVertical: 5,
+        borderRadius: 99,
+        backgroundColor: "rgba(255,255,255,0.06)",
+        borderWidth: 1, borderColor: "rgba(255,255,255,0.10)",
+        alignSelf: "flex-start",
+      }}>
+        <Ionicons name={userRank.icon as any} size={12} color={userRank.color} />
+        <Text style={{ color: userRank.color, fontSize: 10, fontWeight: "800", letterSpacing: 1.6 }}>
+          {userRank.rank}
+        </Text>
+      </View>
+      <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, fontWeight: "600" }}>
+        {weaponStats.scans} scans total
+      </Text>
+    </View>
   </View>
 
   <Pressable
@@ -9818,7 +11068,8 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
       hapticSelect();
       if (isSignedIn) {
         setIsSignedIn(false);
-        setIsPro(false);
+        // NOTE: isPro is NOT cleared on sign-out — subscription is tied to
+        // the device/app install. User keeps access after signing back in.
         setShowPaywall(false);
       } else {
         setAuthModalOpen(true);
@@ -9862,7 +11113,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
         onPress={() => {
           hapticSelect?.();
           const uid = installId || effectiveReferralCode || "EVAN";
-          const msg = `🏆 My Evan AI Stats:\n💰 Saved: ${money(savingsTotal)}\n📸 Scans: ${scansUsed}\n\nScan smarter → https://evanai.app`;
+          const msg = `🏆 My Evan AI Stats\n💰 Saved: ${money(savingsTotal)}\n📸 Scans: ${scansUsed}\n\nScan smarter → https://evanai.app`;
           Share.share({ message: msg }).catch(() => {});
         }}
         style={({ pressed }) => [{
@@ -9882,18 +11133,18 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
       </Pressable>
     </View>
 
-    <View style={{ flexDirection: "row", gap: 12 }}>
-      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(80,255,150,0.06)", borderRadius: 12, padding: 12, gap: 2 }}>
+    <View style={{ flexDirection: "row", gap: 10 }}>
+      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(80,255,150,0.07)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(80,255,150,0.22)" }}>
         <Text style={{ color: "#50ff96", fontSize: 22, fontWeight: "900" }}>{money(savingsTotal)}</Text>
-        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 10, fontWeight: "600", textTransform: "uppercase" }}>Total Saved</Text>
+        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Total Saved</Text>
       </View>
-      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(130,200,255,0.06)", borderRadius: 12, padding: 12, gap: 2 }}>
+      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(130,200,255,0.07)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(130,200,255,0.22)" }}>
         <Text style={{ color: "#82c8ff", fontSize: 22, fontWeight: "900" }}>{scansUsed}</Text>
-        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 10, fontWeight: "600", textTransform: "uppercase" }}>Scans Run</Text>
+        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Scans Run</Text>
       </View>
-      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(255,200,0,0.06)", borderRadius: 12, padding: 12, gap: 2 }}>
+      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(255,200,0,0.07)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(255,200,0,0.22)" }}>
         <Text style={{ color: "#ffd060", fontSize: 22, fontWeight: "900" }}>{history?.length ?? 0}</Text>
-        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 10, fontWeight: "600", textTransform: "uppercase" }}>Items Found</Text>
+        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Items Found</Text>
       </View>
     </View>
 
@@ -9911,8 +11162,10 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
   onMarkSold={handlePlMarkSold}
 />
 
+          <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, fontWeight: "700", letterSpacing: 1.1, textTransform: "uppercase", marginTop: 18, marginBottom: 8, paddingHorizontal: 2 }}>Account</Text>
+          <View style={{ borderRadius: 22, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", backgroundColor: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
           <Pressable
-            style={styles.profileBtn}
+            style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
             onPress={() => {
               hapticSelect();
               if (!isSignedIn) {
@@ -9922,127 +11175,248 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
               setProfileModal("subscription");
             }}
           >
-            <View style={styles.inlineRow}>
-              <Ionicons name="sparkles-outline" size={18} color="white" />
-              <Text style={styles.profileBtnText}>Subscription</Text>
+            <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+              <View style={styles.inlineRow}>
+                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+                  <Ionicons name="sparkles-outline" size={16} color="white" />
+                </View>
+                <Text style={styles.profileBtnText}>Subscription</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
             </View>
           </Pressable>
+          <View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)", marginHorizontal: 16 }} />
           <Pressable
-            style={styles.profileBtn}
+            style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
             onPress={() => {
               hapticSelect();
               setProfileModal("payments");
             }}
           >
-            <View style={styles.inlineRow}>
-              <Ionicons name="card-outline" size={18} color="white" />
-              <Text style={styles.profileBtnText}>Payment methods</Text>
+            <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+              <View style={styles.inlineRow}>
+                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+                  <Ionicons name="card-outline" size={16} color="white" />
+                </View>
+                <Text style={styles.profileBtnText}>Payment methods</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
             </View>
           </Pressable>
+          </View>
 {watchlist.length ? (
   <View style={styles.savingsBox}>
-    <Text style={styles.savingsTitle}>Price tracking</Text>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+      <View style={{ width: 28, height: 28, borderRadius: 9, backgroundColor: "rgba(130,200,255,0.12)", alignItems: "center", justifyContent: "center" }}>
+        <Ionicons name="pulse-outline" size={15} color="#82c8ff" />
+      </View>
+      <Text style={styles.savingsTitle}>Price tracking</Text>
+    </View>
     <Text style={styles.savingsSub}>Tap to check if it dropped.</Text>
-    <View style={{ marginTop: 10, gap: 10 }}>
-      {watchlist.slice(0, 5).map((w) => (
+    <View style={{ marginTop: 10, borderRadius: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.09)", overflow: "hidden", gap: 0 }}>
+      {watchlist.slice(0, 5).map((w, wi) => (
+        <React.Fragment key={w.id}>
+        {wi > 0 && <View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)" }} />}
         <Pressable
-          key={w.id}
-          style={styles.profileBtn}
+          style={({ pressed }) => [{
+            paddingVertical: 12,
+            paddingHorizontal: 14,
+            backgroundColor: pressed ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.04)",
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }]}
           onPress={async () => {
             hapticSelect();
 runDailyWatchlistCheck({ force: true, quiet: false });
 setSavedToast("Checking…");
           }}
         >
-          <Text style={styles.profileBtnText} numberOfLines={2}>
-            {w.query}
-          </Text>
-          <Text style={styles.savingsSub}>Last best: {money(toNumber(w.lastBest))}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.profileBtnText, { fontSize: 14 }]} numberOfLines={2}>
+              {w.query}
+            </Text>
+            <Text style={[styles.savingsSub, { marginTop: 2 }]}>Last best: {money(toNumber(w.lastBest))}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.25)" />
         </Pressable>
+        </React.Fragment>
       ))}
     </View>
   </View>
 ) : null}
 
+<Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, fontWeight: "700", letterSpacing: 1.1, textTransform: "uppercase", marginTop: 18, marginBottom: 8, paddingHorizontal: 2 }}>Pro Tools</Text>
 <Pressable
-  style={styles.profileBtn}
   onPress={() => {
     hapticSelect?.();
     setProfileModal("billion");
   }}
+  style={({ pressed }) => [{
+    padding: 16,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(255,210,80,0.22)",
+    backgroundColor: "rgba(255,200,50,0.07)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    opacity: pressed ? 0.8 : 1,
+  }]}
 >
-  <View style={styles.inlineRow}>
-    <Ionicons name="rocket-outline" size={18} color="white" />
-    <Text style={styles.profileBtnText}>Billionaire features</Text>
+  <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: "rgba(255,200,50,0.14)", alignItems: "center", justifyContent: "center" }}>
+    <Ionicons name="rocket-outline" size={20} color="#ffd060" />
   </View>
-  <Text style={styles.savingsSub}>
-    Seller mode · inventory · multi-item scan · cloud tools · referral rewards
-  </Text>
+  <View style={{ flex: 1 }}>
+    <Text style={{ color: "white", fontWeight: "900", fontSize: 15 }}>Billionaire features</Text>
+    <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 2 }}>
+      Seller mode · inventory · multi-item scan
+    </Text>
+  </View>
+  <Ionicons name="chevron-forward" size={16} color="rgba(255,200,50,0.5)" />
 </Pressable>
 
+<Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, fontWeight: "700", letterSpacing: 1.1, textTransform: "uppercase", marginTop: 18, marginBottom: 8, paddingHorizontal: 2 }}>App</Text>
+<View style={{ borderRadius: 22, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", backgroundColor: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
 <Pressable
-  style={styles.profileBtn}
+  style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
   onPress={() => {
     hapticSelect();
     setProfileModal("different");
   }}
 >
-  <Text style={styles.profileBtnText}>
-    How Evan AI is different
-  </Text>
+  <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+    <View style={styles.inlineRow}>
+      <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+        <Ionicons name="bulb-outline" size={16} color="white" />
+      </View>
+      <Text style={styles.profileBtnText}>How Evan AI is different</Text>
+    </View>
+    <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
+  </View>
 </Pressable>
+<View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)", marginHorizontal: 16 }} />
 <Pressable
-  style={styles.profileBtn}
+  style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
   onPress={() => {
     hapticSelect();
     openHelp();
   }}
 >
-  <View style={styles.inlineRow}>
-    <Ionicons name="help-circle-outline" size={18} color="white" />
-    <Text style={styles.profileBtnText}>Help</Text>
+  <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+    <View style={styles.inlineRow}>
+      <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+        <Ionicons name="help-circle-outline" size={16} color="white" />
+      </View>
+      <Text style={styles.profileBtnText}>Help & tips</Text>
+    </View>
+    <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
   </View>
 </Pressable>
+<View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)", marginHorizontal: 16 }} />
+{/* Thrift Heat Map */}
+<Pressable
+  onPress={() => { hapticSelect(); openThriftHeat(); }}
+  style={({ pressed }) => [styles.profileBtn, pressed && styles.tabPressed]}
+>
+  <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(80,255,150,0.10)", alignItems: "center", justifyContent: "center", marginRight: 12 }}>
+    <Ionicons name="map-outline" size={17} color="#50ff96" />
+  </View>
+  <Text style={styles.profileBtnText}>Thrift Heat Map</Text>
+  <View style={{ marginLeft: "auto", paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: "rgba(80,255,150,0.12)" }}>
+    <Text style={{ color: "#50ff96", fontSize: 10, fontWeight: "800" }}>LIVE</Text>
+  </View>
+</Pressable>
+<View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)", marginHorizontal: 16 }} />
+<Pressable
+  style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
+  onPress={async () => {
+    hapticSelect();
+    try {
+      const seen = await AsyncStorage.getItem("EVAN_ONBOARD_V1");
+      if (seen) {
+        setTutorialConfirmOpen(true);
+      } else {
+        openTutorial();
+      }
+    } catch {
+      openTutorial();
+    }
+  }}
+>
+  <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+    <View style={styles.inlineRow}>
+      <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+        <Ionicons name="play-circle-outline" size={16} color="white" />
+      </View>
+      <Text style={styles.profileBtnText}>Tutorial</Text>
+    </View>
+    <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
+  </View>
+</Pressable>
+<View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)", marginHorizontal: 16 }} />
           <Pressable
-            style={styles.profileBtn}
+            style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
             onPress={() => {
               hapticSelect();
               setProfileModal("review");
             }}
           >
-            <View style={styles.inlineRow}>
-              <Ionicons name="star-outline" size={18} color="white" />
-              <Text style={styles.profileBtnText}>Leave a review</Text>
+            <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+              <View style={styles.inlineRow}>
+                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+                  <Ionicons name="star-outline" size={16} color="white" />
+                </View>
+                <Text style={styles.profileBtnText}>Leave a review</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
             </View>
           </Pressable>
+          <View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)", marginHorizontal: 16 }} />
           <Pressable
-            style={styles.profileBtn}
+            style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
             onPress={() => {
               hapticSelect();
               setProfileModal("terms");
             }}
           >
-            <View style={styles.inlineRow}>
-              <Ionicons name="document-text-outline" size={18} color="white" />
-              <Text style={styles.profileBtnText}>Terms of Service</Text>
+            <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+              <View style={styles.inlineRow}>
+                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+                  <Ionicons name="document-text-outline" size={16} color="white" />
+                </View>
+                <Text style={styles.profileBtnText}>Terms of Service</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
             </View>
           </Pressable>
+</View>
 <View style={{ marginTop: 18 }}>
   <View
     style={{
-      padding: 16,
-      borderRadius: 20,
+      padding: 20,
+      borderRadius: 28,
       backgroundColor: "rgba(255,255,255,0.06)",
       borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.15)",
+      borderColor: "rgba(255,255,255,0.12)",
+      shadowColor: "#ffffff",
+      shadowOpacity: 0.03,
+      shadowRadius: 20,
+      shadowOffset: { width: 0, height: 0 },
     }}
   >
-    <Text style={{ color: "white", fontWeight: "900", fontSize: 16 }}>
-      Referral Program
-    </Text>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 16 }}>
+      <View style={{ width: 36, height: 36, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.09)", alignItems: "center", justifyContent: "center" }}>
+        <Ionicons name="gift-outline" size={18} color="white" />
+      </View>
+      <View>
+        <Text style={{ color: "white", fontWeight: "900", fontSize: 16 }}>Referral Program</Text>
+        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 1 }}>Share your code, earn bonus scans</Text>
+      </View>
+    </View>
 
-    <Text style={{ color: "rgba(255,255,255,0.7)", marginTop: 6, fontWeight: "700" }}>
-      Code
+    <Text style={{ color: "rgba(255,255,255,0.55)", marginTop: 0, fontWeight: "700", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.9, marginBottom: 6 }}>
+      Your Code
     </Text>
 
     <Pressable
@@ -10053,55 +11427,61 @@ setSavedToast("Checking…");
       }}
       style={({ pressed }) => [
         {
-          marginTop: 8,
-          paddingVertical: 12,
-          paddingHorizontal: 14,
-          borderRadius: 16,
+          paddingVertical: 14,
+          paddingHorizontal: 16,
+          borderRadius: 18,
           borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.14)",
-          backgroundColor: "rgba(0,0,0,0.25)",
+          borderColor: "rgba(255,255,255,0.18)",
+          backgroundColor: "rgba(0,0,0,0.35)",
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
         },
-        pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+        pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
       ]}
     >
-      <Text style={{ color: "white", fontWeight: "900", fontSize: 18, letterSpacing: 0.8 }}>
+      <Text style={{ color: "white", fontWeight: "900", fontSize: 22, letterSpacing: 2.5 }}>
         {effectiveReferralCode}
       </Text>
-      <Ionicons name="copy-outline" size={18} color="rgba(255,255,255,0.85)" />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "rgba(255,255,255,0.10)", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10 }}>
+        <Ionicons name="copy-outline" size={14} color="rgba(255,255,255,0.85)" />
+        <Text style={{ color: "rgba(255,255,255,0.85)", fontWeight: "700", fontSize: 12 }}>Copy</Text>
+      </View>
     </Pressable>
 
-    <Text style={{ color: "rgba(255,255,255,0.6)", marginTop: 8, fontWeight: "700" }}>
-      Uses: {Number(referralUses || 0)}
-    </Text>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 }}>
+      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(80,255,150,0.7)" }} />
+      <Text style={{ color: "rgba(255,255,255,0.5)", fontWeight: "700", fontSize: 12 }}>
+        {Number(referralUses || 0)} {Number(referralUses || 0) === 1 ? "person used" : "people used"} your code
+      </Text>
+    </View>
 
-<View style={{ marginTop: 12 }}>
-  <Text style={{ color: "rgba(255,255,255,0.7)", fontWeight: "700" }}>
+<View style={{ marginTop: 18, paddingTop: 16, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.08)" }}>
+  <Text style={{ color: "rgba(255,255,255,0.55)", fontWeight: "700", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.9, marginBottom: 8 }}>
     Have a referral code?
   </Text>
 
-  <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
+  <View style={{ flexDirection: "row", gap: 8 }}>
     <TextInput
       value={referralInput}
-      onChangeText={(t) => setReferralInput(String(t || "").toUpperCase())}
+      onChangeText={(t) => { setReferralInput(String(t || "").toUpperCase()); setReferralCodeError(""); }}
       editable={!referredBy && !referralBusy}
       autoCapitalize="characters"
       autoCorrect={false}
       placeholder="ENTER CODE"
-      placeholderTextColor="rgba(255,255,255,0.35)"
+      placeholderTextColor="rgba(255,255,255,0.28)"
       style={{
         flex: 1,
-        minHeight: 48,
-        paddingHorizontal: 14,
-        borderRadius: 14,
+        minHeight: 50,
+        paddingHorizontal: 16,
+        borderRadius: 16,
         color: "white",
         fontWeight: "900",
-        letterSpacing: 0.6,
-        backgroundColor: "rgba(255,255,255,0.08)",
+        letterSpacing: 1.2,
+        fontSize: 14,
+        backgroundColor: "rgba(255,255,255,0.07)",
         borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.14)",
+        borderColor: "rgba(255,255,255,0.12)",
       }}
     />
 
@@ -10109,43 +11489,66 @@ setSavedToast("Checking…");
       disabled={!referralInput.trim() || !!referredBy || referralBusy}
       onPress={async () => {
         hapticSelect?.();
-        await applyReferralCode(referralInput, "manual");
+        const code = referralInput.trim().toUpperCase();
+        if (!/^[A-Z0-9]{4,12}$/.test(code)) {
+          setReferralCodeError("Invalid code format — codes are 4–12 letters/numbers.");
+          return;
+        }
+        if (code === String(effectiveReferralCode || "").trim().toUpperCase()) {
+          setReferralCodeError("You can't use your own referral code.");
+          return;
+        }
+        setReferralCodeError("");
+        await applyReferralCode(code, "manual");
       }}
       style={({ pressed }) => [
         {
-          minWidth: 96,
+          minWidth: 84,
           paddingHorizontal: 16,
-          borderRadius: 14,
+          borderRadius: 16,
           alignItems: "center",
           justifyContent: "center",
           backgroundColor:
             !referralInput.trim() || !!referredBy || referralBusy
               ? "rgba(255,255,255,0.06)"
-              : "rgba(255,255,255,0.12)",
+              : "#ffffff",
           borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.16)",
+          borderColor: !referralInput.trim() || !!referredBy || referralBusy
+            ? "rgba(255,255,255,0.10)"
+            : "transparent",
         },
-        pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+        pressed && { opacity: 0.85 },
       ]}
     >
-      <Text style={{ color: "white", fontWeight: "900" }}>
-        {referralBusy ? "..." : referredBy ? "Used" : "Apply"}
+      <Text style={{
+        color: !referralInput.trim() || !!referredBy || referralBusy ? "rgba(255,255,255,0.45)" : "#000000",
+        fontWeight: "900",
+        fontSize: 14,
+      }}>
+        {referralBusy ? "..." : referredBy ? "✓ Used" : "Apply"}
       </Text>
     </Pressable>
   </View>
 
-  <Text
-    style={{
-      color: "rgba(255,255,255,0.58)",
-      marginTop: 8,
-      fontWeight: "700",
-      fontSize: 12,
-    }}
-  >
-    {referredBy
-      ? `Applied code: ${referredBy}`
-      : "Enter a friend’s code to unlock bonus scans."}
-  </Text>
+  {referralCodeError ? (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 8 }}>
+      <Ionicons name="alert-circle-outline" size={13} color="rgba(255,90,90,0.9)" />
+      <Text style={{ color: "rgba(255,90,90,0.9)", fontSize: 12, fontWeight: "700", flex: 1 }}>
+        {referralCodeError}
+      </Text>
+    </View>
+  ) : referredBy ? (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 8 }}>
+      <Ionicons name="checkmark-circle-outline" size={13} color="rgba(80,255,150,0.9)" />
+      <Text style={{ color: "rgba(80,255,150,0.9)", fontSize: 12, fontWeight: "700" }}>
+        Applied: {referredBy}
+      </Text>
+    </View>
+  ) : (
+    <Text style={{ color: "rgba(255,255,255,0.38)", marginTop: 8, fontWeight: "600", fontSize: 12 }}>
+      Enter a friend’s code — they get +1 free scan when you join.
+    </Text>
+  )}
 </View>
 
     <Pressable
@@ -10162,18 +11565,23 @@ ${shareLink}`
       }}
       style={({ pressed }) => [
         {
-          marginTop: 12,
-          paddingVertical: 12,
-          borderRadius: 999,
-          backgroundColor: "rgba(255,255,255,0.10)",
-          borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.16)",
+          marginTop: 14,
+          paddingVertical: 15,
+          borderRadius: 18,
+          backgroundColor: pressed ? "rgba(235,235,235,0.95)" : "#ffffff",
           alignItems: "center",
+          flexDirection: "row",
+          justifyContent: "center",
+          gap: 8,
+          shadowColor: "#ffffff",
+          shadowOpacity: pressed ? 0.05 : 0.18,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 4 },
         },
-        pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
       ]}
     >
-      <Text style={{ color: "white", fontWeight: "900" }}>Share & Earn</Text>
+      <Ionicons name="share-outline" size={17} color="#000000" />
+      <Text style={{ color: "#000000", fontWeight: "900", fontSize: 15 }}>Share & Earn</Text>
     </Pressable>
 
 <Pressable
@@ -11858,45 +13266,207 @@ const pick = await ImagePicker.launchImageLibraryAsync({
   animationType={Platform.OS === "ios" ? "slide" : "fade"}
   presentationStyle="overFullScreen"
   transparent
-  onRequestClose={() => setAuthModalOpen(false)}
+  onRequestClose={() => {
+    setAuthModalOpen(false);
+    setAuthStep("input");
+    setAuthMethod("phone");
+    setAuthPhone("");
+    setAuthEmail("");
+    setAuthOtp("");
+    setAuthError("");
+    setAuthSending(false);
+  }}
 >
   <View style={styles.modalBackdrop}>
     <View style={styles.modalCard}>
-      <Text style={styles.modalTitle}>Sign in</Text>
-      <Text style={styles.modalDesc}>
-        Enter an email or phone number to continue.
-      </Text>
-      <TextInput
-        value={authInput}
-        onChangeText={setAuthInput}
-        placeholder="Email or phone"
-        placeholderTextColor="rgba(255,255,255,0.4)"
-        style={styles.authInput}
-        autoCapitalize="none"
-        keyboardType="default"
-      />
-      <Pressable
-        onPress={() => {
-          hapticSelect();
-          if (!authInput.trim()) return;
-          setIsSignedIn(true);
-          setAuthInput("");
-          setAuthModalOpen(false);
-        }}
-        style={styles.modalPrimary}
-      >
-        <Text style={styles.modalPrimaryText}>Continue</Text>
-      </Pressable>
-      <Pressable
-        onPress={() => {
-          hapticSelect();
-          setAuthInput("");
-          setAuthModalOpen(false);
-        }}
-        style={styles.modalSecondary}
-      >
-        <Text style={styles.modalSecondaryText}>Cancel</Text>
-      </Pressable>
+
+      {authStep === "input" ? (
+        <>
+          {/* Header icon + title */}
+          <View style={{ alignItems: "center", marginBottom: 20 }}>
+            <View style={{ width: 52, height: 52, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.07)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+              <Ionicons name="person-outline" size={24} color="white" />
+            </View>
+            <Text style={styles.modalTitle}>Sign in</Text>
+            <Text style={[styles.modalDesc, { textAlign: "center", marginTop: 5 }]}>
+              Unlock full scan history, price alerts, and watchlist sync.
+            </Text>
+          </View>
+
+          {/* Method toggle */}
+          <View style={{ flexDirection: "row", backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 14, padding: 3, marginBottom: 16 }}>
+            {(["phone", "email"] as const).map((m) => (
+              <Pressable
+                key={m}
+                onPress={() => { setAuthMethod(m); setAuthError(""); }}
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  borderRadius: 11,
+                  alignItems: "center",
+                  backgroundColor: authMethod === m ? "rgba(255,255,255,0.12)" : "transparent",
+                }}
+              >
+                <Text style={{ color: authMethod === m ? "white" : "rgba(255,255,255,0.4)", fontWeight: "700", fontSize: 13 }}>
+                  {m === "phone" ? "Phone" : "Email"}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Input field */}
+          {authMethod === "phone" ? (
+            <TextInput
+              value={authPhone}
+              onChangeText={(t) => {
+                const d = t.replace(/\D/g, "").slice(0, 10);
+                let fmt = d;
+                if (d.length > 6) fmt = `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+                else if (d.length > 3) fmt = `(${d.slice(0,3)}) ${d.slice(3)}`;
+                setAuthPhone(fmt);
+                setAuthError("");
+              }}
+              placeholder="(555) 555-5555"
+              placeholderTextColor="rgba(255,255,255,0.28)"
+              style={styles.authInput}
+              keyboardType="phone-pad"
+              autoComplete="tel"
+              autoFocus
+            />
+          ) : (
+            <TextInput
+              value={authEmail}
+              onChangeText={(t) => { setAuthEmail(t); setAuthError(""); }}
+              placeholder="you@example.com"
+              placeholderTextColor="rgba(255,255,255,0.28)"
+              style={styles.authInput}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+              autoFocus
+            />
+          )}
+
+          {authError ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 }}>
+              <Ionicons name="alert-circle-outline" size={14} color="rgba(255,100,100,0.9)" />
+              <Text style={{ color: "rgba(255,100,100,0.9)", fontSize: 12, fontWeight: "700" }}>{authError}</Text>
+            </View>
+          ) : null}
+
+          <Pressable
+            disabled={authSending}
+            onPress={() => {
+              hapticSelect();
+              const phoneDigits = authPhone.replace(/\D/g, "");
+              if (authMethod === "phone") {
+                if (phoneDigits.length !== 10) {
+                  setAuthError("Enter a valid 10-digit US phone number");
+                  return;
+                }
+              } else {
+                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(authEmail.trim())) {
+                  setAuthError("Enter a valid email address");
+                  return;
+                }
+              }
+              setAuthError("");
+              setAuthSending(true);
+              const code = String(Math.floor(100000 + Math.random() * 900000));
+              setAuthSimCode(code);
+              setAuthOtpTarget(authMethod === "phone" ? authPhone : authEmail.trim());
+              setTimeout(() => { setAuthStep("otp"); setAuthSending(false); }, 700);
+            }}
+            style={[styles.modalPrimary, { marginTop: 14, opacity: authSending ? 0.65 : 1 }]}
+          >
+            <Text style={styles.modalPrimaryText}>{authSending ? "Sending…" : "Send code"}</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => {
+              hapticSelect();
+              setAuthPhone(""); setAuthEmail(""); setAuthOtp("");
+              setAuthError(""); setAuthStep("input");
+              setAuthModalOpen(false);
+            }}
+            style={[styles.modalSecondary, { marginTop: 8 }]}
+          >
+            <Text style={styles.modalSecondaryText}>Cancel</Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
+          {/* Back button */}
+          <Pressable
+            onPress={() => { setAuthStep("input"); setAuthOtp(""); setAuthError(""); }}
+            style={{ flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 18 }}
+          >
+            <Ionicons name="chevron-back" size={16} color="rgba(255,255,255,0.45)" />
+            <Text style={{ color: "rgba(255,255,255,0.45)", fontWeight: "700", fontSize: 13 }}>Back</Text>
+          </Pressable>
+
+          {/* OTP header */}
+          <View style={{ alignItems: "center", marginBottom: 20 }}>
+            <View style={{ width: 52, height: 52, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.07)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+              <Ionicons name="shield-checkmark-outline" size={24} color="white" />
+            </View>
+            <Text style={styles.modalTitle}>Verify</Text>
+            <Text style={[styles.modalDesc, { textAlign: "center", marginTop: 5 }]}>
+              Enter the 6-digit code sent to{"\n"}{authOtpTarget}
+            </Text>
+          </View>
+
+          {/* OTP input */}
+          <TextInput
+            value={authOtp}
+            onChangeText={(t) => { setAuthOtp(t.replace(/\D/g, "").slice(0, 6)); setAuthError(""); }}
+            placeholder="000000"
+            placeholderTextColor="rgba(255,255,255,0.22)"
+            style={[styles.authInput, { textAlign: "center", fontSize: 30, fontWeight: "900", letterSpacing: 12 }]}
+            keyboardType="number-pad"
+            autoFocus
+            maxLength={6}
+          />
+
+          {authError ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 }}>
+              <Ionicons name="alert-circle-outline" size={14} color="rgba(255,100,100,0.9)" />
+              <Text style={{ color: "rgba(255,100,100,0.9)", fontSize: 12, fontWeight: "700" }}>{authError}</Text>
+            </View>
+          ) : null}
+
+          <Pressable
+            onPress={() => {
+              hapticSelect();
+              if (authOtp.length !== 6) { setAuthError("Enter the full 6-digit code"); return; }
+              if (authOtp === authSimCode) {
+                setIsSignedIn(true);
+                setAuthStep("input"); setAuthPhone(""); setAuthEmail("");
+                setAuthOtp(""); setAuthError(""); setAuthSimCode(""); setAuthSending(false);
+                setAuthModalOpen(false);
+              } else {
+                setAuthError("Incorrect code — please try again");
+                setAuthOtp("");
+              }
+            }}
+            style={[styles.modalPrimary, { marginTop: 14, opacity: authOtp.length === 6 ? 1 : 0.45 }]}
+          >
+            <Text style={styles.modalPrimaryText}>Verify</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => {
+              hapticSelect();
+              const code = String(Math.floor(100000 + Math.random() * 900000));
+              setAuthSimCode(code); setAuthOtp(""); setAuthError("");
+              setSavedToast("New code sent");
+            }}
+            style={[styles.modalSecondary, { marginTop: 8 }]}
+          >
+            <Text style={styles.modalSecondaryText}>Resend code</Text>
+          </Pressable>
+        </>
+      )}
     </View>
   </View>
 </Modal>
@@ -12599,7 +14169,7 @@ const snapshot = {
       };
       setWatchlist((prev: any[]) => [newItem, ...(prev || [])]);
     }
-    setSavedToast(`🎯 Alert set for ${activeResult.title || "item"} at $${targetPrice}`);
+    setSavedToast(`Alert set for ${activeResult.title || "item"} at $${targetPrice}`);
     setProfitCalcOpen(false);
   }}
 />
@@ -12620,7 +14190,7 @@ const snapshot = {
       {/* Header */}
       <View style={{ flexDirection: "row", alignItems: "center", padding: 18, paddingBottom: 12, gap: 10 }}>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: "white", fontWeight: "800", fontSize: 18 }}>🔍 Flip Scanner</Text>
+          <Text style={{ color: "white", fontWeight: "800", fontSize: 18 }}>Flip Scanner</Text>
           <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 2 }}>
             {zipCode ? `Near ${zipCode} · Local buy vs eBay sell` : "Local deals vs national sold prices"}
           </Text>
@@ -12718,22 +14288,22 @@ const buildIntuitionLine = ({
   const conf = Number(confidence || 0);
 
   if (pct >= 15 && conf > 0.7) {
-    return "🔥 Strong deal — priced well below typical market.";
+    return "Strong deal — priced well below typical market.";
   }
 
   if (flip >= 70) {
-    return "🧠 High resale potential — spread suggests a profitable flip.";
+    return "High resale potential — spread suggests a profitable flip.";
   }
 
   if (totalMatches <= 2) {
-    return "⚠️ Limited market data — verify condition before buying.";
+    return "Limited market data — verify condition before buying.";
   }
 
   if (pct <= 3) {
-    return "⚠️ Fair price — market looks stable right now.";
+    return "Fair price — market looks stable right now.";
   }
 
-  return "✨ Smart match — pricing looks aligned with current market.";
+  return "Smart match — pricing looks aligned with current market.";
 };
 
 // -------------------------
@@ -13243,7 +14813,7 @@ const spinnerRotate = spinnerTurn.interpolate({
               ? "📊 Calculating deal quality"
               : stage === "collector"
               ? "🔥 Detecting hidden value"
-              : "Finding the cheapest result"}
+              : "🔍 Finding the best result"}
             {loadingDots}
           </Text>
 
@@ -13913,7 +15483,7 @@ useEffect(() => {
 
   if (!hit) return;
 
-  setTargetHitToast("Target hit 🎯");
+  setTargetHitToast("Target hit");
   const id = setTimeout(() => setTargetHitToast(null), 2000);
 
   return () => clearTimeout(id);
@@ -14139,7 +15709,7 @@ useWatchlistRealtime(
                       </Text>
                       {item.targetHit ? (
                         <View style={{ backgroundColor: "rgba(255,200,0,0.15)", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: "rgba(255,200,0,0.4)" }}>
-                          <Text style={{ color: "#ffc800", fontSize: 10, fontWeight: "700" }}>🎯 HIT</Text>
+                          <Text style={{ color: "#ffc800", fontSize: 10, fontWeight: "700" }}>TARGET HIT</Text>
                         </View>
                       ) : null}
                     </View>
@@ -14466,9 +16036,9 @@ function computeIntelUIStats(intel: IntelState | null | undefined, watchlist: an
 }
 function marketHeat(result) {
   const pct = Number(result?.cheaperPct || 0);
-  if (pct > 35) return "🔥 HOT";
-  if (pct > 15) return "🟡 WARM";
-  return "❄️ COOL";
+  if (pct > 35) return "HOT";
+  if (pct > 15) return "WARM";
+  return "COOL";
 }
 
 const matchQuality = (r: any) => {
@@ -14799,91 +16369,6 @@ async function saveBatchQueue(q: BatchJob[]) {
     await AsyncStorage.setItem(BATCH_KEY, JSON.stringify(q || []));
   } catch {}
 }
-// ── Feature 2: processBatchItem — runs vision + market search for one job ────
-// Called from the auto-processor useEffect below.
-// Updates the queue item in-place with status + result fields.
-const batchProcessingRef = React.useRef(false);
-
-const processBatchItem = async (jobId: string) => {
-  if (!isMountedRef.current) return;
-  // Mark as scanning
-  setBatchQueue((prev) => {
-    const next = prev.map((j) =>
-      j.id === jobId ? { ...j, status: "scanning" as BatchJobStatus } : j
-    );
-    saveBatchQueue(next);
-    return next;
-  });
-
-  try {
-    // Snapshot the URI from the queue
-    const queue: BatchJob[] = await loadBatchQueue();
-    const job = queue.find((j) => j.id === jobId);
-    if (!job?.uri) throw new Error("job_not_found");
-
-    // Run vision analysis (lightweight — no scanned price, no hint)
-    const ctrl = new AbortController();
-    const visionData = await analyzePhotoToQuery(job.uri, ctrl.signal, null, null, null);
-
-    const query: string =
-      visionData?.query || visionData?.bestQuery || visionData?.title || "";
-    const visionConfidence: number = visionData?.confidence ?? 0.5;
-    const visionIdentity: any     = visionData?.identity   ?? null;
-    const category: string        = visionData?.category   ?? "";
-
-    if (!query) throw new Error("no_query");
-
-    // Run market search
-    const marketData = await searchMarket(
-      { query, variants: visionData?.variants || [], visionConfidence, visionIdentity, category },
-      ctrl.signal,
-    );
-
-    const best: any = marketData?.best || marketData?.items?.[0] || null;
-    const bestPrice: number | null = marketData?.bestPrice ?? best?.totalPrice ?? best?.price ?? null;
-
-    const result = {
-      itemName:         query,
-      store:            best?.store || best?.source || null,
-      price:            bestPrice,
-      buyLink:          best?.buyLink || best?.url || null,
-      image:            best?.image || best?.thumbnail || null,
-      buyVerdict:       marketData?.buyOrPass?.verdict || null,
-      buyScore:         marketData?.buyOrPass?.score   || null,
-      savedAmount:      null,
-      visionConfidence,
-    };
-
-    setBatchQueue((prev) => {
-      const next = prev.map((j) =>
-        j.id === jobId
-          ? {
-              ...j,
-              status:      "done" as BatchJobStatus,
-              itemName:    query,
-              price:       bestPrice,
-              verdict:     result.buyVerdict,
-              savedAmount: null,
-              result,
-            }
-          : j
-      );
-      saveBatchQueue(next);
-      return next;
-    });
-  } catch (err: any) {
-    if (err?.name === "AbortError") return;
-    setBatchQueue((prev) => {
-      const next = prev.map((j) =>
-        j.id === jobId
-          ? { ...j, status: "error" as BatchJobStatus, errorMsg: err?.message || "Scan failed" }
-          : j
-      );
-      saveBatchQueue(next);
-      return next;
-    });
-  }
-};
 // -------------------------------------
 // SHARE TEXT (single source of truth)
 // -------------------------------------
@@ -15562,10 +17047,11 @@ historyRow: {
   savingsBox: {
     padding: 18,
     borderRadius: 22,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
     backgroundColor: "rgba(255,255,255,0.05)",
     marginBottom: 14,
+    marginTop: 18,
   },
   savingsTitle: { color: "white", fontWeight: "900", fontSize: 18, letterSpacing: -0.3 },
   savingsSub: { color: "rgba(255,255,255,0.55)", marginTop: 5, fontWeight: "500", lineHeight: 18 },
@@ -15581,15 +17067,15 @@ historyRow: {
 
 signInBtn: {
   flexDirection: "row",
-  gap: 8,
+  gap: 6,
   alignItems: "center",
-  paddingVertical: 11,
-  paddingHorizontal: 16,
-  borderRadius: 20,
-  backgroundColor: "rgba(255,255,255,0.10)",
-  borderWidth: StyleSheet.hairlineWidth,
-  borderColor: "rgba(255,255,255,0.22)",
-  marginRight: 6,
+  paddingVertical: 10,
+  paddingHorizontal: 14,
+  borderRadius: 16,
+  backgroundColor: "rgba(255,255,255,0.11)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.18)",
+  marginRight: 0,
   marginTop: 2,
 },
 
@@ -15609,15 +17095,13 @@ signInBtn: {
     borderColor: "rgba(255,255,255,0.10)",
   },
   profileBtn: {
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
-    backgroundColor: "rgba(255,255,255,0.06)",
-    marginBottom: 12,
+    paddingVertical: 15,
+    paddingHorizontal: 16,
+    borderRadius: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent",
   },
-  profileBtnText: { color: "white", fontWeight: "900", letterSpacing: 0.2 },
+  profileBtnText: { color: "white", fontWeight: "700", fontSize: 15, letterSpacing: 0.1, flex: 1 },
   
 helpBackdrop: {
   ...StyleSheet.absoluteFillObject,
@@ -15649,7 +17133,7 @@ tabBar: {
   bottom: 18,
   left: 18,
   right: 18,
-  height: TAB_BAR_H,
+  height: 66,
   borderRadius: 26,
   borderWidth: StyleSheet.hairlineWidth,
   borderColor: "rgba(255,255,255,0.14)",
