@@ -8068,12 +8068,15 @@ setLastScan({
   message: errMsg,
 });
 
+const isOffline = (e?.name === "AbortError") || (e?.message || "").toLowerCase().includes("network");
 showUiError(
   errMsg.includes("preQualityCombined")
     ? "Frontend ranking bug"
-    : "Scan failed",
+    : isOffline ? "No connection" : "Scan failed",
   errMsg.includes("preQualityCombined")
     ? "The scan data came back, but the app crashed while ranking results. Apply the market ranking scope fix and reload."
+    : isOffline
+    ? "Can't reach server — check your Wi-Fi and try again."
     : `Scan pipeline error: ${errMsg}`
 );
 
@@ -11611,7 +11614,15 @@ pointerEvents={tab === "history" && tabInteractable ? "auto" : "none"}
             ) : null}
             </View>
           {history.length === 0 ? (
-            <Text style={styles.muted}>No scans yet.</Text>
+            <View style={{ alignItems: "center", paddingTop: 52, paddingHorizontal: 24 }}>
+              <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>
+                <Ionicons name="camera-outline" size={28} color="rgba(255,255,255,0.35)" />
+              </View>
+              <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 18, fontWeight: "800", marginBottom: 6 }}>No scans yet</Text>
+              <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 14, textAlign: "center", lineHeight: 20 }}>
+                Point your camera at any item{"\n"}to check its resale value instantly.
+              </Text>
+            </View>
           ) : (
 
 <RNAnimated.ScrollView
@@ -11761,9 +11772,15 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
     </View>
 
 {watchlist.length === 0 ? (
-  <Text style={[styles.muted, { marginTop: 18 }]}>
-    No tracked items yet. Go to Results → Track.
-  </Text>
+  <View style={{ alignItems: "center", paddingTop: 52, paddingHorizontal: 24 }}>
+    <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.06)", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>
+      <Ionicons name="heart-outline" size={28} color="rgba(255,255,255,0.35)" />
+    </View>
+    <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 18, fontWeight: "800", marginBottom: 6 }}>Nothing saved yet</Text>
+    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 14, textAlign: "center", lineHeight: 20 }}>
+      After scanning an item, swipe right{"\n"}or tap the heart to track its price.
+    </Text>
+  </View>
 ) : (
 
 <ScrollView
