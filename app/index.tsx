@@ -1181,7 +1181,7 @@ useEffect(() => {
 
 const { top: TOP, bottom: BOTTOM } = useSafeAreaInsets();
 
-const TAB_BAR_H = 62;
+const TAB_BAR_H = 66;
 const TAB_BAR_MARGIN = 18;
 
 // memoized layout values (prevents recalculation every render)
@@ -15649,7 +15649,7 @@ tabBar: {
   bottom: 18,
   left: 18,
   right: 18,
-  height: 66,
+  height: TAB_BAR_H,
   borderRadius: 26,
   borderWidth: StyleSheet.hairlineWidth,
   borderColor: "rgba(255,255,255,0.14)",
