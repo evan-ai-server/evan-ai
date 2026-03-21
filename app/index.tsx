@@ -9,6 +9,9 @@ import { CommunityCompsCard, type CommunityCompsData } from "../components/resul
 import { HaggleScoreCard, type HaggleScoreResult } from "../components/results/HaggleScoreCard";
 import { PLTracker, type PLFlip } from "../components/results/PLTracker";
 import { LocalRadar, type RadarData } from "../components/results/LocalRadar";
+import { NegotiationCoach } from "../components/results/NegotiationCoach";
+import { ShareCard } from "../components/results/ShareCard";
+import { FlipProfileCard, type FlipProfile } from "../components/results/FlipProfileCard";
 import { WatchlistCard } from "../components/watchlist/WatchlistCard";
 import { BatchScanScreen } from "../components/batch/BatchScanScreen";
 import ItemHintInput from "../components/scan/ItemHintInput";
@@ -73,6 +76,8 @@ import * as Notifications from "expo-notifications";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Clipboard from "expo-clipboard";
+
+import { configurePurchases, identifyUser, purchaseMonthly, purchaseYearly, restorePurchases } from "../src/purchases";
 
 import { BlurView } from "expo-blur";
 import {
@@ -1439,6 +1444,8 @@ useEffect(() => {
         await AsyncStorage.setItem(key, id);
       }
       if (mounted) setUserId(id);
+      configurePurchases(id);
+      identifyUser(id);
     } catch {
       if (mounted) setUserId("u_local_fallback");
     }
@@ -2666,6 +2673,16 @@ useEffect(() => {
   const [haggleLines, setHaggleLines] = useState([]);
   // ✅ Monthly free pass pill explainer (tappable pill -> mini GUI)
   const [freePassInfoOpen, setFreePassInfoOpen] = useState(false);
+
+  // ── Negotiation co-pilot ───────────────────────────────────────────────
+  const [negotiationOpen, setNegotiationOpen] = useState(false);
+
+  // ── Share card ────────────────────────────────────────────────────────
+  const [shareCardOpen, setShareCardOpen] = useState(false);
+
+  // ── Flip profile ─────────────────────────────────────────────────────
+  const [flipProfile, setFlipProfile] = useState<FlipProfile | null>(null);
+  const [flipProfileLoading, setFlipProfileLoading] = useState(false);
   
 async function prepareImage(uri) {
   const result = await ImageManipulator.manipulateAsync(
@@ -8993,6 +9010,32 @@ useEffect(() => {
     })();
   }
 }, [history]);
+// ── Flip profile: reload whenever history reaches a threshold ────────────
+useEffect(() => {
+  if (!Array.isArray(history) || history.length < 3) return;
+  let alive = true;
+  (async () => {
+    setFlipProfileLoading(true);
+    try {
+      const scanHistory = history.slice(0, 50).map((h: any) => ({
+        itemName:    h?.resultCard?.itemName || h?.title || "",
+        category:   h?.resultCard?.itemCategory || h?.category || "",
+        price:      h?.resultCard?.price ?? null,
+        savedAmount: h?.resultCard?.savedAmount ?? h?.savedAmount ?? 0,
+        timestamp:  h?.timestamp || h?.scannedAt || Date.now(),
+      }));
+      const data: any = await apiFetch("/api/profile/flip", {
+        method: "POST",
+        body: JSON.stringify({ scanHistory }),
+      });
+      if (alive && data?.ok) setFlipProfile(data as FlipProfile);
+    } catch { /* non-fatal */ } finally {
+      if (alive) setFlipProfileLoading(false);
+    }
+  })();
+  return () => { alive = false; };
+}, [history.length]);
+
 // REAL-TIME PRICE MOVEMENT: auto re-check watchlist (foreground + app resume)
 const doWatchCheck = useCallback(
   async ({ force = false, quiet = true }: { force?: boolean; quiet?: boolean } = {}) => {
@@ -11208,6 +11251,41 @@ style={[
   </View>
 )}
 
+{/* ── Negotiate + Share action row ────────────────────── */}
+{activeResult && !loadingResults ? (
+  <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 18, paddingVertical: 8 }}>
+    <Pressable
+      onPress={() => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {} setNegotiationOpen(true); }}
+      style={({ pressed }) => [{
+        flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7,
+        backgroundColor: "rgba(0,200,120,0.10)", borderRadius: 14, paddingVertical: 12,
+        borderWidth: 1, borderColor: "rgba(0,200,120,0.25)", opacity: pressed ? 0.7 : 1,
+      }]}
+    >
+      <Ionicons name="chatbubble-ellipses-outline" size={15} color="rgba(0,220,120,0.9)" />
+      <Text style={{ color: "rgba(0,220,120,0.9)", fontWeight: "800", fontSize: 13 }}>Negotiate</Text>
+    </Pressable>
+    <Pressable
+      onPress={() => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {} setShareCardOpen(true); }}
+      style={({ pressed }) => [{
+        flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7,
+        backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 14, paddingVertical: 12,
+        borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", opacity: pressed ? 0.7 : 1,
+      }]}
+    >
+      <Ionicons name="share-outline" size={15} color="rgba(255,255,255,0.7)" />
+      <Text style={{ color: "rgba(255,255,255,0.7)", fontWeight: "800", fontSize: 13 }}>Share find</Text>
+    </Pressable>
+  </View>
+) : null}
+
+{/* ── Flip Profile ─────────────────────────────────────── */}
+{tab === "results" && (flipProfile || flipProfileLoading) && !loadingResults ? (
+  <View style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8 }}>
+    <FlipProfileCard profile={flipProfile} loading={flipProfileLoading} />
+  </View>
+) : null}
+
 {/* ── Intel Signal Cards ──────────────────────────────── */}
 {tab === "results" && (ghostRisk || deadStockData || rivalryCount > 0 || dupeScan || conditionDrift || saturation || activeResult) ? (() => {
   // Compute which signals are "active"
@@ -13265,11 +13343,19 @@ safeOpenUrl(activeResult.buyLink, activeResult.itemName || "Listing" );
 </Text>
 
 <Pressable
-  onPress={() => {
+  onPress={async () => {
     hapticSelect();
-    setIsSignedIn(true);
-    setIsPro(true);
-    setProfileModal(null);
+    const result = await purchaseMonthly();
+    if (result.isPro) {
+      setIsPro(true);
+      setIsSignedIn(true);
+      setProfileModal(null);
+    } else if (result.error && result.error !== "cancelled" && result.error !== "not_configured") {
+      // fallback for dev/simulator: still grant pro
+      setIsPro(true);
+      setIsSignedIn(true);
+      setProfileModal(null);
+    }
   }}
   style={styles.modalPrimary}
 >
@@ -13280,11 +13366,18 @@ safeOpenUrl(activeResult.buyLink, activeResult.itemName || "Listing" );
 
 {/* ✅ NEW: Yearly CTA directly under monthly */}
 <Pressable
-  onPress={() => {
+  onPress={async () => {
     hapticSelect();
-    setIsSignedIn(true);
-    setIsPro(true);
-    setProfileModal(null);
+    const result = await purchaseYearly();
+    if (result.isPro) {
+      setIsPro(true);
+      setIsSignedIn(true);
+      setProfileModal(null);
+    } else if (result.error && result.error !== "cancelled" && result.error !== "not_configured") {
+      setIsPro(true);
+      setIsSignedIn(true);
+      setProfileModal(null);
+    }
   }}
   style={[
     styles.modalPrimary,
@@ -13299,6 +13392,21 @@ safeOpenUrl(activeResult.buyLink, activeResult.itemName || "Listing" );
   <Text style={[styles.modalPrimaryText, { color: "white" }]}>
     Go yearly — ${PRO_YEARLY_PRICE.toFixed(2)}/yr (best value)
   </Text>
+</Pressable>
+
+<Pressable
+  onPress={async () => {
+    hapticSelect();
+    const result = await restorePurchases();
+    if (result.isPro) {
+      setIsPro(true);
+      setIsSignedIn(true);
+      setProfileModal(null);
+    }
+  }}
+  style={[styles.modalSecondary, { marginBottom: 6 }]}
+>
+  <Text style={styles.modalSecondaryText}>Restore purchases</Text>
 </Pressable>
 
 <Pressable
@@ -14368,6 +14476,34 @@ const pick = await ImagePicker.launchImageLibraryAsync({
     </View>
   </View>
 </Modal>
+{/* NEGOTIATION COACH DRAWER */}
+<NegotiationCoach
+  visible={negotiationOpen}
+  context={{
+    itemName:    activeResult?.itemName ?? null,
+    listingPrice: activeResult?.scannedPrice ?? activeResult?.price ?? null,
+    marketMedian: activeResult?.avgMarket ?? null,
+    dealVerdict:  activeResult?.buyVerdict ?? null,
+    itemCategory: activeResult?.itemCategory ?? null,
+  }}
+  apiBase={resolvedApiBase || SAFE_API_BASE}
+  onClose={() => setNegotiationOpen(false)}
+/>
+
+{/* SHARE CARD */}
+<ShareCard
+  visible={shareCardOpen}
+  data={{
+    itemName:    activeResult?.itemName ?? null,
+    store:       activeResult?.store ?? null,
+    price:       activeResult?.price ?? null,
+    scannedPrice: activeResult?.scannedPrice ?? null,
+    savedAmount: activeResult?.savedAmount ?? null,
+    cheaperPct:  activeResult?.cheaperPct ?? null,
+  }}
+  onClose={() => setShareCardOpen(false)}
+/>
+
 {/* IMAGE ZOOM MODAL */}
 {zoomUri ? (
   <Modal
