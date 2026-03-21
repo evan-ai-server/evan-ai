@@ -234,7 +234,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: SP.sm,
     borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.4)",
+    borderTopColor: "rgba(255,255,255,0.45)",
   },
   openText: {
     ...TY.bodyBold,

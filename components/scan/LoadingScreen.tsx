@@ -619,16 +619,17 @@ const styles = StyleSheet.create({
   // ── Progress bar ────────────────────────────────────────────────────────────
   progressTrack: {
     width: "100%",
-    height: 2,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderRadius: R.pill,
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 1,
     marginBottom: SP.xl,
     overflow: "hidden",
+    marginTop: 24,
   },
   progressFill: {
-    height: 2,
-    backgroundColor: "rgba(255,255,255,0.6)",
-    borderRadius: R.pill,
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.55)",
+    borderRadius: 1,
   },
 
   // ── Cancel (bottom, text-only) ──────────────────────────────────────────────

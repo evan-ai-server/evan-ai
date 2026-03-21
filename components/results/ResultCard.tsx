@@ -528,10 +528,9 @@ export function ResultCard({
 
           {/* Alt: CTA bar */}
           {!isHero ? (
-            <TouchableOpacity onPress={onPress} style={styles.viewListingBar} activeOpacity={0.7}>
-              <Ionicons name="arrow-up-circle" size={14} color={C.text3} />
+            <View style={styles.viewListingBar}>
               <Text style={styles.viewListingText}>View listing  →</Text>
-            </TouchableOpacity>
+            </View>
           ) : null}
         </View>
       </View>
@@ -765,37 +764,34 @@ const styles = StyleSheet.create({
 
   // ── Alt view listing CTA ──────────────────────────────────────────────────
   viewListingBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    alignSelf: "flex-start",
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: R.sm,
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.08)",
+    alignItems: "flex-end",
   },
   viewListingText: {
-    ...TY.cap,
-    color: C.text3,
-    letterSpacing: 0.6,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.35)",
+    fontWeight: "600",
+    letterSpacing: 0.5,
   },
 
   // ── Card label badge ──────────────────────────────────────────────────────
   labelBadge: {
     position: "absolute",
-    top: SP.md,
-    left: SP.md,
+    top: 12,
+    left: 12,
+    borderRadius: 8,
+    borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: R.pill,
-    borderWidth: 1,
   },
   labelText: {
-    ...TY.cap,
     fontSize: 9,
-    letterSpacing: 1.0,
+    fontWeight: "900",
+    letterSpacing: 1.4,
+    textTransform: "uppercase",
   },
 
   // ── Hero price override ───────────────────────────────────────────────────
