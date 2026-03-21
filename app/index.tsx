@@ -1,0 +1,16850 @@
+import React, { useCallback, useMemo, useEffect, useRef, useState } from "react";
+import { ResultsContent } from "../components/results/ResultsContent";
+import { OfflineBanner } from "../components/results/OfflineBanner";
+import { ReceiptResultPanel } from "../components/results/ReceiptResultPanel";
+import { FlipCalculatorPanel } from "../components/results/FlipCalculatorPanel";
+import { DeepAuthCard, type DeepAuthResult } from "../components/results/DeepAuthCard";
+import { ConditionMismatchCard, type ConditionAssessment } from "../components/results/ConditionMismatchCard";
+import { CommunityCompsCard, type CommunityCompsData } from "../components/results/CommunityCompsCard";
+import { HaggleScoreCard, type HaggleScoreResult } from "../components/results/HaggleScoreCard";
+import { PLTracker, type PLFlip } from "../components/results/PLTracker";
+import { LocalRadar, type RadarData } from "../components/results/LocalRadar";
+import { WatchlistCard } from "../components/watchlist/WatchlistCard";
+import { BatchScanScreen } from "../components/batch/BatchScanScreen";
+import ItemHintInput from "../components/scan/ItemHintInput";
+import { updateWidgetData } from "../components/widget/updateWidgetData";
+
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  Pressable,
+  TextStyle,
+  Image,
+  Platform,
+  Modal,
+  ScrollView,
+  Linking,
+  Keyboard,
+  Alert,
+  Share,
+  ActionSheetIOS,
+  AppState,
+  BackHandler,
+  ActivityIndicator,
+  AccessibilityInfo,
+  Animated as RNAnimated,
+} from "react-native";
+
+import {
+  GestureHandlerRootView,
+  GestureDetector,
+  Gesture,
+} from "react-native-gesture-handler";
+
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import * as ImagePicker from "expo-image-picker";
+import { Ionicons, FontAwesome } from "@expo/vector-icons";
+
+import Reanimated, {
+  Easing,
+  configureReanimatedLogger,
+  ReanimatedLogLevel,
+  useAnimatedProps,
+  useDerivedValue,
+  clamp,
+  withTiming,
+  cancelAnimation,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSequence,
+} from "react-native-reanimated";
+
+import * as WebBrowser from "expo-web-browser";
+import * as Haptics from "expo-haptics";
+import * as Notifications from "expo-notifications";
+import * as ImageManipulator from "expo-image-manipulator";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Clipboard from "expo-clipboard";
+
+import { BlurView } from "expo-blur";
+import {
+  Canvas,
+  Group,
+  Path,
+  Rect,
+  RoundedRect,
+  Skia,
+  BlurMask,
+  LinearGradient,
+  vec,
+} from "@shopify/react-native-skia";
+const IOS = Platform.OS === "ios";
+
+configureReanimatedLogger({
+  level: ReanimatedLogLevel.error,
+  strict: false,
+});
+
+// -------------------------
+// TOKENS (theme)
+// -------------------------
+const TOK = {
+C: {
+  bg: "#000000",
+  card: "#121212",
+  border: "#1f1f1f",
+  text: "#ffffff",
+  text2: "rgba(255,255,255,0.75)",
+  subtext: "rgba(255,255,255,0.7)",
+  accent: "#22c55e",
+  danger: "#ef4444",
+  s1: "rgba(255,255,255,0.05)",
+  s2: "rgba(255,255,255,0.08)",
+  s3: "rgba(255,255,255,0.14)",
+  b1: "rgba(255,255,255,0.10)",
+  b2: "rgba(255,255,255,0.16)",
+  b3: "rgba(255,255,255,0.12)",
+  backStrong: "rgba(0,0,0,0.6)",
+},
+R: {
+  sm: 8,
+  md: 12,
+  lg: 18,
+  xl: 24,
+  pill: 999,
+},
+  B: {
+    hair: StyleSheet.hairlineWidth,
+    sm: 1,
+    md: 2,
+  },
+S: {
+  tab: {
+    shadowColor: "#000",
+    shadowOpacity: IOS ? 0.25 : 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  soft: {
+    shadowColor: "#000",
+    shadowOpacity: IOS ? 0.20 : 0.14,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,
+  },
+},
+};
+function StarRating({ value = 0, size = 14 }) {
+  const v = Math.max(0, Math.min(5, Number(value) || 0));
+  const full = Math.floor(v);
+  const half = v - full >= 0.5;
+  return (
+    <View style={{ flexDirection: "row" }}>
+      {Array.from({ length: 5 }).map((_, i) => {
+        const idx = i + 1;
+        const name =
+          idx <= full
+            ? "star"
+            : half && idx === full + 1
+            ? "star-half-full"
+            : "star-o";
+        return (
+          <FontAwesome
+            key={i}
+            name={name}
+            size={size}
+            color="#F5C542"
+          />
+        );
+      })}
+    </View>
+  );
+}
+// -------------------------
+// CONFIG
+// -------------------------
+const safeNum = (n: any) =>
+  Number.isFinite(Number(n)) ? Number(n) : 0;
+// saveIntel stub removed — real implementation exists later
+const STORAGE_KEY = "EVANAI_APP_STATE_V2";
+const PROD_API_BASE = "https://YOUR_PROD_DOMAIN_HERE"; // <- replace
+if (!__DEV__) {
+  if (!PROD_API_BASE || PROD_API_BASE.includes("YOUR_PROD_DOMAIN_HERE")) {
+    throw new Error("PROD_API_BASE is not set for production.");
+  }
+}
+const STAGING_API_BASE = "https://YOUR_STAGING_DOMAIN_HERE"; // <- optional
+const DEV_API_BASE = "http://192.168.1.227:3001"; // physical phone on same Wi-Fi
+const API_BASE = __DEV__ ? DEV_API_BASE : PROD_API_BASE;
+// Safe fallback used before state initializes
+const SAFE_API_BASE = API_BASE;
+// In production, never guess bases. Only use PROD_API_BASE.
+
+const API_BASE_CANDIDATES = __DEV__
+  ? [
+      DEV_API_BASE,
+    ]
+  : [PROD_API_BASE];
+
+const smoothConfidence = (c) => {
+  if (c >= 0.92) return Math.min(0.98, c);
+  if (c >= 0.85) return c - 0.03;
+  if (c >= 0.7) return c - 0.06;
+  return c;
+};
+const CONFIDENCE_THRESHOLD = 0.30;
+const MAX_VISION_RETRIES = 1;
+
+// ✅ Free cycle reset window (30 days)
+const FREE_CYCLE_MS = 30 * 24 * 60 * 60 * 1000;
+// -------------------------
+// LOADING UX CAPS
+// -------------------------
+const SOFT_SCAN_UI_MS = 5500;        // show retry, but DO NOT abort yet
+const HARD_SCAN_ABORT_MS = 25000;    // real kill switch
+const MARKET_REQUEST_ABORT_MS = 22000;
+const RETRY_REVEAL_MS = 2500;
+
+// money
+const PRO_MONTHLY_PRICE = 2.99;
+const PRO_YEARLY_PRICE = 24.99;
+
+// -------------------------
+// ✅ HAPTICS (SAFE OPTIONAL)
+// -------------------------
+const hapticSelect = () => { try { Haptics.selectionAsync(); } catch {} };
+const hapticShutter = () => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {} };
+const hapticSoftSnap = () => {
+  try { Haptics.selectionAsync(); } catch {}
+  setTimeout(() => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+  }, 12);
+};
+const hapticTick = () => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {} };
+// -------------------------
+// ✅ LOGOS (remote PNG so no missing asset crashes)
+// -------------------------
+const LOGO_URIS = {
+  ebay: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/EBay_logo.svg/320px-EBay_logo.svg.png",
+  google:
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Google_%22G%22_Logo.svg/256px-Google_%22G%22_Logo.svg.png",
+  nike: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Logo_NIKE.svg/320px-Logo_NIKE.svg.png",
+};
+// -------------------------
+// ✅ FIX #1 (FLASHING CAMERA):
+// DO NOT create Animated Camera component inside App().
+// If you do, it can remount on every render and look like "reloading/flashing".
+// -------------------------
+
+// Keep CameraView props when wrapping with Reanimated
+const AnimatedCameraView =
+  (RNAnimated.createAnimatedComponent(CameraView as any) as any);
+
+const CAMERA_KEY = "main_camera";
+// -------------------------
+// ✅ GLOBAL HELPERS (used outside App())
+// -------------------------
+function useAppActive() {
+  const [active, setActive] = useState(true);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      setActive(state === "active");
+    });
+    return () => sub.remove();
+  }, []);
+  return active;
+}
+const toNumber = (v) => {
+  const n = parseFloat(String(v ?? "").replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+const money = (n) =>
+  Number.isFinite(n) ? `$${Number(n).toFixed(2)}` : "—";
+const percent = (n) =>
+  Number.isFinite(n) ? `${Math.round(Number(n))}%` : "—";
+
+const safeMoney = (v: any) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const priceLadderData = (r: any) => {
+  const paying = safeMoney(r?.scannedPrice);
+  const cheapest = safeMoney(r?.price);
+  const avg = safeMoney(r?.avgMarket || r?.estimatedResale || 0);
+
+  const max = Math.max(1, paying, cheapest, avg);
+  const pct = (x: number) => Math.max(0.06, Math.min(1, x / max)); // never invisible
+
+  const estResale = safeMoney(r?.estimatedResale || 0);
+  const flip =
+    paying > 0 && estResale > 0 ? Math.round((estResale - paying) * 100) / 100 : null;
+
+  return {
+    paying,
+    cheapest,
+    avg,
+    estResale,
+    flip,
+    pctPaying: pct(paying),
+    pctCheapest: pct(cheapest),
+    pctAvg: pct(avg),
+  };
+};
+
+// -------------------------
+// ✅ RETENTION + INTELLIGENCE HELPERS
+// -------------------------
+const DAY_MS = 24 * 60 * 60 * 1000;
+// replace later with your real website / App Store URL
+const APP_SHARE_URL = "https://evanai.app";
+const clamp100 = (n) => Math.max(0, Math.min(100, Number(n) || 0));
+const inferCategory = (q = "") => {
+  const s = String(q || "").toLowerCase();
+  if (/(nike|adidas|jordans|sneaker|shoe|cleat|spike)/i.test(s)) return "Sneakers";
+  if (/(iphone|ipad|macbook|airpods|ps5|xbox|nintendo|camera|sony|canon|nikon)/i.test(s)) return "Electronics";
+  if (/(vintage|antique|collectible|trading card|pokemon|lego|comic|rare)/i.test(s)) return "Collectibles";
+  if (/(bag|handbag|louis vuitton|gucci|prada|coach|wallet)/i.test(s)) return "Luxury";
+  if (/(guitar|piano|violin|amp|microphone|audio interface)/i.test(s)) return "Music";
+  return "General";
+};
+const computeInsights = ({
+  scannedPrice,
+  cheapestPrice,
+  avgMarket,
+  low,
+  high,
+  confidence,
+  totalMatches,
+  url,
+  historyPoints = [], // [number]
+}) => {
+  const sp = Number.isFinite(scannedPrice) && scannedPrice > 0 ? scannedPrice : null;
+  const cp = Number.isFinite(cheapestPrice) && cheapestPrice > 0 ? cheapestPrice : null;
+  const avg = Number.isFinite(avgMarket) && avgMarket > 0 ? avgMarket : (cp ?? null);
+  // savings % (if user entered price)
+  const savingsPct = sp && cp ? clamp100(((sp - cp) / sp) * 100) : 0;
+  // spread % (how wide the market is)
+  const spreadPct =
+    Number.isFinite(low) && Number.isFinite(high) && avg
+      ? clamp100(((high - low) / avg) * 100)
+      : null;
+  // spread score: tighter market = higher score
+  const spreadScore = spreadPct == null ? 55 : clamp100(100 - spreadPct);
+  // liquidity: more matches = better
+  const liquidityScore = totalMatches ? clamp100((totalMatches / 60) * 100) : 35;
+  // volatility: from history (best-price over time). higher = worse
+  let volatilityScore = 55;
+  if (Array.isArray(historyPoints) && historyPoints.length >= 3) {
+    const pts = historyPoints.slice(-10);
+    const min = Math.min(...pts);
+    const max = Math.max(...pts);
+    const base = pts[pts.length - 1] || avg || 1;
+    const vPct = base ? ((max - min) / base) * 100 : 40;
+    volatilityScore = clamp100(vPct);
+  } else if (spreadPct != null) {
+    volatilityScore = clamp100(spreadPct * 0.8);
+  }
+  // stability: inverse of volatility
+  const stabilityScore = clamp100(100 - volatilityScore);
+  // confidence score
+  const confidenceScore = clamp100((Number(confidence) || 0) * 100);
+  // authenticity heuristic (NOT perfect, just a signal)
+  const authBase = isTrustedUrl(url) ? 78 : 52;
+  const authenticityScore = clamp100(authBase + (liquidityScore - 50) * 0.15 - (volatilityScore - 50) * 0.10);
+  // resale velocity estimate
+  const resaleVelocity =
+    liquidityScore >= 70 && stabilityScore >= 60 ? "Fast" :
+    liquidityScore >= 45 ? "Medium" : "Slow";
+  // Buy Score (0–100)
+  // (weights tuned for “feel right”)
+  const buyScore = clamp100(
+    savingsPct * 0.35 +
+      confidenceScore * 0.20 +
+      stabilityScore * 0.20 +
+      liquidityScore * 0.15 +
+      spreadScore * 0.10
+  );
+  // Verdict engine (Good/Risky/Great Flip)
+  let buyVerdict = "RISKY";
+  if (buyScore >= 82) buyVerdict = "GREAT FLIP";
+  else if (buyScore >= 62) buyVerdict = "GOOD BUY";
+  else if (buyScore >= 46) buyVerdict = "MEH";
+  else buyVerdict = "RISKY";
+  return {
+    buyScore,
+    buyVerdict,
+    savingsPct,
+    spreadScore,
+    spreadPct,
+    volatilityScore,
+    liquidityScore,
+    stabilityScore,
+    resaleVelocity,
+    authenticityScore,
+  };
+};
+const buildShareCardText = (card) => {
+  if (!card) return "";
+  const lines = [];
+  lines.push("EVAN AI");
+  lines.push("—");
+  lines.push(card.itemName || "Scan");
+  if (Number.isFinite(card.buyScore)) lines.push(`Buy Score: ${Math.round(card.buyScore)}/100 · ${card.buyVerdict || ""}`.trim());
+  if (Number.isFinite(card.price)) lines.push(`Cheapest: ${money(card.price)} · ${card.store || "Marketplace"}`);
+  if (Number.isFinite(card.scannedPrice) && Number.isFinite(card.savedAmount)) {
+    lines.push(`You paid: ${money(card.scannedPrice)} · Saved: ${money(card.savedAmount)} (${percent(card.cheaperPct)})`);
+  }
+  if (card.resaleVelocity) lines.push(`Resale velocity: ${card.resaleVelocity}`);
+  if (Number.isFinite(card.authenticityScore)) lines.push(`Authenticity signal: ${Math.round(card.authenticityScore)}/100`);
+  lines.push("—");
+  if (card.buyLink) lines.push(`Listing: ${card.buyLink}`);
+  lines.push(`Get Evan AI: ${APP_SHARE_URL}`);
+  return lines.join("\n");
+};
+// -------------------------
+// RESULTS: SMALL RESULT CARD
+// -------------------------
+const renderSmallResultCard = (item, idx) => {
+  if (!item) return null;
+const title = item.title || item.itemName || "Listing";
+const rawUrl = item.url || item.buyLink || item.link || null;
+const trustedUrl = rawUrl && isTrustedUrl(rawUrl) ? rawUrl : null;
+const img = item.image || item.thumbnail || null;
+const price =
+  typeof item.price === "number"
+    ? item.price
+    : parseFloat(String(item.price ?? "").replace(/[^0-9.]/g, "")) || null;
+const rating =
+  typeof item.rating === "number" && Number.isFinite(item.rating)
+    ? item.rating
+    : null;
+
+const onPress = () => {
+  if (trustedUrl) safeOpenUrl(trustedUrl, title);
+};
+
+ return (
+  <Pressable
+    key={item.id ?? `${idx}`}
+    onPress={onPress}
+    style={({ pressed }) => [
+      styles.miniCard,
+      pressed && { opacity: 0.92, transform: [{ scale: 0.995 }] },
+    ]}
+  >
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <View style={{ flexDirection: "row", gap: 12, alignItems: "center", flex: 1 }}>
+{img ? (
+  <Image source={{ uri: img }} style={styles.miniImg} />
+) : (
+  <View style={styles.miniImgFallback}>
+<Ionicons
+  name="open-outline"
+  size={18}
+  color={trustedUrl ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.24)"}
+/>
+  </View>
+)}
+<View style={{ flex: 1 }}>
+            <Text numberOfLines={1} style={styles.miniTitle}>
+              {title}
+            </Text>
+            {price != null && (
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Text style={styles.miniPrice}>{money(price)}</Text>
+                {rating != null && (
+                  <Ionicons
+                    name="star"
+                    size={13}
+                    color="rgba(255,255,255,0.85)"
+                    style={{ marginLeft: 8 }}
+                  />
+                )}
+              </View>
+            )}
+          </View>
+        </View>
+        <Ionicons
+          name="open-outline"
+          size={18}
+          color="rgba(255,255,255,0.85)"
+        />
+      </View>
+    </Pressable>
+  );
+};
+// -------------------------
+// SECURITY: Trusted domains
+// -------------------------
+const TRUSTED_DOMAINS = [
+  "app.apple.com",
+  "amazon.com",
+  "walmart.com",
+  "target.com",
+  "bestbuy.com",
+  "costco.com",
+  "ebay.com",
+  "etsy.com",
+  "facebook.com",
+  "marketplace.facebook.com",
+  "offerup.com",
+  "poshmark.com",
+  "depop.com",
+  "grailed.com",
+  "vestiairecollective.com",
+  "therealreal.com",
+  "thredup.com",
+  "vinted.com",
+  "stockx.com",
+  "goat.com",
+  "newegg.com",
+  "bhphotovideo.com",
+  "adorama.com",
+  "ifixit.com",
+  "chairish.com",
+  "1stdibs.com",
+  "shopgoodwill.com",
+  "goodwillfinds.com",
+  "craigslist.org",
+];
+function isTrustedUrl(url) {
+  try {
+    const m = String(url).match(/^https?:\/\/([^/]+)/i);
+    const hostname = (m?.[1] || "").toLowerCase();
+    if (!hostname) return false;
+    return TRUSTED_DOMAINS.some(
+      (domain) => hostname === domain || hostname.endsWith(`.${domain}`)
+    );
+  } catch {
+    return false;
+  }
+}
+const getDomain = (url) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+};
+let __unverifiedLinkPrompt = null;
+const requestUnverifiedLinkPrompt = (payload) => {
+  try {
+    if (typeof __unverifiedLinkPrompt === "function") {
+      __unverifiedLinkPrompt(payload);
+      return true;
+    }
+  } catch (e) {}
+  return false;
+};
+async function safeOpenUrl(url, label) {
+const open = async () => {
+  try {
+    // iOS/Android: open in an in-app browser (Safari View / Custom Tabs)
+    if (Platform.OS !== "web") {
+      await WebBrowser.openBrowserAsync(url, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+        dismissButtonStyle: "close",
+        enableBarCollapsing: true,
+        showTitle: true,
+      });
+      return;
+    }
+    // Web fallback
+    const can = await Linking.canOpenURL(url);
+    if (!can) {
+      Alert.alert(
+        "Can't open link",
+        label ? `Couldn't open: ${label}` : "Couldn't open this link."
+      );
+      return;
+    }
+    await Linking.openURL(url);
+  } catch (e) {
+    console.warn("Failed to open URL:", url, e);
+    Alert.alert("Failed to open link", "Please try again.");
+  }
+};
+if (!isTrustedUrl(url)) {
+  // iOS: native Action Sheet
+  if (Platform.OS === "ios") {
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        title: "Open unverified link?",
+        message: `Double-check the domain before entering sensitive info.\n\n${getDomain(url)}`,
+        options: ["Cancel", "Open Link"],
+        cancelButtonIndex: 0,
+        destructiveButtonIndex: 1,
+      },
+      (buttonIndex) => {
+        if (buttonIndex === 1) open();
+      }
+    );
+    return;
+  }
+  // Android/other: keep your premium modal
+  const handled = requestUnverifiedLinkPrompt({
+    url,
+    label,
+    onOpen: open,
+  });
+  if (!handled) {
+    Alert.alert(
+      "Unverified link",
+      "This seller’s website isn’t a trusted marketplace. Open anyway?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Open", onPress: open },
+      ]
+    );
+  }
+  return;
+}
+  await open();
+}
+
+function normalizeMarketResponse(payload: any) {
+  const rawItems = Array.isArray(payload?.market)
+    ? payload.market
+    : Array.isArray(payload?.items)
+    ? payload.items
+    : Array.isArray(payload?.results)
+    ? payload.results
+    : [];
+
+  const items = rawItems
+    .filter(Boolean)
+    .map((it: any, index: number) => {
+      const rawUrl =
+        it?.url ||
+        it?.buyLink ||
+        it?.link ||
+        it?.itemWebUrl ||
+        it?.merchant_link ||
+        it?.offer_page_url ||
+        it?.product_url ||
+        null;
+
+      const totalCandidate =
+        Number.isFinite(Number(it?.totalPrice))
+          ? Number(it.totalPrice)
+          : Number.isFinite(Number(it?.total))
+          ? Number(it.total)
+          : Number.isFinite(Number(it?.allInPrice))
+          ? Number(it.allInPrice)
+          : null;
+
+      const priceCandidate =
+        Number.isFinite(Number(it?.price))
+          ? Number(it.price)
+          : Number.isFinite(Number(it?.numericPrice))
+          ? Number(it.numericPrice)
+          : totalCandidate;
+
+      return {
+        ...it,
+        id: it?.id || `${index}_${rawUrl || it?.title || "item"}`,
+        title: it?.title || it?.itemName || "Listing",
+        itemName: it?.title || it?.itemName || "Listing",
+        price: priceCandidate,
+        totalPrice: totalCandidate ?? priceCandidate,
+        store: it?.source || it?.store || "Marketplace",
+        source: it?.source || it?.store || "Marketplace",
+        url: rawUrl,
+        buyLink: rawUrl,
+        image: it?.image || it?.thumbnail || it?.thumbnail_url || null,
+        trusted: !!(rawUrl && isTrustedUrl(rawUrl)),
+      };
+    })
+    .filter(
+      (it: any) =>
+        it?.title &&
+        (Number.isFinite(it?.totalPrice) || Number.isFinite(it?.price))
+    )
+    .sort((a: any, b: any) => {
+      const ap = Number.isFinite(a?.totalPrice) ? a.totalPrice : a?.price;
+      const bp = Number.isFinite(b?.totalPrice) ? b.totalPrice : b?.price;
+      return Number(ap || Infinity) - Number(bp || Infinity);
+    });
+
+  const best = items[0] || null;
+
+  return {
+    items,
+    best,
+    bestPrice:
+      Number.isFinite(best?.totalPrice) ? best.totalPrice : best?.price ?? null,
+    totalMatches: Number(payload?.totalMatches) || items.length || 0,
+    finalQuery: payload?.finalQuery || payload?.query || null,
+    searchedQueries: Array.isArray(payload?.searchedQueries)
+      ? payload.searchedQueries
+      : [],
+    consensus: payload?.consensus || null,
+    prediction: payload?.prediction || null,
+    coach: payload?.coach || null,
+    pulse: payload?.pulse || null,
+  };
+}
+
+class AppErrorBoundary extends React.Component<
+
+  { children: React.ReactNode },
+  { hasError: boolean; err: any }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, err: null };
+  }
+  static getDerivedStateFromError(err: any) {
+    return { hasError: true, err };
+  }
+  componentDidCatch(err: any) {
+    console.log("🔥 App crashed:", err);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={{ flex: 1, backgroundColor: TOK.C.bg, justifyContent: "center", alignItems: "center", padding: 24 }}>
+          <Text style={{ color: "white", fontSize: 20, fontWeight: "900", marginBottom: 10 }}>
+            Evan AI hit an error
+          </Text>
+          <Text style={{ color: "rgba(255,255,255,0.75)", textAlign: "center" }}>
+            Restart the app. If it keeps happening, it’s likely a server response issue.
+          </Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+const track = async (event, props = {}) => {
+  try {
+    // local debug
+    console.log("📈", event, props);
+    // optional backend tracking endpoint
+    // await apiFetch(`${resolvedApiBase || SAFE_API_BASE}/analytics`, {
+    //   method: "POST",
+    //   headers: { "Content-Type": "application/json" },
+    //   body: JSON.stringify({ event, props, ts: Date.now() }),
+    // });
+  } catch {}
+};
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; message?: string }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(err: any) {
+    return { hasError: true, message: String(err?.message || err) };
+  }
+  componentDidCatch(err: any, info: any) {
+    console.warn("ErrorBoundary crash:", err, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+<View style={{ flex: 1, backgroundColor: "transparent", justifyContent: "center", alignItems: "center", padding: 24 }}>
+          <Text style={{ color: "white", fontSize: 18, fontWeight: "800" }}>Evan AI hit a snag</Text>
+          <Text style={{ color: "rgba(255,255,255,0.75)", marginTop: 10, textAlign: "center" }}>
+            Close and reopen the app. If this keeps happening, it’s a bug — not you.
+          </Text>
+          <Text style={{ color: "rgba(255,255,255,0.45)", marginTop: 14, fontSize: 12, textAlign: "center" }}>
+            {this.state.message}
+          </Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ── Live Activity Ticker — module-level constants ────────────────────────────
+const TICKER_MSGS = [
+  "🔥 Sarah in Chicago saved $84 using Evan AI!",
+  "📦 Mike flipped a PS5 for $120 profit using Evan AI",
+  "✅ James found AirPods Pro 2 for $87 less",
+  "💰 Taylor sold vintage Levi's for $210 — bought for $35",
+  "🎯 Emma saved $62 on a Coach bag today",
+  "⚡ Ryan spotted a $200 flip on Jordan 4s",
+  "🛍️ Priya saved $110 on a MacBook Air deal",
+  "🔍 Alex verified authentic Supreme hoodie — avoided $90 fake",
+  "💸 Jordan saved $47 using Evan AI price alert",
+  "📈 Kayla flipped vintage Nike Dunks for $180 profit",
+  "🎉 Devon in Brooklyn saved $93 this week",
+  "🔔 Price alert hit — AirPods Max dropped to $389",
+  "✨ Sophia saved $55 on Ray-Ban sunglasses",
+  "🚀 Marcus flipped 3 items for $340 total profit",
+  "💡 Aiden caught a $150 underpriced vintage leather jacket",
+  "🛒 Isabella saved $38 on Bose headphones",
+  "🔥 Noah in LA flipped a vintage Rolex for $800 profit",
+  "📸 Olivia avoided overpaying $65 — condition mismatch caught",
+  "💎 Liam saved $200 on a camera lens using Evan AI",
+  "⚡ Ava found same PS4 for $49 less near her",
+  "🏷 ️ Ethan saved $74 on a gaming chair today",
+  "🌟 Mia flipped thrifted Prada bag for $340 profit",
+  "💰 Owen spotted AJ1 Retro for $95 below market",
+  "📱 Zoe saved $130 on an iPhone 14 Pro Max",
+  "🔥 Lucas in Miami saved $58 on Yeezy 350s",
+"🔥 Tyler flipped AirPods Pro for $88 profit",
+"💰 Mason saved $67 on a Nike hoodie",
+"🎯 Ethan found a $320 camera for $140",
+"📈 Logan flipped Jordans for $135 profit",
+"🛍️ Ava saved $58 on Lululemon shorts",
+"⚡ Noah spotted a $210 underpriced iPad",
+"💎 Emma flipped a Gucci belt for $175",
+"🎉 Ryan saved $42 on Beats Studio",
+"🚀 Lucas flipped a PS5 for $105 profit",
+"💵 Olivia saved $79 on a North Face jacket",
+
+"🔥 Dylan flipped Yeezys for $155 profit",
+"💰 Sophia saved $63 on Ray-Bans",
+"🎯 Carter found a $450 laptop for $190",
+"📈 Aiden flipped Dunks for $128 profit",
+"🛍️ Chloe saved $71 on Nike Tech",
+"⚡ Benjamin spotted a $280 flip",
+"💎 Lily flipped a Prada bag for $240",
+"🎉 Owen saved $36 on Vans",
+"🚀 Elijah flipped a MacBook for $290",
+"💵 Harper saved $102 on a Dyson",
+
+"🔥 Jack flipped a gaming chair for $85",
+"💰 Grace saved $77 on sneakers",
+"🎯 Wyatt found a $380 deal on headphones",
+"📈 Luke flipped Jordans for $142",
+"🛍️ Victoria saved $64 on Alo leggings",
+"⚡ David spotted a $310 flip",
+"💎 Sofia flipped a Rolex for $900",
+"🎉 Joseph saved $47 on Adidas",
+"🚀 Matthew flipped a drone for $165",
+"💵 Aria saved $88 on a handbag",
+
+"🔥 Samuel flipped a bike for $120",
+"💰 Zoe saved $69 on Crocs",
+"🎯 Andrew found a $500 camera for $230",
+"📈 Joshua flipped Yeezys for $175",
+"🛍️ Natalie saved $54 on Gymshark",
+"⚡ Christian spotted a $240 flip",
+"💎 Layla flipped a Louis Vuitton wallet",
+"🎉 Aaron saved $39 on Converse",
+"🚀 Thomas flipped a TV for $180",
+"💵 Brooklyn saved $95 on a coat",
+
+"🔥 Isaac flipped headphones for $110",
+"💰 Hannah saved $83 on leggings",
+"🎯 Gabriel found a $420 deal",
+"📈 Julian flipped Jordans for $138",
+"🛍️ Violet saved $62 on Nike",
+"⚡ Levi spotted a $260 flip",
+"💎 Nora flipped a Cartier bracelet",
+"🎉 Adam saved $44 on slides",
+"🚀 Eli flipped a console for $98",
+"💵 Hazel saved $72 on a bag",
+
+"🔥 Connor flipped a monitor for $95",
+"💰 Aurora saved $101 on a jacket",
+"🎯 Hunter found a $360 flip",
+"📈 Dominic flipped Dunks for $120",
+"🛍️ Bella saved $75 on sneakers",
+"⚡ Jaxon spotted a $230 flip",
+"💎 Lucy flipped a designer purse",
+"🎉 Evan saved $50 on Nike",
+"🚀 Miles flipped a MacBook for $270",
+"💵 Ellie saved $84 on headphones",
+
+"🔥 Leo flipped Jordans for $150",
+"💰 Stella saved $68 on UGGs",
+"🎯 Anthony found a $410 deal",
+"📈 Isaiah flipped Yeezys for $185",
+"🛍️ Ruby saved $59 on leggings",
+"⚡ Caleb spotted a $250 flip",
+"💎 Alice flipped a Chanel bag",
+"🎉 Jordan saved $41 on Air Max",
+"🚀 Cooper flipped a PS4 for $90",
+"💵 Sadie saved $78 on a hoodie",
+
+"🔥 Nolan flipped a bike for $135",
+"💰 Peyton saved $66 on Crocs",
+"🎯 Jason found a $390 deal",
+"📈 Wesley flipped Jordans for $145",
+"🛍️ Clara saved $82 on Nike",
+"⚡ Ryder spotted a $220 flip",
+"💎 Eva flipped a luxury watch",
+"🎉 Carson saved $37 on Vans",
+"🚀 Axel flipped a TV for $175",
+"💵 Lila saved $92 on a jacket",
+];
+const TICKER_SINGLE = TICKER_MSGS.join("     ");
+const TICKER_TEXT = TICKER_SINGLE + "     " + TICKER_SINGLE;
+const TICKER_CHAR_W = 8.4;
+const TICKER_TOTAL_W = TICKER_SINGLE.length * TICKER_CHAR_W;
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function App() {
+
+  const [intelState, setIntelState] = useState<IntelState>(emptyIntel());
+
+  useEffect(() => {
+    (async () => {
+      const loaded = await loadIntel();
+      setIntelState(loaded);
+    })();
+  }, []);
+
+
+  return (
+    <AppErrorBoundary>
+      <SafeAreaProvider>
+        <AppInner intelState={intelState} setIntelState={setIntelState} />
+      </SafeAreaProvider>
+    </AppErrorBoundary>
+  );
+}
+
+type NeuralScanOverlayProps = {
+  active: boolean;
+  onFinished?: () => void;
+};
+function NeuralScanOverlay({ active, onFinished }: NeuralScanOverlayProps) {
+  // Shared values (GPU-driven)
+  const v = useSharedValue(0);        // master visibility 0..1
+  const beam = useSharedValue(0);     // diagonal sweep 0..1
+  const glow = useSharedValue(0);     // breathing ambient 0..1
+  const pulse = useSharedValue(0);    // core pulse 0..1
+  const trace = useSharedValue(0);    // edge trace reveal 0..1
+  const shimmer = useSharedValue(0);  // metallic sweep 0..1
+  // Always-mounted overlay opacity (no conditional mounting = no flicker)
+  const overlayStyle = useAnimatedStyle(() => {
+    return {
+      opacity: v.value,
+    };
+  }, []);
+  // A clean “neural-ish” outline path (placeholder).
+  // Later you can swap this with a real detected contour path.
+  const outline = Skia.Path.Make();
+  outline.addRRect(
+    {
+      rect: { x: 40, y: 160, width: 320, height: 420 },
+      rx: 28,
+      ry: 28,
+    },
+    false
+  );
+  const corePath = Skia.Path.Make();
+  corePath.addCircle(200, 380, 44);
+  const run = (done?: () => void) => {
+    "worklet";
+    cancelAnimation(v);
+    cancelAnimation(beam);
+    cancelAnimation(glow);
+    cancelAnimation(pulse);
+    cancelAnimation(trace);
+    cancelAnimation(shimmer);
+    // Fade in overlay (cinematic dim + glass)
+    v.value = withTiming(1, { duration: 160, easing: Easing.out(Easing.cubic) });
+    // Ambient breathing glow (subtle)
+
+glow.value = withSequence(
+  withTiming(1, { duration: 900, easing: Easing.inOut(Easing.sin) }),
+  withTiming(0, { duration: 900, easing: Easing.inOut(Easing.sin) }),
+  withTiming(1, { duration: 900, easing: Easing.inOut(Easing.sin) }),
+  withTiming(0, { duration: 900, easing: Easing.inOut(Easing.sin) })
+);
+    // Diagonal volumetric sweep
+    beam.value = withSequence(
+      withDelay(90, withTiming(1, { duration: 520, easing: Easing.out(Easing.cubic) })),
+      withTiming(0, { duration: 0 })
+    );
+    // Central neural core pulse
+    pulse.value = withSequence(
+      withDelay(120, withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) })),
+      withTiming(0, { duration: 420, easing: Easing.inOut(Easing.sin) })
+    );
+    // Edge trace reveal + metallic shimmer pass
+    trace.value = withDelay(160, withTiming(1, { duration: 620, easing: Easing.out(Easing.cubic) }));
+    shimmer.value = withDelay(260, withTiming(1, { duration: 640, easing: Easing.inOut(Easing.sin) }));
+    // Finish: clean fade out (camera stays mounted underneath)
+    v.value = withDelay(
+      980,
+      withTiming(0, { duration: 220, easing: Easing.inOut(Easing.cubic) }, (finished) => {
+        if (finished && done) runOnJS(done)();
+      })
+    );
+  };
+  // Start/stop reactions (without re-render loops)
+  // We keep it simple: when active flips true, run sequence.
+  // When active flips false, fade out.
+
+React.useEffect(() => {
+  if (!active) {
+    // hard stop when overlay turns off
+    cancelAnimation(v);
+    cancelAnimation(beam);
+    cancelAnimation(glow);
+    cancelAnimation(pulse);
+    cancelAnimation(trace);
+    cancelAnimation(shimmer);
+
+    v.value = withTiming(0, { duration: 140, easing: Easing.inOut(Easing.cubic) });
+    beam.value = 0;
+    glow.value = 0;
+    pulse.value = 0;
+    trace.value = 0;
+    shimmer.value = 0;
+    return;
+  }
+
+  run(() => {
+    onFinished?.();
+  });
+
+  return () => {
+    // cleanup if component unmounts mid-animation
+    cancelAnimation(v);
+    cancelAnimation(beam);
+    cancelAnimation(glow);
+    cancelAnimation(pulse);
+    cancelAnimation(trace);
+    cancelAnimation(shimmer);
+
+    v.value = 0;
+    beam.value = 0;
+    glow.value = 0;
+    pulse.value = 0;
+    trace.value = 0;
+    shimmer.value = 0;
+  };
+}, [active, onFinished]);
+
+const dimOpacity = 0.48;
+const glassOpacity = 0.22;
+
+// Beam geometry (Skia props need actual animated numbers, not object math in JSX)
+const beamRectX = useDerivedValue(() => 60 + 320 * beam.value - 220);
+const beamRectX2 = useDerivedValue(() => 60 + 320 * beam.value - 220);
+
+const shimmerRectX = useDerivedValue(() => 40 + 340 * shimmer.value - 180);
+const shimmerRectX2 = useDerivedValue(() => 40 + 340 * shimmer.value - 180);
+
+  return (
+    <Reanimated.View
+      pointerEvents="none"
+      style={[
+        {
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+        },
+        overlayStyle,
+      ]}
+    >
+      {/* Cinematic dim + glass (no modal, no layout shift) */}
+      <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: `rgba(0,0,0,${dimOpacity})` }} />
+      <BlurView
+        intensity={40}
+        tint="dark"
+        style={StyleSheet.absoluteFillObject}
+      />
+      {/* GPU Canvas (beam + trace + shimmer + core pulse) */}
+      <Canvas style={StyleSheet.absoluteFillObject}>
+        {/* Frosted glass frame */}
+        <Group>
+          <RoundedRect x={18} y={64} width={374} height={732} r={34}>
+            <LinearGradient
+              start={vec(18, 64)}
+              end={vec(392, 796)}
+              colors={[
+                `rgba(255,255,255,${glassOpacity})`,
+                `rgba(255,255,255,${glassOpacity * 0.55})`,
+              ]}
+            />
+          </RoundedRect>
+          <RoundedRect x={22} y={68} width={366} height={724} r={30} color={`rgba(255,255,255,0.08)`} />
+        </Group>
+        {/* Volumetric diagonal light beam sweep */}
+        <Group>
+<Rect x={beamRectX} y={-60} width={240} height={980} transform={[{ rotate: -0.55 }]} >
+            <LinearGradient
+              start={vec(0, 0)}
+              end={vec(240, 0)}
+              colors={[
+                "rgba(255,255,255,0.00)",
+                "rgba(255,255,255,0.22)",
+                "rgba(255,255,255,0.00)",
+              ]}
+            />
+          </Rect>
+<Rect x={beamRectX2} y={-60} width={240} height={980} transform={[{ rotate: -0.55 }]} >
+            <BlurMask blur={18} style="normal" />
+          </Rect>
+        </Group>
+        {/* Edge trace */}
+        <Group>
+          <Path
+            path={outline}
+            style="stroke"
+            strokeWidth={3.2}
+            color={`rgba(255,255,255,${0.55 * trace.value})`}
+          />
+          <Path
+            path={outline}
+            style="stroke"
+            strokeWidth={6.0}
+            color={`rgba(255,255,255,${0.18 * trace.value})`}
+          >
+            <BlurMask blur={10} style="normal" />
+          </Path>
+        </Group>
+        {/* Metallic shimmer across traced edges */}
+        <Group>
+<Rect x={shimmerRectX} y={120} width={220} height={620} transform={[{ rotate: -0.55 }]}>
+            <LinearGradient
+              start={vec(0, 0)}
+              end={vec(220, 0)}
+              colors={[
+                "rgba(255,255,255,0.00)",
+                "rgba(255,255,255,0.24)",
+                "rgba(255,255,255,0.00)",
+              ]}
+            />
+          </Rect>
+<Rect x={shimmerRectX2} y={120} width={220} height={620} transform={[{ rotate: -0.55 }]}>
+            <BlurMask blur={14} style="normal" />
+          </Rect>
+        </Group>
+        {/* Central neural scanning core pulse */}
+        <Group>
+          <Path path={corePath} color={`rgba(255,255,255,${0.18 + 0.18 * pulse.value})`} />
+          <Path path={corePath} color={`rgba(255,255,255,${0.10 + 0.16 * pulse.value})`}>
+            <BlurMask blur={18} style="normal" />
+          </Path>
+        </Group>
+        {/* Ambient breathing surface glow (subtle) */}
+        <Group>
+          <RoundedRect x={18} y={64} width={374} height={732} r={34} color={`rgba(255,255,255,${0.04 + 0.06 * glow.value})`}>
+            <BlurMask blur={26} style="normal" />
+          </RoundedRect>
+        </Group>
+      </Canvas>
+    </Reanimated.View>
+  );
+}
+function AppInner({
+  intelState,
+  setIntelState,
+}: any) {
+// -------------------------
+// BILLIONAIRE STATE
+// -------------------------
+const [sellerMode, setSellerMode] = useState(false);
+const [autoWatchEnabled, setAutoWatchEnabled] = useState(true);
+const [inventory, setInventory] = useState<InventoryItem[]>([]);
+useEffect(() => {
+  AsyncStorage.setItem("EVAN_INVENTORY_V1", JSON.stringify(inventory));
+}, [inventory]);
+useEffect(() => {
+  (async () => {
+    const saved = await AsyncStorage.getItem("EVAN_INVENTORY_V1");
+    if (saved) setInventory(JSON.parse(saved));
+  })();
+}, []);
+const [inventoryOpen, setInventoryOpen] = useState(false);
+const [batchOpen, setBatchOpen] = useState(false);
+const [batchInventoryOpen, setBatchInventoryOpen] = useState(false);
+const [batchQueue, setBatchQueue] = useState<BatchJob[]>([]);
+const [batchRunning, setBatchRunning] = useState(false);
+const [cloudImportOpen, setCloudImportOpen] = useState(false);
+const [cloudImportText, setCloudImportText] = useState("");
+const [refState, setRefState] = useState<{ code: string; earned: number; used: number }>({
+  code: "",
+  earned: 0,
+  used: 0,
+});
+
+useEffect(() => {
+  // ✅ crash-proof: REF_KEY may be declared later in this file
+  AsyncStorage.setItem("EVAN_REF_STATE_V1", JSON.stringify(refState)).catch(() => {});
+}, [refState]);
+
+const { top: TOP, bottom: BOTTOM } = useSafeAreaInsets();
+
+const TAB_BAR_H = 62;
+const TAB_BAR_MARGIN = 18;
+
+// memoized layout values (prevents recalculation every render)
+const TAB_BAR_BOTTOM = useMemo(
+  () => TAB_BAR_MARGIN + BOTTOM,
+  [BOTTOM]
+);
+
+// Controls sit ABOVE the tab bar (no overlay)
+const CAMERA_CONTROLS_BOTTOM = useMemo(
+  () => TAB_BAR_BOTTOM + TAB_BAR_H + 18,
+  [TAB_BAR_BOTTOM]
+);
+
+const getVerdict = ({ scannedPrice, cheapestPrice }) => {
+  if (!Number.isFinite(scannedPrice) || !Number.isFinite(cheapestPrice)) {
+    return null;
+  }
+
+  const diffPct = ((scannedPrice - cheapestPrice) / scannedPrice) * 100;
+
+  if (diffPct >= 30) return { label: "STEAL", tone: "green" };
+  if (diffPct >= 10) return { label: "FAIR", tone: "yellow" };
+  return { label: "OVERPRICED", tone: "red" };
+};
+
+const copyText = async (text: string) => {
+  try {
+    await Clipboard.setStringAsync(text);
+    Haptics.selectionAsync();
+  } catch {}
+};
+
+const openHelp = () => {
+  hapticSelect();
+  setHelpOpen(true);
+  helpOpacity.setValue(0);
+
+  RNAnimated.timing(helpOpacity, {
+    toValue: 1,
+    duration: 180,
+    easing: Easing.out(Easing.cubic),
+    useNativeDriver: true,
+  }).start();
+};
+
+const closeHelp = () => {
+  RNAnimated.timing(helpOpacity, {
+    toValue: 0,
+    duration: 160,
+    easing: Easing.inOut(Easing.cubic),
+    useNativeDriver: true,
+  }).start(() => setHelpOpen(false));
+};
+
+  const scanCacheRef = useRef<Map<string, any>>(new Map());
+  const cameraRef = useRef(null);
+
+// ✅ CINEMATIC CAMERA → SCAN TRANSITION (LEVEL 1)
+const [cinematicFreeze, setCinematicFreeze] = useState(false);
+const freezeOpacity = useRef(new RNAnimated.Value(0)).current;
+const vignetteOpacity = useRef(new RNAnimated.Value(0)).current;
+// POLISH #1 — freeze image overlay (Apple feel)
+const [freezeFrameUri, setFreezeFrameUri] = useState<string | null>(null);
+const scanAnimTimerRef = useRef<any>(null);
+
+const triggerCinematicScan = () => {
+  // 120–180ms “freeze” + dark vignette + then neural overlay
+  setCinematicFreeze(true);
+
+  freezeOpacity.setValue(0);
+  vignetteOpacity.setValue(0);
+
+  // Freeze (quick hold)
+  RNAnimated.sequence([
+    RNAnimated.timing(freezeOpacity, {
+      toValue: 1,
+      duration: 90,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }),
+    RNAnimated.delay(140),
+    RNAnimated.timing(freezeOpacity, {
+      toValue: 0,
+      duration: 140,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: true,
+    }),
+  ]).start(() => setCinematicFreeze(false));
+
+  // Vignette fade (dark, cinematic)
+  RNAnimated.sequence([
+    RNAnimated.delay(110),
+    RNAnimated.timing(vignetteOpacity, {
+      toValue: 1,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }),
+    RNAnimated.delay(420),
+    RNAnimated.timing(vignetteOpacity, {
+      toValue: 0,
+      duration: 240,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: true,
+    }),
+  ]).start();
+
+  // Neural overlay begins AFTER the “freeze” moment
+if (scanAnimTimerRef.current) clearTimeout(scanAnimTimerRef.current);
+scanAnimTimerRef.current = setTimeout(() => {
+  setScanAnimActive(true);
+}, 140);
+};
+
+const [scanAnimActive, setScanAnimActive] = useState(false);
+const [userId, setUserId] = useState<string | null>(null);
+// ✅ Crash-proof refs (prevents use-before-declare TDZ crashes)
+
+const profileModalRef = useRef(false);
+const seeMoreOpenRef = useRef(false);
+const haggleOpenRef = useRef(false);
+const showPaywallRef = useRef(false);
+const freePassInfoOpenRef = useRef(false);
+const splashInfoOpenRef = useRef(false);
+const resultModalOpenRef = useRef(false);
+
+useEffect(() => {
+  let mounted = true;
+  (async () => {
+    try {
+      const key = "evan_user_id_v1"; // ✅ SINGLE KEY
+      let id = await AsyncStorage.getItem(key);
+      if (!id) {
+        id = `u_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        await AsyncStorage.setItem(key, id);
+      }
+      if (mounted) setUserId(id);
+    } catch {
+      if (mounted) setUserId("u_local_fallback");
+    }
+  })();
+  return () => {
+    mounted = false;
+  };
+}, []);
+
+// Feature 2: Auto-process queued batch items one at a time
+useEffect(() => {
+  if (!batchMode) return;
+  const pending = batchQueue.find((j) => !j.status || j.status === "queued");
+  const inFlight = batchQueue.some((j) => j.status === "scanning");
+  if (!pending || inFlight || batchProcessingRef.current) return;
+  batchProcessingRef.current = true;
+  processBatchItem(pending.id).finally(() => {
+    batchProcessingRef.current = false;
+  });
+}, [batchQueue, batchMode]);
+
+// Feature 7: Register Expo push token once userId is available
+useEffect(() => {
+  if (!userId) return;
+  (async () => {
+    try {
+      const { status } = await Notifications.requestPermissionsAsync();
+      if (status !== "granted") return;
+      const token = await Notifications.getExpoPushTokenAsync();
+      if (token?.data) {
+        await fetch(
+          `${process.env.EXPO_PUBLIC_API_URL ?? (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001")}/push/register`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId, pushToken: token.data }),
+          }
+        );
+      }
+    } catch {
+      // non-fatal
+    }
+  })();
+}, [userId]);
+
+  const scanReqIdRef = useRef(0);
+const activeAbortRef = useRef<AbortController | null>(null);
+const isMountedRef = useRef(true);
+useEffect(() => {
+  isMountedRef.current = true;
+  return () => {
+    isMountedRef.current = false;
+  };
+}, []);
+const nextScanReqId = () => {
+  scanReqIdRef.current += 1;
+  return scanReqIdRef.current;
+};
+const isReqAlive = (reqId: number) =>
+  isMountedRef.current && reqId === scanReqIdRef.current;
+  // ✅ Saved toast (MUST live inside App)
+  const [savedToast, setSavedToast] = useState(null);
+  const toastAnim = useRef(new RNAnimated.Value(0)).current;
+  const splashIPop = useRef(new RNAnimated.Value(0)).current;
+  const splashIY = useRef(new RNAnimated.Value(10)).current;
+  const [unverifiedPrompt, setUnverifiedPrompt] = useState(null);
+  useEffect(() => {
+    __unverifiedLinkPrompt = (payload) => {
+      setUnverifiedPrompt(payload); // { url, label, onOpen }
+    };
+    return () => {
+      __unverifiedLinkPrompt = null;
+    };
+  }, []);
+const [tab, setTab] = useState("camera");
+const [neuralLearningLevel, setNeuralLearningLevel] = useState(0);
+
+// ✅ MUST exist before showOnlyActiveTab reads it
+const tabSwitchingRef = useRef(false);
+const pendingTabRef = useRef<any>(null);
+const lastTabTapRef = useRef<number>(0); // ✅ spam-tap throttle
+const goTabLastRef = useRef(0);
+
+// ✅ Anti-spam tab switching (prevents lag + overlay buildup)
+const lastTabPressRef = useRef(0);
+const TAB_COOLDOWN_MS = 260;
+
+const showOnlyActiveTab = true;
+
+const tabFade = useRef(new RNAnimated.Value(1)).current; // ✅ never start hidden
+
+  const [results, setResults] = useState([]);
+  const [loadingResults, setLoadingResults] = useState(false);
+  const [loadingPhotoUri, setLoadingPhotoUri] = useState(null);
+  const [showRetryWhileLoading, setShowRetryWhileLoading] = useState(false);
+  const [activeResult, setActiveResult] = useState(null);
+  const activeScanReqIdRef = useRef<number>(0);
+
+const loadingOpacity = useSharedValue(0);
+
+useEffect(() => {
+  loadingOpacity.value = withTiming(loadingResults ? 1 : 0, {
+    duration: loadingResults ? 240 : 180,
+  });
+}, [loadingResults, loadingOpacity]);
+
+const loadingFadeStyle = useAnimatedStyle(() => ({
+  opacity: loadingOpacity.value,
+}));
+
+  const confidenceBreath = useRef(new RNAnimated.Value(0)).current;
+  const uiDepth = useRef(new RNAnimated.Value(0)).current;
+  const cameraGlassDepth = useRef(new RNAnimated.Value(0)).current;
+  const uiBreath = useRef(new RNAnimated.Value(0)).current;
+
+useEffect(() => {
+  const loop = RNAnimated.loop(
+    RNAnimated.sequence([
+      RNAnimated.timing(uiBreath, {
+        toValue: 1,
+        duration: 2600,
+        easing: Easing.inOut(Easing.sin),
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(uiBreath, {
+        toValue: 0,
+        duration: 2600,
+        easing: Easing.inOut(Easing.sin),
+        useNativeDriver: true,
+      }),
+    ])
+  );
+
+  loop.start();
+  return () => loop.stop();
+}, []);
+  const neuralAura = useRef(new RNAnimated.Value(0)).current;
+const [showOnboard, setShowOnboard] = useState(false);
+const onboardOpacity = useRef(new RNAnimated.Value(0)).current;
+const onboardScale = useRef(new RNAnimated.Value(0.96)).current;
+const onboardGlow = useRef(new RNAnimated.Value(0)).current;
+const onboardGlowLoopRef = useRef<any>(null);
+const [showSplash, setShowSplash] = useState(true);
+// ✅ Keep splash visible minimum time
+const splashStartRef = useRef(Date.now());
+const SPLASH_MIN_MS = 3500;
+const [loadingDots, setLoadingDots] = useState(".");
+const [splashLoadingDots, setSplashLoadingDots] = useState(".");
+const splashOpacity = useRef(new RNAnimated.Value(1)).current; 
+const logoScale = useRef(new RNAnimated.Value(0.9)).current;
+const dotY = useRef(new RNAnimated.Value(0)).current;
+const splashDots = useRef(new RNAnimated.Value(0)).current;
+const [splashDotCount, setSplashDotCount] = useState(1);
+const [splashInfoOpen, setSplashInfoOpen] = useState(false);
+const appStateRef = useRef(AppState.currentState);
+    
+  
+// 🔥 APPLE MICRO-PHYSICS (PHASE 1)
+const breathingGlow = useRef(new RNAnimated.Value(0)).current;
+const neuralPulse = useRef(new RNAnimated.Value(0)).current;
+const glassShift = useRef(new RNAnimated.Value(0)).current;
+const cameraPointerEvents = tab === "camera" ? "auto" : "none";
+
+  useEffect(() => {
+  
+RNAnimated.loop(
+  RNAnimated.sequence([
+    RNAnimated.timing(neuralAura, {
+      toValue: 1,
+      duration: 1800,
+      useNativeDriver: true,
+    }),
+    RNAnimated.timing(neuralAura, {
+      toValue: 0,
+      duration: 1800,
+      useNativeDriver: true,
+    }),
+  ])
+).start();
+ 
+RNAnimated.loop(
+  RNAnimated.sequence([
+    RNAnimated.timing(cameraGlassDepth, {
+      toValue: 1,
+      duration: 3200,
+      useNativeDriver: true,
+    }),
+    RNAnimated.timing(cameraGlassDepth, {
+      toValue: 0,
+      duration: 3200,
+      useNativeDriver: true,
+    }),
+  ])
+).start();
+
+  // 🔥 APPLE BREATHING SURFACE
+  RNAnimated.loop(
+    RNAnimated.sequence([
+      RNAnimated.timing(breathingGlow, {
+        toValue: 1,
+        duration: 2600,
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(breathingGlow, {
+        toValue: 0,
+        duration: 2600,
+        useNativeDriver: true,
+      }),
+    ])
+  ).start();
+
+  // 🔥 NEURAL PULSE
+  RNAnimated.loop(
+    RNAnimated.sequence([
+      RNAnimated.timing(neuralPulse, {
+        toValue: 1,
+        duration: 1800,
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(neuralPulse, {
+        toValue: 0,
+        duration: 1800,
+        useNativeDriver: true,
+      }),
+    ])
+  ).start();
+
+
+return () => {
+  try {
+    breathingGlow.stopAnimation();
+    neuralPulse.stopAnimation();
+    cameraGlassDepth.stopAnimation();
+    neuralAura.stopAnimation();
+  } catch {}
+};
+}, []);
+
+
+// ===== TOP HUD ENTRANCE (no jump) =====
+const topHudOpacity = useRef(new RNAnimated.Value(0)).current;
+const topHudY = useRef(new RNAnimated.Value(10)).current;
+
+useEffect(() => {
+  // keep hidden during splash
+  if (showSplash) {
+    topHudOpacity.setValue(0);
+    topHudY.setValue(10);
+    return;
+  }
+
+  // 🔥 INSTANT PRESENCE (no delayed pop-in)
+  topHudOpacity.setValue(1);
+  topHudY.setValue(0);
+
+  // subtle Apple micro-depth settle
+
+RNAnimated.parallel([
+  RNAnimated.timing(topHudOpacity, {
+    toValue: 1,
+    duration: 220,
+    easing: Easing.out(Easing.cubic),
+    useNativeDriver: true,
+  }),
+  RNAnimated.spring(topHudY, {
+    toValue: 0,
+    damping: 18,
+    stiffness: 180,
+    mass: 0.7,
+    useNativeDriver: true,
+  }),
+]).start();
+}, [showSplash]);
+
+// ===============================
+// SUBSCRIPTION GUARD
+// ===============================
+
+const [isPro, setIsPro] = useState(false);
+const [scansUsed, setScansUsed] = useState(0);
+const [isOnline, setIsOnline] = useState(true);
+const [offlineQueueCount, setOfflineQueueCount] = useState(0);
+const drainQueueInFlightRef = React.useRef(false);
+
+// Global FREE_SCAN_LIMIT is the source of truth (currently 6)
+// ✅ crash-proof: FREE_SCAN_LIMIT may be declared later in this file
+
+const FREE_SCAN_LIMIT_SAFE = 6;
+
+const freeScansRemaining = Math.max(0, FREE_SCAN_LIMIT_SAFE - scansUsed);
+const hasUnlimited = isPro === true;
+const canScan = hasUnlimited || freeScansRemaining > 0;
+
+const demoLabel = isPro
+  ? "Pro unlocked"
+  : `${scansUsed} / ${FREE_SCAN_LIMIT_SAFE} free scans`;
+
+const [previewImageUri, setPreviewImageUri] = useState(null);
+const previewAnim = useRef(new RNAnimated.Value(0)).current;
+
+// 🚀 SHIP MODE — results cinematic fade
+const resultsFade = useRef(new RNAnimated.Value(0)).current;
+
+useEffect(() => {
+  if (tab === "results") {
+    resultsFade.setValue(0);
+    RNAnimated.timing(resultsFade, {
+      toValue: 1,
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }
+}, [tab, resultsFade]);
+
+const [zoomUri, setZoomUri] = useState(null);
+const zoomAnim = useRef(new RNAnimated.Value(0)).current;
+  useEffect(() => {
+    if (zoomUri) {
+      zoomAnim.setValue(0);
+      RNAnimated.spring(zoomAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 8,
+        tension: 70,
+      }).start();
+    }
+   // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [zoomUri]);
+  // Splash screen
+// ✅ 
+
+const skipOnboard = async () => {
+  try {
+    await AsyncStorage.setItem("EVAN_ONBOARD_V1", "1");
+  } catch {}
+  try {
+    onboardGlowLoopRef.current?.stop?.();
+  } catch {}
+  RNAnimated.timing(onboardOpacity, {
+    toValue: 0,
+    duration: 180,
+    easing: Easing.inOut(Easing.cubic),
+    useNativeDriver: true,
+  }).start(() => setShowOnboard(false));
+};
+
+useEffect(() => {
+  if (showSplash) return;
+
+  let alive = true;
+  let timer: any = null;
+
+  (async () => {
+    try {
+      const seen = await AsyncStorage.getItem("EVAN_ONBOARD_V1");
+      if (!alive) return;
+      if (seen) return;
+
+      setShowOnboard(true);
+
+      onboardOpacity.setValue(0);
+      onboardScale.setValue(0.96);
+      onboardGlow.setValue(0);
+
+      RNAnimated.parallel([
+        RNAnimated.timing(onboardOpacity, {
+          toValue: 1,
+          duration: 240,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        RNAnimated.spring(onboardScale, {
+          toValue: 1,
+          friction: 7,
+          tension: 80,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      const glowLoop = RNAnimated.loop(
+        RNAnimated.sequence([
+          RNAnimated.timing(onboardGlow, {
+            toValue: 1,
+            duration: 1400,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          RNAnimated.timing(onboardGlow, {
+            toValue: 0,
+            duration: 1400,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      glowLoop.start();
+      onboardGlowLoopRef.current = glowLoop;
+
+      timer = setTimeout(async () => {
+        if (!alive) return;
+        try {
+          await AsyncStorage.setItem("EVAN_ONBOARD_V1", "1");
+        } catch {}
+
+        try {
+          onboardGlowLoopRef.current?.stop?.();
+        } catch {}
+
+        RNAnimated.timing(onboardOpacity, {
+          toValue: 0,
+          duration: 260,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }).start(() => setShowOnboard(false));
+      }, 5000);
+    } catch {}
+  })();
+
+  return () => {
+    alive = false;
+    if (timer) clearTimeout(timer);
+    try {
+      onboardGlowLoopRef.current?.stop?.();
+    } catch {}
+  };
+}, [showSplash]);
+
+const [watchlist, setWatchlist] = useState<any[]>([]);
+// 🔥 STABILITY — declare refs BEFORE any effects use them
+const watchlistRef = useRef<any[]>([]);
+// ===============================
+// WATCHLIST BACKGROUND RECHECK (stable + ref-safe)
+// ===============================
+const watchlistIntervalRef = useRef<any>(null);
+const userIdRef = useRef<string | null>(null);
+
+useEffect(() => {
+  userIdRef.current = userId;
+}, [userId]);
+
+useEffect(() => {
+  watchlistRef.current = watchlist || [];
+}, [watchlist]);
+
+useEffect(() => {
+  // clear any existing interval
+  if (watchlistIntervalRef.current) {
+    clearInterval(watchlistIntervalRef.current);
+    watchlistIntervalRef.current = null;
+  }
+
+  // only run if we have a user + watchlist
+  if (!userIdRef.current) return;
+  if (!watchlistRef.current?.length) return;
+
+  watchlistIntervalRef.current = setInterval(() => {
+    const uid = userIdRef.current;
+    const list = watchlistRef.current;
+
+    if (!uid || !list?.length) return;
+
+    list.forEach((item: any) => {
+fetch(`${resolvedApiBase || SAFE_API_BASE}/watch/recheck`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ userId: uid, item }),
+}).catch(() => {});
+    });
+  }, 1000 * 60 * 60 * 6); // every 6 hours
+
+  return () => {
+    if (watchlistIntervalRef.current) {
+      clearInterval(watchlistIntervalRef.current);
+      watchlistIntervalRef.current = null;
+    }
+  };
+}, [userId, watchlist]);
+
+// ===============================
+// ANDROID BACK BUTTON HANDLER (stable + ref-safe)
+// ===============================
+const tabRef = useRef<any>("camera");
+const zoomUriRef = useRef<string | null>(null);
+const previewImageUriRef = useRef<string | null>(null);
+const unverifiedPromptRef = useRef<any>(null);
+
+useEffect(() => {
+  tabRef.current = tab;
+}, [tab]);
+
+useEffect(() => {
+  zoomUriRef.current = zoomUri;
+}, [zoomUri]);
+
+useEffect(() => {
+  previewImageUriRef.current = previewImageUri;
+}, [previewImageUri]);
+
+useEffect(() => {
+  unverifiedPromptRef.current = unverifiedPrompt;
+}, [unverifiedPrompt]);
+
+useEffect(() => {
+  if (Platform.OS !== "android") return;
+
+  const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+    // Close overlays first (top priority)
+    if (zoomUriRef.current) {
+      setZoomUri(null);
+      return true;
+    }
+
+    if (previewImageUriRef.current) {
+      closeHistoryPreview();
+      return true;
+    }
+
+    if (unverifiedPromptRef.current) {
+      setUnverifiedPrompt(null);
+      return true;
+    }
+
+if (profileModalRef.current) {
+  setProfileModal(null);
+  return true;
+}
+
+    if (seeMoreOpenRef.current) {
+      setSeeMoreOpen(false);
+      return true;
+    }
+
+    if (haggleOpenRef.current) {
+      setHaggleOpen(false);
+      return true;
+    }
+
+    if (showPaywallRef.current) {
+      setShowPaywall(false);
+      return true;
+    }
+
+    if (freePassInfoOpenRef.current) {
+      setFreePassInfoOpen(false);
+      return true;
+    }
+
+    if (splashInfoOpenRef.current) {
+      setSplashInfoOpen(false);
+      return true;
+    }
+
+    if (resultModalOpenRef.current) {
+      setResultModalOpen(false);
+      return true;
+    }
+
+    // If not on camera, go back to camera
+    if (tabRef.current !== "camera") {
+      goTab("camera");
+      return true;
+    }
+
+    return false; // allow OS to exit app
+  });
+
+  return () => sub.remove();
+}, []);
+
+  // ✅ FIX #2 (FLASHING CAMERA):
+  // splashDots loop was running forever + listener was updating state constantly,
+  // causing nonstop re-renders which can make CameraView look like it’s “flashing”.
+  const splashDotsListenerIdRef = useRef(null);
+// ===============================
+// SIMPLE CLOUD USER ID
+// ===============================
+// ===============================
+// SCAN SESSION GUARD (ANTI-RACE)
+// ===============================
+const scanSessionIdRef = useRef(0);
+const scanSessionRef = useRef<any>(null);
+
+const nextScanSession = () => {
+  scanSessionIdRef.current += 1;
+  return scanSessionIdRef.current;
+};
+
+const isCurrentSession = (id: number) => id === scanSessionIdRef.current;
+
+  // Camera permission
+  const [permission, requestPermission] = useCameraPermissions();
+  // Camera state
+  const [photo, setPhoto] = useState(null);
+  // ✅ DERIVED UI FLAGS (must be after `photo`)
+
+const inPreview = !!photo;
+
+// ✅ Keep tabs visible on Results/Profile/Watchlist.
+// Only hide when the camera preview/zoom overlays are up.
+const hideTabBar =
+  zoomUri != null ||
+  previewImageUri != null ||
+  inPreview;
+
+  const [refinePhotos, setRefinePhotos] = useState([]); // { uri }
+  const [cameraReady, setCameraReady] = useState(false);
+
+useEffect(() => {
+  if (!loadingResults) return;
+  let i = 0;
+  const interval = setInterval(() => {
+    i = (i + 1) % 3;            // 0..2
+    setLoadingDots(".".repeat(i + 1)); // 1..3 dots
+  }, 420);
+  return () => clearInterval(interval);
+}, [loadingResults]);
+  
+// ✅ LOADING EXPERIENCE (LEVEL 1): breathing mark + pulse + tiny haptic on finish
+const loadingBreath = useRef(new RNAnimated.Value(0)).current;
+const loadingPulse = useRef(new RNAnimated.Value(0)).current;
+const logoFade = useRef(new RNAnimated.Value(1)).current;
+const prevLoadingRef = useRef(false);
+
+useEffect(() => {
+  const prev = prevLoadingRef.current;
+  prevLoadingRef.current = loadingResults;
+
+  // tiny “finish” haptic (only when we actually have a result)
+  if (prev && !loadingResults && !!activeResult) {
+    setTimeout(() => {
+      hapticTick();
+    }, 60);
+  }
+}, [loadingResults, activeResult]);
+
+useEffect(() => {
+  if (!loadingResults) return;
+
+  loadingBreath.setValue(0);
+  loadingPulse.setValue(0);
+
+  const breathLoop = RNAnimated.loop(
+    RNAnimated.sequence([
+      RNAnimated.timing(loadingBreath, {
+        toValue: 1,
+        duration: 1400,
+        easing: Easing.inOut(Easing.sin),
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(loadingBreath, {
+        toValue: 0,
+        duration: 1400,
+        easing: Easing.inOut(Easing.sin),
+        useNativeDriver: true,
+      }),
+    ])
+  );
+
+  const pulseLoop = RNAnimated.loop(
+    RNAnimated.sequence([
+      RNAnimated.timing(loadingPulse, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(loadingPulse, {
+        toValue: 0,
+        duration: 900,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ])
+  );
+
+  breathLoop.start();
+  pulseLoop.start();
+
+  return () => {
+    try { breathLoop.stop(); } catch {}
+    try { pulseLoop.stop(); } catch {}
+  };
+}, [loadingResults, loadingBreath, loadingPulse]);
+
+  const [loadingTick, setLoadingTick] = useState(0);
+  // ✅ NEW: animated retry reveal (fade + slight scale)
+  const retryReveal = useRef(new RNAnimated.Value(0)).current;
+  const retryScale = useRef(new RNAnimated.Value(0.96)).current;
+  // ✅ Animate card entry (main + top3)
+  const resultEntry = useRef(new RNAnimated.Value(0)).current;
+  const resultDepth = useRef(new RNAnimated.Value(0)).current;
+  
+useEffect(() => {
+  if (loadingResults) {
+    resultEntry.setValue(0);
+    resultDepth.setValue(12);
+    return;
+  }
+
+  if (!activeResult) return;
+
+  resultEntry.setValue(0);
+  resultDepth.setValue(12);
+
+  RNAnimated.parallel([
+    RNAnimated.timing(resultEntry, {
+      toValue: 1,
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }),
+    RNAnimated.spring(resultDepth, {
+      toValue: 0,
+      damping: 18,
+      stiffness: 170,
+      mass: 0.8,
+      useNativeDriver: true,
+    }),
+  ]).start();
+}, [loadingResults, activeResult, resultEntry, resultDepth]);
+
+  // ✅ AI STAGED REVEAL (investor wow)
+  const [aiRevealActive, setAiRevealActive] = useState(false);
+  const [aiRevealStep, setAiRevealStep] = useState(0);
+  const aiRevealOpacity = useRef(new RNAnimated.Value(0)).current;
+  const aiRevealScale = useRef(new RNAnimated.Value(0.98)).current;
+  // ✅ Confidence badge animation
+  const confPop = useRef(new RNAnimated.Value(0)).current;  // scale
+  // ⚡ FINAL ADD #2 — confidence aura
+  const confidenceAura = useRef(new RNAnimated.Value(0)).current;
+  const confGlow = useRef(new RNAnimated.Value(0)).current; // subtle pulse
+  // ✅ See more modal
+  const [seeMoreOpen, setSeeMoreOpen] = useState(false);
+  const [seeMoreListings, setSeeMoreListings] = useState([]);
+  // ✅ Niche feature: Haggle Mode
+  const [haggleOpen, setHaggleOpen] = useState(false);
+  const [haggleLines, setHaggleLines] = useState([]);
+  // ✅ Monthly free pass pill explainer (tappable pill -> mini GUI)
+  const [freePassInfoOpen, setFreePassInfoOpen] = useState(false);
+  
+async function prepareImage(uri) {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: 896 } }],
+    {
+      compress: 0.80,
+      format: ImageManipulator.SaveFormat.JPEG,
+    }
+  );
+  return result.uri;
+}
+  // Scan session (for retry / cancel without recount)
+  // { photoUri, scannedPrice, counted, startedAt }
+const scanLockRef = useRef(false);
+const scanTokenRef = useRef(0);
+const scanAbortRef = useRef(null);
+  // ✅ Free cycle start (30 days reset)
+  const [cycleStartMs, setCycleStartMs] = useState(Date.now());
+// ✅ resolved backend base (learned from vision success)
+const [resolvedApiBase, setResolvedApiBase] = useState(API_BASE);
+// -------------------------
+// ✅ FEATURE: SCAN MODES
+// -------------------------
+const SCAN_MODES = {
+  ITEM: "item",
+  MARK: "mark",
+  PART: "part",
+  LABEL: "label",
+  PROP: "prop",
+};
+const SCAN_MODE_FALLBACKS = [
+  SCAN_MODES.ITEM,
+  SCAN_MODES.MARK,
+  SCAN_MODES.PART,
+  SCAN_MODES.LABEL,
+];
+const [scanMode, setScanMode] = useState(SCAN_MODES.ITEM);
+// optional input used only for PROP mode
+const [propContext, setPropContext] = useState("");
+// Camera UI
+  const [cameraFacing, setCameraFacing] = useState("back");
+  const [torchOn, setTorchOn] = useState(false);
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchCount, setBatchCount] = useState(0);
+  // Feature 3: Receipt scan mode
+  const [receiptMode, setReceiptMode] = useState(false);
+  const [receiptLoading, setReceiptLoading] = useState(false);
+  const [receiptData, setReceiptData] = useState<any | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [receiptPanelOpen, setReceiptPanelOpen] = useState(false);
+  // Keyboard height
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  // Login placeholder
+  const [isSignedIn, setIsSignedIn] = useState(false);
+// ===============================
+// REFERRAL STATE
+// ===============================
+const [installId, setInstallId] = useState<string | null>(null);
+const [referralCode, setReferralCode] = useState<string | null>(null);
+const [referralUses, setReferralUses] = useState(0);
+const [referralInfoExpanded, setReferralInfoExpanded] = useState(false); // ✅ NO MODAL
+
+const effectiveReferralCode = (() => {
+  const a = String(referralCode || "").trim();
+  const b = String(refState?.code || "").trim();
+  const c = installId ? buildReferralCode(installId) : "";
+  return (a || b || c || "EVAN0000").toUpperCase();
+})();
+
+const [referralLoading, setReferralLoading] = useState(false);
+
+useEffect(() => {
+  if (!userId) return;
+
+  const loadReferral = async () => {
+    try {
+      setReferralLoading(true);
+
+      const stats = await fetch(
+        `${resolvedApiBase || SAFE_API_BASE}/referral/stats?userId=${encodeURIComponent(userId)}`
+      );
+
+      const statsJson = await stats.json();
+
+      if (statsJson?.ok && statsJson.code) {
+        setReferralCode(statsJson.code);
+        setReferralUses(statsJson.totalUses || 0);
+        setReferralLoading(false);
+        return;
+      }
+
+      const create = await fetch(`${resolvedApiBase || SAFE_API_BASE}/referral/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+
+      const createJson = await create.json();
+
+      if (createJson?.ok) {
+        setReferralCode(createJson.code);
+      }
+
+      setReferralLoading(false);
+    } catch {
+      setReferralLoading(false);
+    }
+  };
+
+  loadReferral();
+}, [resolvedApiBase, userId]);
+
+const handleShareReferral = async () => {
+  if (!referralCode) return;
+  const shareLink = `https://evanai.app?ref=${effectiveReferralCode}`;
+  await Share.share({
+    message: `Download Evan AI now.
+Scan anything.
+Find real resale value instantly.
+Unlock AI-powered intelligence.
+Beat the market.
+Use my code: ${referralCode}
+Get bonus scans instantly.
+${shareLink}`,
+  });
+};
+  // ✅ RETENTION: watchlist + daily re-check + price-drop alerts (in-app)
+// shape: { id, query, lastBest, lastCheckedMs, addedAtMs, history:[{ts,best}], seenDrop:boolean }
+
+
+useEffect(() => {
+  watchlistRef.current = watchlist;
+}, [watchlist]);
+
+useWatchlistMarketPolling({
+  // ✅ crash-proof: BILLION may be declared later in this file
+  enabled:
+    (typeof BILLION !== "undefined" ? BILLION.WATCH_POLLING : true) &&
+    autoWatchEnabled,
+  watchlist,
+  setWatchlist,
+});
+	
+// ✅ in-app “notifications” (badge + toast) — no push needed yet
+const [dropCount, setDropCount] = useState(0);
+useEffect(() => {
+  const total = (watchlist || []).reduce(
+    (s, x) => s + (x.dropCount || 0),
+    0
+  );
+  setDropCount(total);
+}, [watchlist]);
+// ✅ “Price changed since you scanned” banner on Results screen
+const [priceChangeBanner, setPriceChangeBanner] = useState(null);
+  // History
+  const [history, setHistory] = useState([]);
+  const HISTORY_STORAGE_KEY = "evanai-history";
+  const SAVINGS_STORAGE_KEY = "evanai-savings";
+  // Profile modals
+  // null | "subscription" | "payments" | "review" | "terms" | "privacy"
+  const [profileModal, setProfileModal] = useState(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authInput, setAuthInput] = useState("");
+  const [showPaywall, setShowPaywall] = useState(false);
+  // ✅ PAYWALL POP (premium: blur + scale + opacity)
+const paywallPop = useRef(new RNAnimated.Value(0)).current;
+
+
+
+useEffect(() => {
+  if (showPaywall) {
+    paywallPop.setValue(0);
+    RNAnimated.timing(paywallPop, {
+      toValue: 1,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  } else {
+    RNAnimated.timing(paywallPop, {
+      toValue: 0,
+      duration: 180,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }
+}, [showPaywall, paywallPop]);
+const [showHowDifferent, setShowHowDifferent] = useState(false);
+// ✅ PREVIEW LAYOUT (prevents previewBottom crash)
+// keeps the buttons above the keyboard
+const previewBottom = Math.max(24, (keyboardHeight || 0) + 16);
+
+// Preview panel entrance animation (springs up from below when photo is taken)
+const previewPanelY = useRef(new RNAnimated.Value(60)).current;
+const previewPanelOpacity = useRef(new RNAnimated.Value(0)).current;
+  // Savings + price input
+  const [scanPriceInput, setScanPriceInput] = useState("");
+  const [cheapestAltInput, setCheapestAltInput] = useState("");
+  const [itemNameInput, setItemNameInput] = useState("");
+  const [sizeInput, setSizeInput] = useState(""); // Feature 11: size/variant hint
+  const [savingsTotal, setSavingsTotal] = useState(0);
+  
+// -------------------------
+// LEVEL 100 BARCODE AI
+// -------------------------
+const [barcodeMode, setBarcodeMode] = useState(false);
+const [lastBarcode, setLastBarcode] = useState<string | null>(null);
+const barcodeLockRef = useRef(false);
+
+  // Hide preview buttons AFTER user submits (presses Use Photo)
+  const [priceSubmitted, setPriceSubmitted] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
+
+
+ 
+// ✅ BUTTON ENABLEMENT (safe: now state exists)
+const parsedScanPrice = toNumber(scanPriceInput);
+const parsedCheapestAlt = toNumber(cheapestAltInput);
+const canUsePhoto =
+  !!photo?.uri &&
+  !loadingResults &&
+  !priceSubmitted &&
+  Number.isFinite(parsedScanPrice) &&
+  parsedScanPrice > 0 &&
+  Number.isFinite(parsedCheapestAlt) &&
+  parsedCheapestAlt > 0;
+// Trigger preview panel entrance when photo is set
+useEffect(() => {
+  if (photo) {
+    previewPanelY.setValue(70);
+    previewPanelOpacity.setValue(0);
+    RNAnimated.parallel([
+      RNAnimated.spring(previewPanelY, {
+        toValue: 0, damping: 22, stiffness: 200, mass: 0.9, useNativeDriver: true,
+      }),
+      RNAnimated.timing(previewPanelOpacity, {
+        toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      }),
+    ]).start();
+  }
+}, [photo]);
+
+// ✅ Feature #3/#10/#11: collector + material + alternatives enrich
+const [enrich, setEnrich] = useState(null);
+  // Active result
+ const [profitCalcOpen, setProfitCalcOpen] = useState(false);
+ // Feature 5: hyperlocal pricing — user's zip code
+ const [zipCode, setZipCode] = useState<string>("");
+ // Feature 11: Deep auth scan result (lazy, fires after scan result loads)
+ const [deepAuthResult, setDeepAuthResult] = useState<DeepAuthResult | null>(null);
+ const [deepAuthLoading, setDeepAuthLoading] = useState(false);
+ // Feature 12: Visual condition assessment (lazy)
+ const [conditionAssessment, setConditionAssessment] = useState<ConditionAssessment | null>(null);
+ const [conditionAssessLoading, setConditionAssessLoading] = useState(false);
+ // Feature 10: Flip scanner state
+ const [flipScanOpen, setFlipScanOpen] = useState(false);
+ const [flipScanResults, setFlipScanResults] = useState<any[]>([]);
+ const [flipScanLoading, setFlipScanLoading] = useState(false);
+ // Feature 9: Relist suggestions
+ const [relistSuggestions, setRelistSuggestions] = useState<any[]>([]);
+ const [relistLoading, setRelistLoading] = useState(false);
+ // Feature 13: Community comps
+ const [communityComps, setCommunityComps] = useState<CommunityCompsData | null>(null);
+ const [communityCompsLoading, setCommunityCompsLoading] = useState(false);
+ // Feature 14: Public savings profile sync flag
+ const [savingsSynced, setSavingsSynced] = useState(false);
+ // Feature 1: P&L Tracker
+ const [plFlips, setPlFlips] = useState<PLFlip[]>([]);
+ // Feature 2: Haggle Score
+ const [haggleResult, setHaggleResult] = useState<HaggleScoreResult | null>(null);
+ const [haggleLoading, setHaggleLoading] = useState(false);
+ // Feature 3: Local Radar
+ const [radarData, setRadarData] = useState<RadarData | null>(null);
+ const [radarLoading, setRadarLoading] = useState(false);
+ // Live Activity Ticker
+ const tickerX = useRef(new RNAnimated.Value(0)).current;
+
+// -------------------------
+// ✅ Verdict + confidence copy (UI-safe)
+// -------------------------
+const nikeLikely =
+  /nike/i.test(activeResult?.visionQuery || "") ||
+  /nike/i.test(activeResult?.itemName || "");
+const getConfidenceBreakdown = ({ confidence, nikeLikely, totalMatches }) => {
+  const c = Number(confidence) || 0;
+  const lines = [];
+  if (c >= 0.92) lines.push("Very strong match — branding/model clearly visible.");
+  else if (c >= 0.85) lines.push("Good match — minor ambiguity.");
+  else if (c >= 0.7) lines.push("Moderate match — try closer framing.");
+  else lines.push("Low confidence — improve lighting or angle.");
+  if (nikeLikely) lines.push("Brand signal detected (Nike).");
+  if (Number.isFinite(totalMatches)) lines.push(`${totalMatches} listings compared.`);
+  return lines;
+};
+const [resultModalOpen, setResultModalOpen] = useState(false);
+useEffect(() => {
+  profileModalRef.current = profileModal;
+}, [profileModal]);
+useEffect(() => {
+  seeMoreOpenRef.current = seeMoreOpen;
+}, [seeMoreOpen]);
+useEffect(() => {
+  haggleOpenRef.current = haggleOpen;
+}, [haggleOpen]);
+useEffect(() => {
+  showPaywallRef.current = showPaywall;
+}, [showPaywall]);
+useEffect(() => {
+  freePassInfoOpenRef.current = freePassInfoOpen;
+}, [freePassInfoOpen]);
+useEffect(() => {
+  splashInfoOpenRef.current = splashInfoOpen;
+}, [splashInfoOpen]);
+useEffect(() => {
+  resultModalOpenRef.current = resultModalOpen;
+}, [resultModalOpen]);
+
+// ── Live Activity Ticker animation ───────────────────────────────────────────
+useEffect(() => {
+  tickerX.setValue(0);
+  const anim = RNAnimated.loop(
+    RNAnimated.timing(tickerX, {
+      toValue: -TICKER_TOTAL_W,
+      duration: TICKER_TOTAL_W * 32, // ~32ms per char → smooth
+      easing: Easing.linear,
+      useNativeDriver: true,
+    })
+  );
+  anim.start();
+  return () => anim.stop();
+}, []);
+
+// ── Feature 1: Persist P&L flips to AsyncStorage ─────────────────────────────
+useEffect(() => {
+  AsyncStorage.setItem("EVAN_PL_FLIPS_V1", JSON.stringify(plFlips)).catch(() => {});
+}, [plFlips]);
+
+// ── Feature 14: Sync savings profile to server when stats change ──────────────
+useEffect(() => {
+  if (!savingsTotal && !scansUsed) return;
+  const uid = installId || effectiveReferralCode || "anon";
+  const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+    (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+  fetch(`${apiBase}/api/profile/savings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: uid,
+      savingsTotal,
+      scanCount: scansUsed,
+      flipCount: 0,
+    }),
+    signal: AbortSignal.timeout(6000),
+  }).catch(() => {});
+}, [savingsTotal, scansUsed]);
+
+  // last scan status for Results screen
+  const [lastScan, setLastScan] = useState(null);
+
+
+const isFreeLimitReached = !hasUnlimited && scansUsed >= FREE_SCAN_LIMIT_SAFE;
+
+// -------------------------
+// ✅ Profile status label (prevents runtime crash)
+// -------------------------
+const statusLabel =
+  isPro
+    ? "Pro active · Unlimited scans"
+    : isSignedIn
+    ? `${Math.max(0, FREE_SCAN_LIMIT_SAFE - scansUsed)} free scans left`
+    : "Guest · Sign in to unlock features";
+  // Animations
+  const snapScale = useRef(new RNAnimated.Value(1)).current;
+  const snapDepth = useRef(new RNAnimated.Value(0)).current;
+  const ringScale = useRef(new RNAnimated.Value(0)).current;
+  const ringOpacity = useRef(new RNAnimated.Value(0)).current;
+
+  // Particle burst on shutter press (8 particles radiate outward)
+  const PARTICLE_COUNT = 8;
+  const particleAnims = useRef(
+    Array.from({ length: PARTICLE_COUNT }, () => ({
+      x: new RNAnimated.Value(0),
+      y: new RNAnimated.Value(0),
+      opacity: new RNAnimated.Value(0),
+      scale: new RNAnimated.Value(0),
+    }))
+  ).current;
+
+  const triggerParticleBurst = () => {
+    particleAnims.forEach((p, i) => {
+      const angle = ((i * 360) / PARTICLE_COUNT) * (Math.PI / 180);
+      const dist = 55 + (i % 3) * 18;
+      p.x.setValue(0); p.y.setValue(0);
+      p.opacity.setValue(0); p.scale.setValue(0);
+      RNAnimated.parallel([
+        RNAnimated.timing(p.opacity, { toValue: 0.9, duration: 80, useNativeDriver: true }),
+        RNAnimated.spring(p.scale, { toValue: 1, damping: 10, stiffness: 320, useNativeDriver: true }),
+        RNAnimated.timing(p.x, { toValue: Math.cos(angle) * dist, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        RNAnimated.timing(p.y, { toValue: Math.sin(angle) * dist, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]).start(() => {
+        RNAnimated.timing(p.opacity, { toValue: 0, duration: 180, useNativeDriver: true }).start();
+      });
+    });
+  };
+  const loadingRot = useRef(new RNAnimated.Value(0)).current;
+useEffect(() => {
+  if (!loadingResults) return;
+  loadingRot.setValue(0);
+  RNAnimated.loop(
+    RNAnimated.timing(loadingRot, {
+      toValue: 1,
+      duration: 900,
+      easing: Easing.linear,
+      useNativeDriver: true,
+    })
+  ).start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [loadingResults]);
+  const buttonsY = useRef(new RNAnimated.Value(0)).current; // NO SLIDE
+  const buttonsOpacity = useRef(new RNAnimated.Value(0)).current;
+  const sway = useRef(new RNAnimated.Value(0)).current;
+  // ✅ tabFade is declared ONCE earlier near the tab state — DO NOT redeclare it here.
+  
+  useEffect(() => {
+  const sub = AppState.addEventListener("change", (s) => {
+    if (s === "active") {
+      try {
+        tabFade.stopAnimation();
+      } catch {}
+      tabFade.setValue(1);
+      tabSwitchingRef.current = false;
+      pendingTabRef.current = null;
+    }
+  });
+  return () => sub.remove();
+}, [tabFade]);
+
+  
+// Help overlay
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpY = useRef(new RNAnimated.Value(14)).current;
+  const helpOpacity = useRef(new RNAnimated.Value(0)).current;
+  // Flash mask
+  const flashMaskOpacity = useRef(new RNAnimated.Value(0)).current;
+  const flashMaskTimer = useRef(null);
+  const flashMidTimer = useRef(null);
+  const flipTimer = useRef(null);
+  // ✅ FIX #2 — prevent black flash on shutter
+const triggerFlashMask = () => {
+  flashMaskOpacity.setValue(0);
+  RNAnimated.timing(flashMaskOpacity, {
+    toValue: 0,        // keep it invisible
+    duration: 1,
+    useNativeDriver: true,
+  }).start();
+};
+// ===============================
+// REDUCE MOTION SUPPORT
+// ===============================
+const [reduceMotion, setReduceMotion] = useState(false);
+useEffect(() => {
+  AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+  const sub = AccessibilityInfo.addEventListener?.(
+    "reduceMotionChanged",
+    setReduceMotion
+  );
+  return () => sub?.remove?.();
+}, []);
+
+// Splash animation (split drivers: dotY = native, splashDots = JS)
+useEffect(() => {
+  if (!showSplash) return;
+
+  // reset
+  try { splashDots.stopAnimation(); } catch {}
+  try { dotY.stopAnimation(); } catch {}
+  splashDots.setValue(0);
+  dotY.setValue(0);
+
+  RNAnimated.parallel([
+    RNAnimated.timing(splashOpacity, {
+      toValue: 1,
+      duration: reduceMotion ? 0 : 600,
+      useNativeDriver: true,
+    }),
+    RNAnimated.timing(logoScale, {
+      toValue: 1,
+      duration: reduceMotion ? 0 : 500,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }),
+  ]).start();
+
+RNAnimated.sequence([
+  RNAnimated.delay(900),
+  RNAnimated.timing(logoFade, {
+    toValue: 0,
+    duration: 420,
+    easing: Easing.out(Easing.cubic),
+    useNativeDriver: true,
+  }),
+]).start();
+
+  // ✅ “i” bounce (native driver)
+  const bounceLoop = RNAnimated.loop(
+    RNAnimated.sequence([
+      RNAnimated.timing(dotY, {
+        toValue: 1,
+        duration: 320,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(dotY, {
+        toValue: 0,
+        duration: 320,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ])
+  );
+  bounceLoop.start();
+
+  // ✅ dot count driver (JS only)
+  const dotsLoop = RNAnimated.loop(
+    RNAnimated.sequence([
+      RNAnimated.timing(splashDots, {
+        toValue: 3,
+        duration: 1200,
+        useNativeDriver: false,
+      }),
+      RNAnimated.timing(splashDots, {
+        toValue: 0,
+        duration: 0,
+        useNativeDriver: false,
+      }),
+    ])
+  );
+  dotsLoop.start();
+
+  // listener ONLY during splash
+  try {
+    const id = splashDots.addListener(({ value }) => {
+      const v = Math.max(1, Math.min(3, Math.round(value)));
+      setSplashDotCount(v);
+    });
+    splashDotsListenerIdRef.current = id;
+  } catch {}
+
+const timer = setTimeout(() => {
+  RNAnimated.timing(splashOpacity, {
+    toValue: 0,
+    duration: reduceMotion ? 0 : 500,
+    useNativeDriver: true,
+  }).start(() => {
+    requestAnimationFrame(() => {
+      setShowSplash(false);
+    });
+  });
+}, Math.max(0, SPLASH_MIN_MS - (reduceMotion ? 0 : 500)));
+
+  return () => {
+    clearTimeout(timer);
+    try { bounceLoop.stop(); } catch {}
+    try { dotsLoop.stop(); } catch {}
+    try { dotY.stopAnimation(); } catch {}
+    try { splashDots.stopAnimation(); } catch {}
+    try {
+      if (splashDotsListenerIdRef.current != null) {
+        splashDots.removeListener(splashDotsListenerIdRef.current);
+        splashDotsListenerIdRef.current = null;
+      }
+    } catch {}
+  };
+}, [showSplash, splashOpacity, logoScale, splashDots, dotY, reduceMotion]);
+
+useEffect(() => {
+  if (!showSplash) return;
+  const interval = setInterval(() => {
+    setSplashLoadingDots((prev) =>
+      prev === "." ? ".." : prev === ".." ? "..." : "."
+    );
+  }, 400);
+  return () => clearInterval(interval);
+}, [showSplash]);
+
+// ===============================
+// ✅ RETENTION: DAILY WATCHLIST RE-CHECK (on app open) + ABORT SCAN IF BACKGROUNDS
+// ===============================
+const checkingWatchlistRef = useRef(false);
+const checkOneWatchlist = async (w, { quiet = false } = {}) => {
+  try {
+const res: any = await fetch(`${resolvedApiBase}/market/check`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ query: w.query }),
+});
+const data = await res.json();
+    const best = toNumber(data?.bestPrice);
+    if (!Number.isFinite(best)) return null;
+    return best;
+  } catch (e) {
+    if (!quiet) console.warn("watchlist check failed", e);
+    return null;
+  }
+};
+const runDailyWatchlistCheck = async ({ force = false, quiet = true } = {}) => {
+  if (checkingWatchlistRef.current) return;
+  if (!watchlistRef.current?.length) return;
+  checkingWatchlistRef.current = true;
+  try {
+    const now = Date.now();
+    const list = watchlistRef.current.slice(0, 30); // cap so it never explodes
+    for (const w of list) {
+      const stale = !w.lastCheckedMs || now - w.lastCheckedMs > DAY_MS;
+      if (!force && !stale) continue;
+      const best = await checkOneWatchlist(w, { quiet });
+      if (!Number.isFinite(best)) continue;
+
+      // Feature 8: Price target alert — fire push notification when target is hit
+      const targetHit =
+        Number.isFinite(w.targetPrice) &&
+        w.targetPrice > 0 &&
+        best <= w.targetPrice &&
+        !w.targetHitNotifiedAt; // dedupe: only notify once per target
+
+      if (targetHit) {
+        try {
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: "🎯 Price Target Hit!",
+              body: `${w.title || w.query} dropped to ${money(best)} — your target was ${money(w.targetPrice)}`,
+              data: { watchlistId: w.id, best, targetPrice: w.targetPrice },
+              sound: true,
+            },
+            trigger: null, // fire immediately
+          });
+        } catch {
+          // non-fatal: push perms may not be granted
+        }
+        setDropCount((c) => c + 1);
+        setSavedToast(`🎯 Target hit! ${w.title || w.query} · ${money(best)}`);
+      }
+
+      setWatchlist((prev) =>
+        prev.map((x) => {
+          if (x.id !== w.id) return x;
+          const prevBest = toNumber(x.lastBest);
+          const dropped = Number.isFinite(prevBest) && best < prevBest;
+          const nextHistory = Array.isArray(x.history) ? x.history.slice(-19) : [];
+          nextHistory.push({ ts: now, best });
+          // in-app alert for normal price drops (not target hits)
+          if (dropped && x.seenDrop && !targetHit) {
+            setDropCount((c) => c + 1);
+            setSavedToast(`price dropped · ${money(best)}`);
+            // Feature 5: push price drop to iOS widget
+            const delta = Number.isFinite(prevBest) ? prevBest - best : 0;
+            updateWidgetData({
+              priceDropAlert: `${x.query || x.itemName || "Item"} dropped ${money(delta)}`,
+              priceDropItem:  x.query || x.itemName || "",
+              priceDropDelta: delta,
+            }).catch(() => {});
+          }
+          return {
+            ...x,
+            lastBest: best,
+            lastCheckedMs: now,
+            history: nextHistory,
+            seenDrop: dropped ? true : x.seenDrop,
+            dropCount: dropped ? (x.dropCount || 0) + 1 : (x.dropCount || 0),
+            targetHit: targetHit ? true : x.targetHit,
+            targetHitNotifiedAt: targetHit ? now : x.targetHitNotifiedAt,
+          };
+        })
+      );
+    }
+  } finally {
+    checkingWatchlistRef.current = false;
+  }
+};
+
+// Feature 9: Load relist suggestions when watchlist tab is opened
+const loadRelistSuggestions = async () => {
+  if (!watchlist?.length || relistLoading) return;
+  setRelistLoading(true);
+  try {
+    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const payload = (watchlist || [])
+      .filter((w: any) => w?.query && w?.lastBest)
+      .slice(0, 10)
+      .map((w: any) => ({
+        id: w.id,
+        query: w.query,
+        scannedPrice: w.scannedPrice ?? w.estValue ?? null,
+        lastBest: w.lastBest,
+        targetPrice: w.targetPrice ?? null,
+        createdAt: w.createdAt,
+        history: w.history ?? [],
+      }));
+    if (!payload.length) return;
+    const resp = await fetch(`${apiBase}/api/relist/suggestions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: payload }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const json = await resp.json();
+    if (json?.ok && Array.isArray(json.suggestions)) {
+      setRelistSuggestions(json.suggestions);
+    }
+  } catch { /* non-fatal */ } finally {
+    setRelistLoading(false);
+  }
+};
+
+// Feature 10: Flip Scanner — search a category + zip for flip opportunities
+const runFlipScanner = async (category: string) => {
+  if (!zipCode) {
+    setSavedToast("Set your zip code in the Watchlist tab first");
+    return;
+  }
+  setFlipScanLoading(true);
+  setFlipScanResults([]);
+  setFlipScanOpen(true);
+  try {
+    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const resp = await fetch(`${apiBase}/api/arbitrage/flip-scanner`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        category: category || activeResult?.category || "sneakers",
+        zipCode,
+        seedQuery: activeResult?.query || null,
+      }),
+      signal: AbortSignal.timeout(40000),
+    });
+    const json = await resp.json();
+    if (json?.ok && Array.isArray(json.opportunities)) {
+      setFlipScanResults(json.opportunities);
+    }
+  } catch { /* non-fatal */ } finally {
+    setFlipScanLoading(false);
+  }
+};
+
+// ── Feature 1: P&L handler functions ─────────────────────────────────────────
+const handlePlAdd = (flip: PLFlip) => {
+  setPlFlips((prev) => [flip, ...prev]);
+};
+
+const handlePlDelete = (id: string) => {
+  setPlFlips((prev) => prev.filter((f) => f.id !== id));
+};
+
+const handlePlMarkSold = (id: string, soldPrice: number) => {
+  setPlFlips((prev) =>
+    prev.map((f) =>
+      f.id === id
+        ? { ...f, soldPrice, soldAt: Date.now(), status: "sold" as const }
+        : f
+    )
+  );
+};
+
+// ── Feature 3: Load Local Radar ───────────────────────────────────────────────
+const loadRadar = async () => {
+  if (!zipCode || watchlist.length === 0) return;
+  const queries = watchlist.map((w) => w.query).filter(Boolean);
+  if (!queries.length) return;
+  const targetPrices: Record<string, number> = {};
+  watchlist.forEach((w) => {
+    if (w.query && Number.isFinite(toNumber(w.lastBest))) {
+      targetPrices[w.query] = toNumber(w.lastBest);
+    }
+  });
+  const _apiBase = process.env.EXPO_PUBLIC_API_URL ??
+    (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+  setRadarLoading(true);
+  try {
+    const resp = await fetch(`${_apiBase}/api/radar/local`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ queries, zipCode, targetPrices }),
+      signal: AbortSignal.timeout(35000),
+    });
+    const json = await resp.json();
+    if (json?.ok) setRadarData(json);
+  } catch { /* non-fatal */ } finally {
+    setRadarLoading(false);
+  }
+};
+
+// ── Feature 3: Visit Scan handler ────────────────────────────────────────────
+const handleVisitScan = (item: any) => {
+  // Find the most recent history entry matching this watchlist query
+  const q = (item.query || "").toLowerCase();
+  const match = (history || []).find((h: any) => {
+    if (!h?.resultCard) return false;
+    const rq = (h.resultCard.visionQuery || h.resultCard.itemName || "").toLowerCase();
+    return rq === q || rq.includes(q) || q.includes(rq);
+  });
+  if (match?.resultCard) {
+    setActiveResult(match.resultCard);
+    setResults(match.resultCard.alternatives || []);
+    setLoadingResults(false);
+    setLoadingPhotoUri(match.uri || null);
+    goTab("results");
+  } else {
+    goTab("camera");
+  }
+};
+
+useEffect(() => {
+  const sub = AppState.addEventListener("change", (next) => {
+    const prev = appStateRef.current;
+    appStateRef.current = next;
+
+    if (prev === "active" && (next === "inactive" || next === "background")) {
+      try { scanAbortRef.current?.abort(); } catch {}
+      scanAbortRef.current = null;
+
+      setLoadingResults(false);
+      setShowRetryWhileLoading(false);
+      setLoadingPhotoUri(null);
+
+      try { retryReveal.setValue(0); } catch {}
+      scanLockRef.current = false;
+
+      // 🔥 GOD KILL SWITCH
+      try { setScanAnimActive(false); } catch {}
+      try { setResultModalOpen(false); } catch {}
+      try { setLoadingResults(false); } catch {}
+      try { setShowRetryWhileLoading(false); } catch {}
+      try { setCinematicFreeze(false); } catch {}
+      try { setFreezeFrameUri(null); } catch {}
+
+      try { freezeOpacity?.setValue?.(0); } catch {}
+      try { vignetteOpacity?.setValue?.(0); } catch {}
+
+      try {
+        if (scanAnimTimerRef.current)
+          clearTimeout(scanAnimTimerRef.current);
+        scanAnimTimerRef.current = null;
+      } catch {}
+    }
+
+    // When app comes back to foreground, check connectivity and drain the offline queue
+    if (next === "active") {
+      (async () => {
+        try {
+          const raw = await AsyncStorage.getItem(K.offlineQueue);
+          if (!raw) { setOfflineQueueCount(0); return; }
+          const queue = JSON.parse(raw);
+          if (!Array.isArray(queue) || queue.length === 0) { setOfflineQueueCount(0); return; }
+          setOfflineQueueCount(queue.length);
+          drainOfflineQueue();
+        } catch {}
+      })();
+    }
+  });
+
+  return () => sub.remove();
+}, [resolvedApiBase]);
+  // Torch rule
+  useEffect(() => {
+    if (tab !== "camera" && torchOn) setTorchOn(false);
+  }, [tab, torchOn]);
+  // Keyboard listeners
+  useEffect(() => {
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSub = Keyboard.addListener(showEvt, (e) => {
+      const h = e?.endCoordinates?.height ?? 0;
+      setKeyboardHeight(h);
+    });
+    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+
+// Barcode scan UI animation
+const barcodeLine = useRef(new RNAnimated.Value(0)).current;
+const barcodeAck = useRef(new RNAnimated.Value(0)).current;
+
+useEffect(() => {
+  // start/stop scan line loop
+  try { barcodeLine.stopAnimation(); } catch {}
+  barcodeLine.setValue(0);
+
+  if (!barcodeMode) return;
+
+  const loop = RNAnimated.loop(
+    RNAnimated.sequence([
+      RNAnimated.timing(barcodeLine, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(barcodeLine, {
+        toValue: 0,
+        duration: 0,
+        useNativeDriver: true,
+      }),
+    ])
+  );
+  loop.start();
+
+  return () => {
+    try { loop.stop(); } catch {}
+  };
+}, [barcodeMode, barcodeLine]);
+
+const barcodeLineY = barcodeLine.interpolate({
+  inputRange: [0, 1],
+  outputRange: [-46, 46],
+});
+
+const flashBarcodeAck = () => {
+  barcodeAck.setValue(0);
+  RNAnimated.sequence([
+    RNAnimated.timing(barcodeAck, { toValue: 1, duration: 120, useNativeDriver: true }),
+    RNAnimated.timing(barcodeAck, { toValue: 0, duration: 260, useNativeDriver: true }),
+  ]).start();
+};
+
+// Barcode -> Results pipeline (no backend changes)
+const runBarcodeLookup = async (code: string) => {
+  if (!code) return;
+  if (loadingResults) return;
+
+  if (isFreeLimitReached) {
+    requestAnimationFrame(() => setProfileModal("subscription"));
+    return;
+  }
+
+  const q = String(code).trim();
+  if (!q) return;
+
+  setLoadingResults(true);
+  setLoadingPhotoUri(null);
+  setShowRetryWhileLoading(false);
+  setActiveResult(null);
+  setResults([]);
+  setSeeMoreListings([]);
+  setLastScan(null);
+  setResultModalOpen(false);
+  goTab("results");
+
+  // Feature 6: instant UPC lookup (<1s) — show partial result immediately
+  // while market search continues in background
+  let barcodeProductTitle: string | null = null;
+  let barcodeProductImage: string | null = null;
+  try {
+    const upcClean = q.replace(/\D/g, "");
+    if (upcClean.length >= 8) {
+      const barcodeRes = await apiFetch(`/intel/barcode/${upcClean}`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (barcodeRes?.ok && barcodeRes?.found && barcodeRes?.title) {
+        barcodeProductTitle = barcodeRes.title;
+        barcodeProductImage = barcodeRes.imageUrl || null;
+        // Show instant partial card so user sees something in <1s
+        setActiveResult({
+          itemName: barcodeRes.title,
+          store: barcodeRes.brand || "UPC Lookup",
+          price: barcodeRes.msrp || null,
+          image: barcodeRes.imageUrl || null,
+          buyLink: null,
+          visionConfidence: 0.95,
+          buyVerdict: "LOOKING UP…",
+          __barcodePartial: true,
+        });
+      }
+    }
+  } catch { /* non-fatal — continue to full market search */ }
+
+  // Feature 6: use product title from UPC lookup as the market search query
+  const marketQuery = barcodeProductTitle || q;
+
+  const controller = new AbortController();
+  const marketTimer = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const serpRes = await Promise.allSettled([
+ searchSerp(marketQuery, controller.signal, buildVisionVariants(marketQuery)),
+]);
+
+const serpRaw =
+  serpRes[0]?.status === "fulfilled" ? serpRes[0].value : [];
+
+const ebayRaw: any[] = []; // handled inside /market/search
+
+    let combined = [
+      ...normalizeListings(ebayRaw, "ebay", "eBay", marketQuery),
+      ...normalizeListings(serpRaw, "serp", "Google", marketQuery),
+    ]
+      .map((i) => {
+        const price = parseMoney(i?.price);
+        const shipping = parseMoney(i?.shipping);
+        const total =
+          Number.isFinite(price)
+            ? Number.isFinite(shipping)
+              ? price + shipping
+              : price
+            : NaN;
+        return {
+          ...i,
+          numericPrice: price,
+          numericShip: shipping,
+          numericTotal: total,
+          __titleNorm: String(i?.title || "").toLowerCase().replace(/\s+/g, " ").trim(),
+        };
+      })
+      .filter((i) => Number.isFinite(i.numericTotal))
+      .sort((a, b) => a.numericTotal - b.numericTotal);
+
+    // dedupe spam
+    const seen = new Set<string>();
+    const deduped: any[] = [];
+    for (const it of combined) {
+      const key = String(it?.url || "") || `${it.__titleNorm}|${it.numericTotal}|${it?.source || ""}`;
+      if (!key) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(it);
+    }
+
+
+combined = deduped
+  .map((item) => {
+    const score = neuralMatchScore(
+      item,
+      marketQuery,
+      0.75
+    );
+
+    return {
+      ...item,
+      __neuralScore: score,
+    };
+  })
+  .sort((a, b) => {
+    if (b.__neuralScore !== a.__neuralScore) {
+      return b.__neuralScore - a.__neuralScore;
+    }
+
+    const ap = a.numericTotal ?? a.price ?? Infinity;
+    const bp = b.numericTotal ?? b.price ?? Infinity;
+
+    return ap - bp;
+  });
+
+// Barcode flow has no user-entered scannedPrice, so do NOT cap by a price ceiling here.
+const cappedCombined = combined;
+
+const filtered = cappedCombined.filter((item) => {
+  const score = neuralMatchScore(item, marketQuery, 0.75);
+  return score >= 0.35;
+});
+
+const ranked = filtered.length ? filtered : cappedCombined;
+
+const top3 = ranked.slice(0, 3);
+
+setSeeMoreListings(cappedCombined.slice(0, 60));
+
+    if (!top3.length) {
+      showUiError("No barcode matches", "Try moving closer, or scan the front of the package instead.");
+      stopLoadingSafely();
+      return;
+    }
+
+    const cheapest = top3[0];
+    const cheapestPrice = toNumber(cheapest.totalPrice ?? cheapest.price);
+
+    const spread = getMarketSpread(combined);
+    const marketPrice = spread?.avg ?? cheapestPrice;
+    const stats = buildMarketStats(marketPrice);
+
+    const insights = computeInsights({
+      scannedPrice: cheapestPrice, // barcode has no “paying” input; keep it neutral
+      cheapestPrice,
+      avgMarket: stats.avgMarket ?? marketPrice,
+      low: spread?.low ?? stats.historicalLow,
+      high: spread?.high ?? stats.historicalHigh,
+      confidence: 0.75,
+      totalMatches: combined.length,
+      url: cheapest.url,
+      historyPoints: [],
+    });
+
+
+    const card = {
+      photoUri: barcodeProductImage || null,
+      itemName: cheapest.title || barcodeProductTitle || `Barcode ${q}`,
+      store: cheapest.source || "Marketplace",
+      price: cheapestPrice,
+      buyLink: cheapest.url,
+      image: cheapest.image || null,
+      // 🧠 AI VERDICT (FINAL ADD #1)
+aiVerdict:
+  combined.length >= 8
+    ? "🔥 STRONG BARCODE MATCH — multiple listings confirmed"
+    : combined.length >= 3
+    ? "🧠 FAIR PRICE — barcode match looks valid"
+    : "⚠️ LIMITED MARKET DATA — review before buying",
+
+intuitionLine: buildIntuitionLine({
+  cheaperPct: insights?.savingsPct,
+  flipPotential: flipScore({
+    scannedPrice: cheapestPrice,
+    cheapestPrice,
+    estimatedResale: stats?.estimatedResale,
+  }),
+  totalMatches: combined?.length,
+  confidence: 0.75,
+}),
+
+      scannedPrice: cheapestPrice,
+      savedAmount: 0,
+      cheaperPct: 0,
+      alreadyCheaperBy: 0,
+
+      visionConfidence: 0.75,
+      visionQuery: q,
+
+      alternatives: top3,
+      historicalLow: stats.historicalLow,
+      historicalHigh: stats.historicalHigh,
+      avgMarket: stats.avgMarket,
+      estimatedResale: stats.estimatedResale,
+      flipPotential: flipScore({ scannedPrice: cheapestPrice, cheapestPrice, estimatedResale: stats.estimatedResale }),
+      totalMatches: combined.length,
+      category: inferCategory(cheapest.title || q),
+      ...insights,
+
+      scanWhy: ["Barcode detected", "Market search matched barcode", "Ranked by total price (price + shipping)"],
+      rankWhy: ["Cheapest total price", "Deduped spam listings", "Cross-market sweep"],
+    };
+
+    // count scan once
+    if (!scanLockRef.current) {
+      scanLockRef.current = true;
+      setScansUsed((prev) => prev + 1);
+      setHistory((prev) => [
+        {
+          id: `${Date.now()}`,
+          uri: null,
+          title: card.itemName || "Barcode scan",
+          timestamp: new Date().toLocaleString(),
+          resultCard: card,
+        },
+        ...prev,
+      ]);
+      setTimeout(() => {
+        scanLockRef.current = false;
+      }, 400);
+    }
+
+    setResults(top3);
+    setActiveResult(card);
+    try {
+  const acb = Number(card?.alreadyCheaperBy || 0);
+  if (Number.isFinite(acb) && acb > 0.01) {
+    setPriceChangeBanner(`✅ You’re already cheaper than the market by ${money(acb)}`);
+  } else {
+    setPriceChangeBanner(null);
+  }
+} catch {
+  setPriceChangeBanner(null);
+}
+    RNAnimated.sequence([
+  RNAnimated.timing(confidenceAura, {
+    toValue: 1,
+    duration: 400,
+    useNativeDriver: true,
+  }),
+  RNAnimated.timing(confidenceAura, {
+    toValue: 0,
+    duration: 1200,
+    useNativeDriver: true,
+  }),
+]).start();
+
+    setLastScan({ kind: "barcode", confidence: 0.75, query: q, results: top3 });
+
+    stopLoadingSafely();
+  } catch (e: any) {
+    showUiError("Barcode scan failed", "Couldn’t reach marketplaces. Try again.");
+    stopLoadingSafely();
+  } finally {
+    clearTimeout(marketTimer);
+  }
+};
+
+const onBarcodeScanned = ({ data }: any) => {
+  if (!barcodeMode) return;
+  if (barcodeLockRef.current) return;
+
+  barcodeLockRef.current = true;
+
+  const code = String(data || "").trim();
+  if (!code) {
+    barcodeLockRef.current = false;
+    return;
+  }
+
+  setLastBarcode(code);
+  flashBarcodeAck();
+  hapticSoftSnap?.();
+
+  // keep barcode mode ON until we kick results (feels intentional)
+  setTimeout(() => {
+    setBarcodeMode(false);
+    runBarcodeLookup(code);
+    setTimeout(() => {
+      barcodeLockRef.current = false;
+    }, 600);
+  }, 140);
+};
+
+
+const takePhoto = async () => {
+
+  // HARD GUARD: prevents double-tap duplication + freezes
+  if (isCapturing || scanLockRef.current) return;
+
+  if (!cameraRef.current) return;
+
+  if (isFreeLimitReached) {
+requestAnimationFrame(() => {
+  setShowPaywall(true);
+});
+    return;
+  }
+
+triggerCinematicScan();
+
+  // 🔒 LOCK UI IMMEDIATELY
+  scanLockRef.current = true;
+  setIsCapturing(true);
+  
+hapticSelect?.();
+
+RNAnimated.timing(neuralPulse, {
+  toValue: 1,
+  duration: 120,
+  useNativeDriver: true,
+}).start(() => {
+  RNAnimated.timing(neuralPulse, {
+    toValue: 0,
+    duration: 220,
+    useNativeDriver: true,
+  }).start();
+});
+  hideZoomHud();
+
+  // HAPTIC (premium, subtle)
+  hapticSoftSnap();
+
+  // particle burst + ring burst
+  triggerParticleBurst();
+  try {
+    ringOpacity.setValue(1);
+    ringScale.setValue(0.92);
+    RNAnimated.parallel([
+      RNAnimated.timing(ringScale, {
+        toValue: 1.22,
+        duration: 260,
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(ringOpacity, {
+        toValue: 0,
+        duration: 320,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  } catch {}
+
+  playSnapRing();
+
+RNAnimated.parallel([
+  RNAnimated.sequence([
+    RNAnimated.timing(snapScale, {
+      toValue: 0.94,
+      duration: 60,
+      useNativeDriver: true,
+    }),
+    RNAnimated.timing(snapScale, {
+      toValue: 1,
+      duration: 90,
+      useNativeDriver: true,
+    }),
+  ]),
+  RNAnimated.sequence([
+    RNAnimated.timing(snapDepth, {
+      toValue: 1,
+      duration: 120,
+      useNativeDriver: true,
+    }),
+    RNAnimated.timing(snapDepth, {
+      toValue: 0,
+      duration: 180,
+      useNativeDriver: true,
+    }),
+  ]),
+]).start();
+
+const pic = await cameraRef.current.takePictureAsync({
+  quality: 0.92,
+  skipProcessing: Platform.OS === "android",
+});
+
+setFreezeFrameUri(pic?.uri || null);
+trackEvent("photo_captured", { cameraFacing });
+
+// ── Feature 3: Receipt mode → send to receipt analyzer ──────────────────────
+if (receiptMode) {
+  setIsCapturing(false);
+  scanLockRef.current = false;
+  setReceiptLoading(true);
+  setReceiptData(null);
+  setReceiptError(null);
+  setReceiptPanelOpen(true);
+  // compress to base64 for upload
+  try {
+    const compressed = await ImageManipulator.manipulateAsync(
+      pic.uri,
+      [{ resize: { width: 1200 } }],
+      { compress: 0.82, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+    );
+    const b64 = compressed.base64;
+    if (!b64) throw new Error("no base64");
+    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const resp = await fetch(`${apiBase}/api/receipt/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64: b64 }),
+      signal: AbortSignal.timeout(45000),
+    });
+    const json = await resp.json();
+    if (json?.ok) {
+      setReceiptData(json);
+    } else {
+      setReceiptError(json?.error || "Receipt analysis failed — try a clearer photo");
+    }
+  } catch (err: any) {
+    setReceiptError(err?.message?.includes("timeout") ? "Timed out — try a clearer photo" : "Could not analyze receipt");
+  } finally {
+    setReceiptLoading(false);
+  }
+  return;
+}
+
+// ── Feature 2: Batch mode → queue this photo for auto-processing ─────────────
+if (batchMode) {
+  const job: BatchJob = {
+    id: makeId(),
+    uri: pic.uri,
+    createdAt: Date.now(),
+    status: "queued",
+  };
+  setBatchQueue((prev) => {
+    const next = [...prev, job].slice(-40);
+    saveBatchQueue(next);
+    return next;
+  });
+  setBatchCount((c) => c + 1);
+  setIsCapturing(false);
+  scanLockRef.current = false;
+  return; // don't fall through to regular scan preview
+}
+
+  setRefinePhotos((prev) => [...prev, { uri: pic.uri }]);
+  setPhoto(pic);
+  setScanPriceInput("");
+  setPriceSubmitted(false);
+
+  setIsCapturing(false);
+  scanLockRef.current = false;
+};
+
+const closeAllOverlays = () => {
+  setProfileModal(null);
+  setAuthModalOpen(false);
+  setHelpOpen(false);
+  setShowPaywall(false);
+  setResultModalOpen(false);
+  setSeeMoreOpen(false);
+  setHaggleOpen(false);
+  setFreePassInfoOpen(false);
+  setSplashInfoOpen(false);
+  setUnverifiedPrompt(null);
+  setReferralInfoExpanded(false);
+  setInventoryOpen(false);
+  setBatchOpen(false);
+  setCloudImportOpen(false);
+  setWelcomeBackOpen(false);
+  setProfitCalcOpen(false);
+
+  setZoomUri(null);
+  setPreviewImageUri(null);
+
+};
+
+  // ZOOM (stable)
+  // -------------------------
+  const zoom = useSharedValue(0);
+  const zoomStart = useSharedValue(0);
+  const cameraAnimatedProps = useAnimatedProps(() => ({ zoom: zoom.value }));
+  const snapZoomWorklet = () => {
+    "worklet";
+    const targets = [0, 0.5, 1];
+    let best = targets[0];
+    for (let i = 1; i < targets.length; i++) {
+      if (Math.abs(targets[i] - zoom.value) < Math.abs(best - zoom.value)) {
+        best = targets[i];
+      }
+    }
+    zoom.value = withTiming(best, { duration: 140 });
+  };
+  const zoomHudOpacity = useRef(new RNAnimated.Value(0)).current;
+  const zoomHudY = useRef(new RNAnimated.Value(8)).current;
+  const zoomHudTimer = useRef(null);
+  const [zoomHudText, setZoomHudText] = useState("1.0×");
+  const hideZoomHud = () => {
+    if (zoomHudTimer.current) clearTimeout(zoomHudTimer.current);
+    zoomHudTimer.current = null;
+    RNAnimated.parallel([
+      RNAnimated.timing(zoomHudOpacity, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(zoomHudY, {
+        toValue: 8,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+  const showZoomHud = (text) => {
+    if (photo || cameraFacing !== "back") return;
+    if (zoomHudTimer.current) clearTimeout(zoomHudTimer.current);
+    setZoomHudText(text);
+    zoomHudOpacity.setValue(0);
+    zoomHudY.setValue(8);
+    RNAnimated.parallel([
+      RNAnimated.timing(zoomHudOpacity, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(zoomHudY, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      zoomHudTimer.current = setTimeout(hideZoomHud, 1400);
+    });
+  };
+  const setZoomLevel = (level) => {
+    if (!photo && cameraFacing === "back") hapticSelect();
+    const map = { 1: 0, 2: 0.5, 3: 1 };
+    const z = map[level] ?? 0;
+    zoom.value = withTiming(z, { duration: 140 });
+    showZoomHud(`${(1 + z * 2).toFixed(1)}×`);
+  };
+  const pinch = Gesture.Pinch()
+    .enabled(!photo && cameraFacing === "back")
+    .onBegin(() => {
+      zoomStart.value = zoom.value;
+    })
+    .onUpdate((e) => {
+      zoom.value = clamp(zoomStart.value * e.scale, 0, 1);
+    })
+    .onEnd(snapZoomWorklet);
+  useEffect(() => {
+    if (photo) hideZoomHud();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [photo]);
+  useEffect(() => {
+    if (tab !== "camera") hideZoomHud();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [tab]);
+  useEffect(() => {
+    return () => {
+      if (flashMaskTimer.current) clearTimeout(flashMaskTimer.current);
+      if (flashMidTimer.current) clearTimeout(flashMidTimer.current);
+      if (zoomHudTimer.current) clearTimeout(zoomHudTimer.current);
+      if (flipTimer.current) clearTimeout(flipTimer.current);
+      if (scanAnimTimerRef.current) clearTimeout(scanAnimTimerRef.current);
+      if (scanAbortRef.current) scanAbortRef.current.abort();
+      // safety: remove splash listener if somehow still attached
+      try {
+        if (splashDotsListenerIdRef.current != null) {
+          splashDots.removeListener(splashDotsListenerIdRef.current);
+          splashDotsListenerIdRef.current = null;
+        }
+} catch (e) {}
+    };
+  }, [splashDots]);
+// -------------------------
+// ✅ SIMPLE IN-MEMORY CACHES
+// -------------------------
+const VISION_CACHE = useRef(new Map()).current;
+const SERP_CACHE = useRef(new Map()).current;
+const MARKET_CACHE = useRef(new Map()).current;
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const isFresh = (entry) =>
+  entry && Date.now() - entry.ts < CACHE_TTL_MS;
+// ✅ Stronger cache key: uses file hash when available
+const getImageCacheKey = async (uri) => {
+  try {
+    const info = (await FileSystem.getInfoAsync(uri, { md5: true } as any)) as any;
+
+    const md5 = info?.exists ? info.md5 || "" : "";
+    const size = info?.exists ? info.size ?? 0 : 0;
+    const mt = info?.exists ? info.modificationTime ?? 0 : 0;
+    // If md5 exists, it's the best dedupe key
+    if (md5) return `md5:${md5}`;
+    // Fallback if md5 not available
+    return `${uri}|${size}|${mt}`;
+  } catch {
+    return uri;
+  }
+};
+const withTimeout = (ms, controller) => {
+  const t = setTimeout(() => controller.abort(), ms);
+  return {
+    signal: controller.signal,
+    cancel: () => clearTimeout(t),
+  };
+};
+// -------------------------
+// Scoring helper (required)
+// -------------------------
+const confidenceWeightedScore = (price, confidence) => {
+  if (!Number.isFinite(price)) return Infinity;
+  const c = Math.max(0, Math.min(1, Number(confidence) || 0));
+  // lower confidence => slightly penalize "too-good-to-be-true" low prices
+  return price * (1 + (1 - c) * 0.15);
+};
+
+  // -------------------------
+  // Helpers
+  // -------------------------
+const analyzePhotoToQuery = async (photoUri, signal, originalPrice?: number | null, cheapestAlt?: number | null, itemHint?: string | null) => {
+  if (!photoUri || typeof photoUri !== "string") {
+    console.warn("analyzePhotoToQuery invalid photoUri");
+    return;
+  }
+  // Prepare image FIRST so cache is image-accurate
+  let preparedUri = photoUri;
+  try {
+    preparedUri = await prepareImage(photoUri);
+  } catch {
+    preparedUri = photoUri;
+  }
+  const imageKey = await getImageCacheKey(preparedUri);
+  const cacheKey = `${scanMode}|${imageKey}`;
+const cached = VISION_CACHE.get(cacheKey);
+if (cached && isFresh(cached)) {
+  console.log("🧠 VISION CACHE HIT");
+  return {
+    query: cached.query,
+    variants: Array.isArray(cached.variants) ? cached.variants : [],
+    confidence: cached.confidence,
+    visionIdentity: cached.visionIdentity || null,
+  };
+}
+
+  // Build multipart ONCE
+  const makeForm = () => {
+    const form = new FormData();
+    form.append("mode", scanMode);
+    if (scanMode === SCAN_MODES.PROP && propContext.trim()) {
+      form.append("propContext", propContext.trim());
+    }
+    if (Number.isFinite(originalPrice) && (originalPrice as number) > 0) {
+      form.append("originalPrice", String(originalPrice));
+    }
+    if (Number.isFinite(cheapestAlt) && (cheapestAlt as number) > 0) {
+      form.append("cheapestAlternative", String(cheapestAlt));
+    }
+    if (itemHint && itemHint.trim()) {
+      form.append("itemHint", itemHint.trim());
+    }
+
+const uploadName = preparedUri.split("/").pop() || "scan.jpg";
+
+form.append(
+  "image",
+  {
+    uri: preparedUri,
+    name: uploadName,
+    type: "image/jpeg",
+  } as any
+);
+
+    return form;
+  };
+
+const endpoints = ["/api/vision/analyze"];
+let lastStatus: number | null = null;
+
+for (const rawBase of API_BASE_CANDIDATES) {
+  const base = String(rawBase || "").replace(/\/+$/, "");
+
+  try {
+    const healthRes = await fetch(`${base}/health`, {
+      method: "GET",
+      signal,
+    });
+
+    lastStatus = healthRes.status;
+
+    if (!healthRes.ok) continue;
+
+    const healthText = await healthRes.text();
+
+    let healthJson: any = null;
+    try {
+      healthJson = healthText ? JSON.parse(healthText) : null;
+    } catch {
+      healthJson = null;
+    }
+
+    if (healthJson?.ok === false) continue;
+
+    for (const ep of endpoints) {
+      const cleanEp = String(ep || "").startsWith("/") ? ep : `/${ep}`;
+
+      try {
+const form = makeForm();
+
+const res = await fetch(`${base}${cleanEp}`, {
+  method: "POST",
+  body: form,
+  signal,
+});
+
+        lastStatus = res.status;
+
+        if (!res.ok) continue;
+
+        const text = await res.text();
+
+        let data: any = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          console.warn("Vision returned non-JSON:", text?.slice?.(0, 200));
+          continue;
+        }
+
+        const q =
+          typeof data?.query === "string" ? data.query :
+          typeof data?.result?.query === "string" ? data.result.query :
+          typeof data?.data?.query === "string" ? data.data.query :
+          typeof data?.analysis?.query === "string" ? data.analysis.query :
+          typeof data?.label === "string" ? data.label :
+          typeof data?.result?.label === "string" ? data.result.label :
+          typeof data?.data?.label === "string" ? data.data.label :
+          typeof data?.analysis?.label === "string" ? data.analysis.label :
+          typeof data?.title === "string" ? data.title :
+          typeof data?.name === "string" ? data.name :
+          typeof data?.item === "string" ? data.item :
+          typeof data?.analysis?.item === "string" ? data.analysis.item :
+          typeof data?.result?.item === "string" ? data.result.item :
+          typeof data?.data?.item === "string" ? data.data.item :
+          typeof data?.product === "string" ? data.product :
+          typeof data?.analysis?.product === "string" ? data.analysis.product :
+          typeof data?.result?.product === "string" ? data.result.product :
+          typeof data?.data?.product === "string" ? data.data.product :
+          typeof data?.output_text === "string" ? data.output_text :
+          typeof data?.text === "string" ? data.text :
+          null;
+
+        const c =
+          typeof data?.confidence === "number" ? data.confidence :
+          typeof data?.result?.confidence === "number" ? data.result.confidence :
+          typeof data?.data?.confidence === "number" ? data.data.confidence :
+          typeof data?.analysis?.confidence === "number" ? data.analysis.confidence :
+          0;
+
+        const fallbackQuery =
+          typeof data === "string" ? data :
+          typeof data?.message === "string" ? data.message :
+          typeof data?.result === "string" ? data.result :
+          typeof data?.data === "string" ? data.data :
+          typeof data?.analysis === "string" ? data.analysis :
+          typeof data?.output_text === "string" ? data.output_text :
+          typeof data?.text === "string" ? data.text :
+          Array.isArray(data?.choices) &&
+          typeof data.choices?.[0]?.message?.content === "string"
+            ? data.choices[0].message.content
+            : null;
+
+        const finalQuery =
+          q && String(q).trim()
+            ? String(q).trim()
+            : fallbackQuery && String(fallbackQuery).trim()
+            ? String(fallbackQuery).trim()
+            : null;
+
+        const rawVariants =
+          Array.isArray(data?.variants) ? data.variants :
+          Array.isArray(data?.result?.variants) ? data.result.variants :
+          Array.isArray(data?.data?.variants) ? data.data.variants :
+          Array.isArray(data?.analysis?.variants) ? data.analysis.variants :
+          [];
+
+        const finalVariants = [...new Set(
+          rawVariants
+            .map((x: any) => String(x || "").trim().toLowerCase())
+            .filter(Boolean)
+        )].slice(0, 3);
+
+let finalConfidence =
+  Number.isFinite(c) ? smoothConfidence(Number(c)) : 0;
+
+if (finalConfidence > 0.75) {
+  finalConfidence = Math.min(0.98, finalConfidence + 0.05);
+}
+
+if (finalQuery) {
+  const rawIdentity =
+    data?.identity ||
+    data?.result?.identity ||
+    data?.data?.identity ||
+    data?.analysis?.identity ||
+    null;
+
+  const payload = {
+    query: finalQuery,
+    variants: finalVariants,
+    confidence: finalConfidence,
+    visionIdentity: rawIdentity || null,
+  };
+
+  VISION_CACHE.set(cacheKey, {
+    ts: Date.now(),
+    query: payload.query,
+    variants: payload.variants,
+    confidence: payload.confidence,
+    visionIdentity: payload.visionIdentity,
+  });
+
+  setResolvedApiBase(base);
+
+  console.log("VISION RAW RESPONSE", JSON.stringify(data));
+  console.log("VISION RAW TEXT", text);
+  console.log("RUNSCAN VISION QUERY →", payload.query);
+  console.log("RUNSCAN VISION VARIANTS →", payload.variants);
+  console.log("RUNSCAN VISION CONFIDENCE →", payload.confidence);
+  console.log("RUNSCAN VISION IDENTITY →", payload.visionIdentity);
+
+  const enrichedVariants = [
+    payload.query,
+    ...payload.variants,
+    `${payload.query} authentic`,
+    `${payload.query} original`,
+    `${payload.query} brand`,
+    `${payload.query} product`,
+  ];
+
+  return {
+    query: payload.query,
+    variants: [...new Set(enrichedVariants)].slice(0, 6),
+    confidence: payload.confidence,
+    visionIdentity: payload.visionIdentity,
+  };
+}
+
+        console.warn("Vision returned 200 but no usable query:", data);
+        console.warn("Vision raw text:", text);
+      } catch (e: any) {
+        if (e?.name === "AbortError") throw e;
+        console.warn("Vision endpoint failed:", `${base}${cleanEp}`, e);
+      }
+    }
+  } catch (e: any) {
+    if (e?.name === "AbortError") throw e;
+    console.warn("Vision base failed:", base, e);
+  }
+}
+
+console.warn("Vision failed on all endpoints. Last status:", lastStatus);
+return { query: null, variants: [], confidence: 0 };
+};
+
+// helpers moved to module scope (do not redfine in app)
+  const pickCheapest = (arr) => {
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    let best = null;
+    let bestP = null;
+    for (const item of arr) {
+      const p = toNumber(item?.price);
+      if (p == null) continue;
+      if (!best || (bestP != null && p < bestP) || bestP == null) {
+        best = item;
+        bestP = p;
+      }
+    }
+    return best;
+  };
+
+  const buildMarketStats = (marketPrice) => {
+    if (!Number.isFinite(marketPrice)) {
+      return {
+        historicalLow: null,
+        historicalHigh: null,
+        avgMarket: null,
+        estimatedResale: null,
+      };
+    }
+    const historicalLow = marketPrice * 0.85;
+    const historicalHigh = marketPrice * 1.18;
+    const avgMarket = marketPrice * 1.05;
+    const estimatedResale = avgMarket * 0.9;
+    return { historicalLow, historicalHigh, avgMarket, estimatedResale };
+  };
+
+const buildRealMarketIntel = (items = [], scannedPrice?: number | null) => {
+  const prices = (items || [])
+    .map((x) => toNumber(x?.totalPrice ?? x?.numericTotal ?? x?.price))
+    .filter((x) => Number.isFinite(x))
+    .sort((a, b) => a - b);
+
+  if (!prices.length) {
+    return {
+      historicalLow: null,
+      historicalHigh: null,
+      avgMarket: null,
+      estimatedResale: null,
+      medianMarket: null,
+      expectedProfit: null,
+      liquidity: "Low",
+      sellThroughDays: null,
+      flipScoreValue: null,
+    };
+  }
+
+  const low = prices[0];
+  const high = prices[prices.length - 1];
+  const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+  const median = prices[Math.floor(prices.length / 2)];
+
+  const estimatedResale = median;
+  const expectedProfit =
+    Number.isFinite(scannedPrice as number) && Number.isFinite(estimatedResale)
+      ? estimatedResale - Number(scannedPrice)
+      : null;
+
+  const count = prices.length;
+
+  let liquidity = "Low";
+  let sellThroughDays = 30;
+
+  if (count >= 40) {
+    liquidity = "Very High";
+    sellThroughDays = 5;
+  } else if (count >= 20) {
+    liquidity = "High";
+    sellThroughDays = 9;
+  } else if (count >= 10) {
+    liquidity = "Medium";
+    sellThroughDays = 14;
+  } else {
+    liquidity = "Low";
+    sellThroughDays = 24;
+  }
+
+  const flipScoreValue =
+    Number.isFinite(expectedProfit as number) && estimatedResale > 0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(
+              ((Number(expectedProfit) / Number(estimatedResale)) * 100) +
+                Math.min(count, 25)
+            )
+          )
+        )
+      : null;
+
+  return {
+    historicalLow: low,
+    historicalHigh: high,
+    avgMarket: avg,
+    estimatedResale,
+    medianMarket: median,
+    expectedProfit,
+    liquidity,
+    sellThroughDays,
+    flipScoreValue,
+  };
+};
+
+  const flipScore = ({ scannedPrice, cheapestPrice, estimatedResale }) => {
+    if (!Number.isFinite(scannedPrice) || !Number.isFinite(cheapestPrice))
+      return "—";
+    const cheaperPct = ((scannedPrice - cheapestPrice) / scannedPrice) * 100;
+    const resaleEdge =
+      Number.isFinite(estimatedResale) && estimatedResale > cheapestPrice * 1.15;
+    if (cheaperPct >= 30 && resaleEdge) return "A";
+    if (cheaperPct >= 20) return "B";
+    if (cheaperPct >= 10) return "C";
+    return "D";
+  };
+const getMarketSpread = (items = []) => {
+  const prices = (items || [])
+    .map((i) => toNumber(i?.price ?? i?.numericPrice))
+    .filter((p) => Number.isFinite(p));
+  if (prices.length === 0) return null;
+  return {
+    low: Math.min(...prices),
+    high: Math.max(...prices),
+    avg: prices.reduce((a, b) => a + b, 0) / prices.length,
+  };
+};
+
+// -------------------------
+// NEURAL TITLE MATCH ENGINE
+// dramatically improves item accuracy
+// -------------------------
+
+const normalizeText = (s = "") =>
+  String(s)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const tokenScore = (query = "", title = "") => {
+  const q = normalizeText(query).split(" ").filter(Boolean);
+  const t = normalizeText(title).split(" ").filter(Boolean);
+
+  if (!q.length || !t.length) return 0;
+
+  let score = 0;
+
+  for (const word of q) {
+    if (t.includes(word)) score += 1;
+  }
+
+  return score / q.length;
+};
+
+const neuralMatchScore = (item, query, confidence = 0.7) => {
+  const title = item?.title || "";
+  const price = toNumber(item?.numericTotal ?? item?.price);
+
+  const token = tokenScore(query, title);
+
+  const pricePenalty =
+    Number.isFinite(price) && price < 3 ? 0.2 : 0;
+
+  const confBoost = confidence * 0.25;
+
+  const score = token + confBoost - pricePenalty;
+
+  return score;
+};
+
+// -------------------------
+// LISTING QUALITY ENGINE
+// improves scan reliability + result quality
+// -------------------------
+
+const looksBadListing = (title: string, query: string = "") => {
+  const t = String(title || "").toLowerCase();
+  const q = String(query || "").toLowerCase();
+
+  if (t.includes("for parts")) return true;
+  if (t.includes("repair")) return true;
+  if (t.includes("broken")) return true;
+  if (t.includes("lot of")) return true;
+  if (t.includes("bundle")) return true;
+  if (t.includes("case only")) return true;
+  if (t.includes("box only")) return true;
+
+  const queryIsEyewear =
+    q.includes("glasses") ||
+    q.includes("eyewear") ||
+    q.includes("frames") ||
+    q.includes("lens") ||
+    q.includes("sunglasses");
+
+  const queryWantsSun =
+    q.includes("sunglasses") ||
+    q.includes("uv400") ||
+    q.includes("polarized");
+
+  const queryWantsBlue =
+    q.includes("blue light") ||
+    q.includes("blue-light") ||
+    q.includes("computer") ||
+    q.includes("gaming") ||
+    q.includes("block blue") ||
+    q.includes("screen");
+
+  const queryIsSafety =
+    q.includes("safety") ||
+    q.includes("protective") ||
+    q.includes("forensic") ||
+    q.includes("lab");
+
+  if (!queryIsSafety) {
+    if (t.includes("safety glasses")) return true;
+    if (t.includes("protective glasses")) return true;
+    if (t.includes("forensic glasses")) return true;
+    if (t.includes("shooting glasses")) return true;
+    if (t.includes("industrial glasses")) return true;
+    if (t.includes("lab glasses")) return true;
+    if (t.includes("ballistic glasses")) return true;
+    if (t.includes("work glasses")) return true;
+  }
+
+  if (queryIsEyewear && !queryWantsSun) {
+    const titleLooksBlue =
+      t.includes("blue light") ||
+      t.includes("blue-light") ||
+      t.includes("computer") ||
+      t.includes("gaming") ||
+      t.includes("block blue") ||
+      t.includes("screen");
+
+    if (t.includes("sunglasses") && !titleLooksBlue) return true;
+    if (t.includes("polarized") && !titleLooksBlue) return true;
+    if (t.includes("uv400") && !titleLooksBlue) return true;
+    if (t.includes("sports sunglasses")) return true;
+    if (t.includes("cycling glasses")) return true;
+    if (t.includes("driving glasses") && !titleLooksBlue) return true;
+    if (t.includes("fishing glasses")) return true;
+    if (t.includes("outdoor glasses")) return true;
+  }
+
+  if (queryWantsBlue) {
+    const titleLooksBlue =
+      t.includes("blue light") ||
+      t.includes("blue-light") ||
+      t.includes("computer") ||
+      t.includes("gaming") ||
+      t.includes("block blue") ||
+      t.includes("screen");
+
+    if (
+      (t.includes("sunglasses") ||
+        t.includes("polarized") ||
+        t.includes("uv400")) &&
+      !titleLooksBlue
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const qualityFilterListings = (items: any[], query: string) => {
+  if (!Array.isArray(items)) return [];
+
+  const qNorm = normalizeTitle(query);
+  if (!qNorm) return items.slice(0, 20);
+
+  const eyewearMode =
+    qNorm.includes("glasses") ||
+    qNorm.includes("eyewear") ||
+    qNorm.includes("sunglasses") ||
+    qNorm.includes("frames") ||
+    qNorm.includes("lens");
+
+  const wantsOrange =
+    qNorm.includes("orange") ||
+    qNorm.includes("amber") ||
+    qNorm.includes("yellow");
+
+  const wantsBlue =
+    qNorm.includes("blue light") ||
+    qNorm.includes("blue-light") ||
+    qNorm.includes("computer") ||
+    qNorm.includes("gaming") ||
+    qNorm.includes("block blue") ||
+    qNorm.includes("screen");
+
+  const wantsSun =
+    qNorm.includes("sunglasses") ||
+    qNorm.includes("uv400") ||
+    qNorm.includes("polarized");
+
+  const wantsWrap = qNorm.includes("wrap");
+  const wantsShield = qNorm.includes("shield");
+  const wantsAviator = qNorm.includes("aviator");
+
+  const filtered = items
+    .map((it) => {
+      const titleNorm = normalizeTitle(it?.title);
+      const sim = titleSimilarity(titleNorm, qNorm);
+
+      const hasOrange =
+        titleNorm.includes("orange") ||
+        titleNorm.includes("amber") ||
+        titleNorm.includes("yellow");
+
+      const hasBlue =
+        titleNorm.includes("blue light") ||
+        titleNorm.includes("blue-light") ||
+        titleNorm.includes("computer") ||
+        titleNorm.includes("gaming") ||
+        titleNorm.includes("block blue") ||
+        titleNorm.includes("screen");
+
+      const hasWrap = titleNorm.includes("wrap");
+      const hasShield = titleNorm.includes("shield");
+      const hasAviator = titleNorm.includes("aviator");
+
+      const hasSunwear =
+        titleNorm.includes("sunglasses") ||
+        titleNorm.includes("polarized") ||
+        titleNorm.includes("uv400") ||
+        titleNorm.includes("sport") ||
+        titleNorm.includes("sports") ||
+        titleNorm.includes("cycling") ||
+        titleNorm.includes("driving") ||
+        titleNorm.includes("fishing") ||
+        titleNorm.includes("outdoor");
+
+      let score = sim;
+
+      if (eyewearMode) {
+        if (!wantsSun && hasSunwear) {
+          score -= wantsBlue ? 0.55 : 0.38;
+        }
+
+        if (wantsOrange) score += hasOrange ? 0.22 : -0.24;
+        if (wantsBlue) score += hasBlue ? 0.24 : -0.12;
+        if (wantsWrap) score += hasWrap ? 0.12 : -0.08;
+        if (wantsShield) score += hasShield ? 0.12 : -0.08;
+        if (wantsAviator) score += hasAviator ? 0.12 : -0.08;
+      }
+
+      if (it?.__fromMarketSearch && Number.isFinite(it?.__serverRank)) {
+        score += Math.max(0, 0.12 - Number(it.__serverRank) * 0.01);
+      }
+
+      return {
+        ...it,
+        __clientMatch: score,
+      };
+    })
+    .filter((it) => {
+      const titleNorm = normalizeTitle(it?.title);
+      if (!titleNorm) return false;
+      if (looksBadListing(titleNorm, qNorm)) return false;
+
+      const total = Number(it.numericTotal);
+      if (!Number.isFinite(total)) return false;
+      if (total < 1) return false;
+      if (total > 100000) return false;
+
+      const hasOrange =
+        titleNorm.includes("orange") ||
+        titleNorm.includes("amber") ||
+        titleNorm.includes("yellow");
+
+      const hasBlue =
+        titleNorm.includes("blue light") ||
+        titleNorm.includes("blue-light") ||
+        titleNorm.includes("computer") ||
+        titleNorm.includes("gaming") ||
+        titleNorm.includes("block blue") ||
+        titleNorm.includes("screen");
+
+      const hasWrap = titleNorm.includes("wrap");
+
+      const hasSunwear =
+        titleNorm.includes("sunglasses") ||
+        titleNorm.includes("polarized") ||
+        titleNorm.includes("uv400") ||
+        titleNorm.includes("sport") ||
+        titleNorm.includes("sports") ||
+        titleNorm.includes("cycling") ||
+        titleNorm.includes("driving") ||
+        titleNorm.includes("fishing") ||
+        titleNorm.includes("outdoor");
+
+      if (eyewearMode && !wantsSun && hasSunwear && !hasBlue) return false;
+      if (wantsOrange && !hasOrange && it.__clientMatch < 0.62) return false;
+      if (wantsBlue && !hasBlue && it.__clientMatch < 0.70) return false;
+      if (wantsWrap && !hasWrap && it.__clientMatch < 0.58) return false;
+
+      return true;
+    })
+    .sort((a, b) => {
+      const scoreDiff = Number(b.__clientMatch || 0) - Number(a.__clientMatch || 0);
+      if (Math.abs(scoreDiff) > 0.03) return scoreDiff;
+      return Number(a.numericTotal || Infinity) - Number(b.numericTotal || Infinity);
+    });
+
+  const strong = filtered.filter((it) => Number(it.__clientMatch || 0) >= 0.45);
+  const medium = filtered.filter((it) => Number(it.__clientMatch || 0) >= 0.30);
+
+  if (strong.length >= 3) return strong;
+  if (medium.length >= 3) return medium;
+  return filtered.slice(0, 20);
+};
+
+// Load persisted state ONCE
+useEffect(() => {
+  (async () => {
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+
+      // Feature 1: Load P&L flips
+      try {
+        const plRaw = await AsyncStorage.getItem("EVAN_PL_FLIPS_V1");
+        if (plRaw) setPlFlips(JSON.parse(plRaw));
+      } catch { /* non-fatal */ }
+
+const intelRaw = await AsyncStorage.getItem(INTEL_KEY);
+if (intelRaw) {
+  try {
+    const parsedIntel = JSON.parse(intelRaw);
+    setIntelState(parsedIntel && typeof parsedIntel === "object" ? parsedIntel : emptyIntel());
+  } catch {
+    setIntelState(emptyIntel());
+  }
+}
+      // cycle start
+      const loadedCycleStart = Number.isFinite(parsed?.cycleStartMs)
+        ? parsed.cycleStartMs
+        : Date.now();
+      setCycleStartMs(loadedCycleStart);
+      // scans used
+      let loadedScans = Number.isFinite(parsed?.scansUsed)
+        ? parsed.scansUsed
+        : 0;
+      // reset free scans if 30 days passed
+      const now = Date.now();
+      if (now - loadedCycleStart >= FREE_CYCLE_MS) {
+        loadedScans = 0;
+        setCycleStartMs(now);
+      }
+      setScansUsed(loadedScans);
+      setIsPro(!!parsed?.isPro);
+      setHistory(Array.isArray(parsed?.history) ? parsed.history : []);
+      setWatchlist(Array.isArray(parsed?.watchlist) ? parsed.watchlist : []);
+      setIsSignedIn(!!parsed?.isSignedIn);
+      setSavingsTotal(
+        Number.isFinite(parsed?.savingsTotal) ? parsed.savingsTotal : 0
+      );
+      if (parsed?.activeResult) setActiveResult(parsed.activeResult);
+      if (parsed?.lastScan) setLastScan(parsed.lastScan);
+    } catch (e) {
+      console.log("Failed to load persisted state:", e);
+      // SAFE DEFAULTS
+      setScansUsed(0);
+      setIsPro(false);
+      setHistory([]);
+      setWatchlist([]);
+      setIsSignedIn(false);
+      setSavingsTotal(0);
+      setActiveResult(null);
+      setLastScan(null);
+      setCycleStartMs(Date.now());
+    }
+  })();
+}, []);
+// -----------------------------------
+// Marketplace fetches (MODULAR)
+// -----------------------------------
+
+const fetchEbayResults = async (query, signal) => {
+  try {
+    const data: any = await apiFetch(
+      `/search/ebay?q=${encodeURIComponent(String(query || "").trim())}`,
+      {
+        method: "GET",
+        signal,
+      }
+    );
+
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.items)) return data.items;
+
+    return [];
+  } catch (e: any) {
+    if (e?.name === "AbortError") throw e;
+    console.error("eBay fetch failed", e);
+    return [];
+  }
+};
+
+// ✅ SerpAPI results (via your backend)
+
+const searchSerp = async (query, signal, variants: any[] = []) => {
+  try {
+    const data: any = await searchMarket(
+      {
+        query,
+        variants,
+      },
+      signal
+    );
+
+    const items = Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data)
+      ? data
+      : [];
+
+    const finalQuery =
+      typeof data?.finalQuery === "string" && data.finalQuery.trim()
+        ? data.finalQuery.trim()
+        : query;
+
+    return items.map((it, idx) => ({
+      ...it,
+      __fromMarketSearch: true,
+      __serverRank: idx,
+      __finalQuery: finalQuery,
+    }));
+  } catch (e: any) {
+    if (e?.name === "AbortError") throw e;
+    console.error("Serp fetch failed", e);
+    return [];
+  }
+};
+
+// ✅ Etsy disabled for now (stub)
+
+const searchEtsy = async (_query, _signal) => {
+  return [];
+};
+
+const mergeMarketResultSets = (...groups: any[][]) => {
+  const flat = groups.flat().filter(Boolean);
+
+  const seen = new Set<string>();
+  const out: any[] = [];
+
+  for (const it of flat) {
+    const key =
+      String(it?.url || "") ||
+      `${String(it?.title || "").toLowerCase().trim()}|${Number(
+        it?.totalPrice ?? it?.price ?? 0
+      )}|${String(it?.source || "")}`;
+
+    if (!key) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(it);
+  }
+
+  return out;
+};
+
+const buildEarlyPrefetchQuery = (q: string) => {
+  const s = normalizeTitle(String(q || ""));
+  if (!s) return "";
+
+  const hasOrange =
+    s.includes("orange") || s.includes("amber") || s.includes("yellow");
+  const hasBlue =
+    s.includes("blue light") ||
+    s.includes("computer") ||
+    s.includes("gaming");
+  const hasGlasses =
+    s.includes("glasses") || s.includes("eyewear") || s.includes("frames");
+
+  if (hasOrange && hasBlue) {
+    return "orange blue light glasses";
+  }
+
+  if (hasOrange && hasGlasses) {
+    return "orange lens glasses";
+  }
+
+  if (hasBlue && hasGlasses) {
+    return "blue light glasses";
+  }
+
+  if (s.includes("glasses") && s.includes("wrap")) {
+    return "wraparound glasses";
+  }
+
+  if (s.includes("glasses")) {
+    return "glasses";
+  }
+
+  return s;
+};
+
+const buildVisionVariants = (q: string) => {
+  const s = normalizeTitle(String(q || ""));
+  if (!s) return [];
+
+  const out = new Set<string>();
+
+  const family =
+    s.includes("sunglasses")
+      ? "sunglasses"
+      : s.includes("glasses") || s.includes("eyewear") || s.includes("frames")
+      ? "glasses"
+      : "glasses";
+
+  const color =
+    s.includes("orange")
+      ? "orange"
+      : s.includes("amber")
+      ? "amber"
+      : s.includes("yellow")
+      ? "yellow"
+      : s.includes("black")
+      ? "black"
+      : s.includes("brown")
+      ? "brown"
+      : "";
+
+  const lensType =
+    s.includes("blue light")
+      ? "blue light"
+      : s.includes("computer")
+      ? "computer"
+      : s.includes("gaming")
+      ? "gaming"
+      : s.includes("polarized")
+      ? "polarized"
+      : s.includes("uv400")
+      ? "uv400"
+      : s.includes("tinted")
+      ? "tinted"
+      : s.includes("lens")
+      ? "lens"
+      : color
+      ? "lens"
+      : "";
+
+  const shape =
+    s.includes("wraparound")
+      ? "wraparound"
+      : s.includes("wrap")
+      ? "wraparound"
+      : s.includes("shield")
+      ? "shield"
+      : s.includes("aviator")
+      ? "aviator"
+      : "";
+
+  const push = (...parts: string[]) => {
+    const value = parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    if (value) out.add(value);
+  };
+
+  push(s);
+  push(color, lensType, shape, family);
+  push(color, lensType, family);
+  push(color, shape, family);
+  push(lensType, shape, family);
+  push(color, family);
+  push(lensType, family);
+  push(shape, family);
+
+  if (color && lensType && shape) {
+    push(color, lensType, shape, "glasses");
+  }
+
+  if (color && shape) {
+    push(color, shape, "glasses");
+  }
+
+  if (color && lensType) {
+    push(color, lensType, "glasses");
+  }
+
+  if (lensType && shape) {
+    push(lensType, shape, "glasses");
+  }
+
+  if (color === "orange" || color === "amber" || color === "yellow") {
+    push(color, "lens", family);
+    push(color, "lens", "glasses");
+  }
+
+  if (lensType === "blue light" || lensType === "computer" || lensType === "gaming") {
+    push(color, "blue light", "glasses");
+    push("blue light", shape, "glasses");
+    push("computer", shape, "glasses");
+    push("gaming", shape, "glasses");
+  }
+
+  if (shape === "wraparound") {
+    push(color, "wraparound", "glasses");
+    push(lensType, "wraparound", "glasses");
+  }
+
+  return Array.from(out)
+    .map((x) => normalizeTitle(x))
+    .filter(Boolean)
+    .slice(0, 12);
+};
+
+const fetchVisionEnrich = async (query, mode = "item", context = "") => {
+  try {
+    const data: any = await apiFetch(`/vision/enrich`, {
+      method: "POST",
+      body: JSON.stringify({ query, mode, context }),
+    });
+
+    if (data?.ok) return data;
+    return null;
+  } catch (e) {
+    console.error("Vision enrich failed", e);
+    return null;
+  }
+};
+
+const buildCollectorSearchQuery = (visionQuery: string, enrich: any) => {
+  const maker = String(enrich?.collector?.maker || "").trim();
+  const model = String(enrich?.collector?.model || "").trim();
+  const era = String(enrich?.collector?.era || "").trim();
+
+  const pieces = [maker, model, visionQuery].filter(Boolean);
+
+  if (pieces.length >= 2) {
+    return normalizeTitle(pieces.join(" ")).trim();
+  }
+
+  if (maker && era) {
+    return normalizeTitle(`${maker} ${era} ${visionQuery}`).trim();
+  }
+
+  return "";
+};
+
+const shouldTriggerCollectorPass = (enrich: any) => {
+  const maker = String(enrich?.collector?.maker || "").trim();
+  const model = String(enrich?.collector?.model || "").trim();
+  const tells = Array.isArray(enrich?.collector?.tells)
+    ? enrich.collector.tells
+    : [];
+  const summary = String(enrich?.collector?.summary || "").trim();
+
+  return !!(maker || model || summary || tells.length >= 2);
+};
+
+const dedupeQueryTokens = (raw: any) => {
+  const toks = String(raw || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+
+  const out: string[] = [];
+  for (const t of toks) {
+    if (!out.includes(t)) out.push(t);
+  }
+  return out.join(" ").trim();
+};
+
+const cleanVisionQuery = (q: any) => {
+  if (!q) return "";
+
+  let s = dedupeQueryTokens(q);
+
+  const bad = ["object", "item", "product", "unknown", "thing"];
+  s = s
+    .split(" ")
+    .filter((w) => w.length > 2 && !bad.includes(w))
+    .join(" ")
+    .trim();
+
+  if (!s) return "";
+
+  if (s === "orange lens eyewear") s = "orange lens glasses";
+  if (s === "tinted eyewear") s = "tinted glasses";
+  if (s === "fashion eyewear") s = "fashion glasses";
+
+  const sig = extractProductSignature(s);
+
+  const hasOrange =
+    s.includes("orange") || s.includes("amber") || s.includes("yellow");
+  const hasBlue =
+    s.includes("blue light") ||
+    s.includes("computer") ||
+    s.includes("gaming") ||
+    s.includes("block blue");
+  const hasWrap = s.includes("wrap");
+  const hasOval = s.includes("oval");
+  const hasShield = s.includes("shield");
+  const hasAviator = s.includes("aviator");
+  const hasRound = s.includes("round");
+  const hasSquare = s.includes("square");
+  const hasRect = s.includes("rectangle") || s.includes("rectangular");
+  const hasBlack = s.includes("black");
+  const hasSun =
+    s.includes("sunglasses") ||
+    s.includes("sunwear") ||
+    s.includes("shades") ||
+    s.includes("shade") ||
+    s.includes("uv") ||
+    s.includes("polarized");
+  const hasLensWord =
+    s.includes("lens") ||
+    s.includes("lenses") ||
+    s.includes("tint") ||
+    s.includes("tinted");
+
+  const descriptors: string[] = [];
+  if (hasBlack) descriptors.push("black");
+  if (hasOval) descriptors.push("oval");
+  if (hasWrap) descriptors.push("wraparound");
+  if (hasShield) descriptors.push("shield");
+  if (hasAviator) descriptors.push("aviator");
+  if (hasRound) descriptors.push("round");
+  if (hasSquare) descriptors.push("square");
+  if (hasRect) descriptors.push("rectangle");
+
+  const prefix = descriptors.join(" ").trim();
+
+  // IMPORTANT:
+  // if we already have a branded query, preserve it instead of rewriting it
+  // into duplicated junk like "oakley glasses black glasses orange lenses"
+  if (sig.brand) {
+    return normalizeTitle(s);
+  }
+
+  if (hasOrange && hasBlue) {
+    const base = hasLensWord
+      ? "orange lens blue light glasses"
+      : "orange blue light glasses";
+    return normalizeTitle([prefix, base].filter(Boolean).join(" "));
+  }
+
+  if (hasOrange && hasSun) {
+    const base = hasLensWord ? "orange lens sunglasses" : "orange sunglasses";
+    return normalizeTitle([prefix, base].filter(Boolean).join(" "));
+  }
+
+  if (hasOrange) {
+    const base = hasLensWord ? "orange lens glasses" : "orange glasses";
+    return normalizeTitle([prefix, base].filter(Boolean).join(" "));
+  }
+
+  if (hasBlue) {
+    return normalizeTitle([prefix, "blue light glasses"].filter(Boolean).join(" "));
+  }
+
+  return normalizeTitle(s);
+};
+
+// ------------------------------------------------------------
+// PRODUCT SIGNATURE ENGINE
+// improves brand + model detection for search accuracy
+// ------------------------------------------------------------
+
+const extractProductSignature = (raw: string) => {
+  const q = normalizeTitle(String(raw || ""));
+  if (!q) {
+    return {
+      brand: "",
+      model: "",
+      core: "",
+    };
+  }
+
+  const brandList = [
+    "nike","adidas","gucci","prada","ray ban","ray-ban","oakley",
+    "apple","samsung","sony","canon","dell","hp","lenovo",
+    "jansport","north face","patagonia","supreme",
+    "louis vuitton","balenciaga","coach"
+  ];
+
+  let brand = "";
+
+  for (const b of brandList) {
+    if (q.includes(b)) {
+      brand = b;
+      break;
+    }
+  }
+
+  const tokens = q.split(" ");
+  let model = "";
+
+  for (const t of tokens) {
+    if (
+      /[a-z]*\d+[a-z\d]*/i.test(t) || // model numbers
+      (t.length >= 5 && !brandList.includes(t))
+    ) {
+      model = model ? model + " " + t : t;
+    }
+  }
+
+  return {
+    brand,
+    model,
+    core: q,
+  };
+};
+
+const buildVisionSeedVariants = (q: string) => {
+  const sig = extractProductSignature(q);
+
+  const base = normalizeTitle(sig.core);
+  if (!base) return [];
+
+  const variants = new Set<string>();
+
+  variants.add(base);
+
+  if (sig.brand && sig.model) {
+    variants.add(`${sig.brand} ${sig.model}`);
+    variants.add(`${sig.brand} ${base}`);
+  }
+
+  if (sig.model) {
+    variants.add(sig.model);
+  }
+
+  const tokens = base.split(" ");
+
+  if (tokens.length > 3) {
+    variants.add(tokens.slice(0, 3).join(" "));
+  }
+
+  variants.add(base.replace(/s$/, ""));
+  variants.add(base.replace(/es$/, ""));
+  variants.add(base + " ebay");
+  variants.add(base + " used");
+  variants.add(base + " marketplace");
+  variants.add(base + " listing");
+  variants.add(base + " ebay listing");
+  variants.add(base + " used ebay");
+  variants.add(base + " resale");
+  variants.add(base + " marketplace listing");
+  variants.add(base + " pre owned");
+
+
+
+return Array.from(variants)
+  .map((x) => {
+    const sig = extractProductSignature(x);
+
+    // preserve branded queries exactly
+    if (sig.brand || sig.model) {
+      return normalizeTitle(x);
+    }
+
+    // otherwise clean generic ones
+    return cleanVisionQuery(x);
+  })
+  .filter(Boolean)
+  .slice(0, 18);
+};
+
+// ── Feature 1: Persistent price cache ────────────────────────────────────────
+const PRICE_CACHE_STORE_KEY = "EVAN_PRICE_CACHE_V2";
+const PRICE_CACHE_TTL_MS    = 7 * 24 * 60 * 60 * 1000; // 7 days
+const PRICE_CACHE_MAX       = 250;
+
+function normalizeCacheKey(q: string): string {
+  return String(q || "").toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+async function writePriceCache(query: string, data: any): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(PRICE_CACHE_STORE_KEY);
+    const store: Record<string, any> = raw ? JSON.parse(raw) : {};
+    const key = normalizeCacheKey(query);
+    store[key] = { ...data, __cachedAt: Date.now(), __query: key };
+    // Evict oldest entries beyond cap
+    const entries = Object.entries(store);
+    if (entries.length > PRICE_CACHE_MAX) {
+      entries.sort((a: any, b: any) => (b[1].__cachedAt || 0) - (a[1].__cachedAt || 0));
+      const trimmed = Object.fromEntries(entries.slice(0, PRICE_CACHE_MAX));
+      await AsyncStorage.setItem(PRICE_CACHE_STORE_KEY, JSON.stringify(trimmed));
+    } else {
+      await AsyncStorage.setItem(PRICE_CACHE_STORE_KEY, JSON.stringify(store));
+    }
+  } catch { /* non-fatal */ }
+}
+
+async function readPriceCache(query: string): Promise<any | null> {
+  try {
+    const raw = await AsyncStorage.getItem(PRICE_CACHE_STORE_KEY);
+    if (!raw) return null;
+    const store: Record<string, any> = JSON.parse(raw);
+    const key = normalizeCacheKey(query);
+    const entry = store[key];
+    if (!entry) return null;
+    if (Date.now() - (entry.__cachedAt || 0) > PRICE_CACHE_TTL_MS) return null;
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+// offline banner state — updated by searchMarket when serving cached data
+const [offlineCachedAt, setOfflineCachedAt] = useState<number | null>(null);
+
+const searchMarket = async (
+  {
+    query,
+    variants = [],
+    scannedPrice = null,
+    visionConfidence = 0.5,
+    visionIdentity = null,
+    category = "",
+    sizeHint = null, // Feature 11
+  }: any,
+  signal?: AbortSignal
+) => {
+  try {
+
+const raw: any = await apiFetch(`/market/search`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+body: JSON.stringify({
+  query,
+  variants,
+  scannedPrice: scannedPrice || null,
+  visionConfidence: visionConfidence || 0,
+  visionIdentity: visionIdentity || null,
+  category,
+  sizeHint: sizeHint || null,
+  zipCode: zipCode || null,  // Feature 5: hyperlocal pricing
+}),
+  signal,
+});
+
+    const marketData = normalizeMarketResponse(raw);
+
+    console.log("MARKET RAW COUNTS →", {
+      market: marketData.items.length,
+    });
+
+    console.log(
+      "MARKET TOP TITLES →",
+      marketData.items.slice(0, 5).map((x: any) => ({
+        price: Number.isFinite(x?.totalPrice) ? x.totalPrice : x.price,
+        source: x.store,
+        title: x.title,
+      }))
+    );
+
+    // Feature 1: persist successful results so we can serve offline later
+    if (query && marketData?.items?.length) {
+      writePriceCache(query, marketData); // fire-and-forget
+    }
+    setOfflineCachedAt(null); // clear any previous offline banner
+
+    return marketData;
+  } catch (e: any) {
+    if (e?.name === "AbortError") throw e;
+    console.error("Market fetch failed", e);
+
+    // Feature 1: try to serve from persistent cache on network failure
+    if (query) {
+      try {
+        const cached = await readPriceCache(query);
+        if (cached && cached.items?.length) {
+          console.log("⚡ Serving from price cache for:", query);
+          setOfflineCachedAt(cached.__cachedAt || Date.now());
+          return { ...cached, __fromCache: true };
+        }
+      } catch { /* fall through */ }
+    }
+
+    return {
+      items: [],
+      best: null,
+      bestPrice: null,
+      totalMatches: 0,
+      finalQuery: query,
+      searchedQueries: [query, ...variants].slice(0, 6),
+      consensus: null,
+      prediction: null,
+      coach: null,
+      pulse: null,
+    };
+  }
+};
+
+  // ✅ keep free cycle reset fresh (runs occasionally)
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now();
+      if (now - cycleStartMs >= FREE_CYCLE_MS) {
+        setScansUsed(0);
+        setCycleStartMs(now);
+      }
+    }, 60000);
+  return () => clearInterval(t);
+  }, [cycleStartMs]);
+useEffect(() => {
+  if (!loadingResults) {
+    setShowRetryWhileLoading(false);
+    setLoadingTick(0);
+    retryReveal.setValue(0);
+    retryScale.setValue(0.96);
+    return;
+  }
+
+  const startedAt = Date.now();
+  setShowRetryWhileLoading(false);
+  retryReveal.setValue(0);
+  retryScale.setValue(0.96);
+  const retryTimer = setTimeout(() => {
+    setShowRetryWhileLoading(true);
+    hapticTick();
+    RNAnimated.parallel([
+      RNAnimated.timing(retryReveal, {
+        toValue: 1,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      RNAnimated.spring(retryScale, {
+        toValue: 1,
+        friction: 6,
+        tension: 80,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, RETRY_REVEAL_MS);
+  const tickInterval = setInterval(() => {
+    setLoadingTick(Date.now() - startedAt);
+  }, 420);
+  return () => {
+    clearTimeout(retryTimer);
+    clearInterval(tickInterval);
+  };
+}, [loadingResults]);
+
+// ✅ AI staged reveal → THEN result entry anim + soft haptic
+useEffect(() => {
+  if (!activeResult || loadingResults) return;
+
+  setAiRevealActive(true);
+  setAiRevealStep(0);
+
+  aiRevealOpacity.setValue(0);
+  aiRevealScale.setValue(0.98);
+
+  RNAnimated.parallel([
+    RNAnimated.timing(aiRevealOpacity, {
+      toValue: 1,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }),
+    RNAnimated.spring(aiRevealScale, {
+      toValue: 1,
+      friction: 7,
+      tension: 70,
+      useNativeDriver: true,
+    }),
+  ]).start();
+
+  const t1 = setTimeout(() => setAiRevealStep(1), 420);
+  const t2 = setTimeout(() => setAiRevealStep(2), 860);
+
+  const t3 = setTimeout(() => {
+    RNAnimated.timing(aiRevealOpacity, {
+      toValue: 0,
+      duration: 220,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: true,
+    }).start(() => {
+      setAiRevealActive(false);
+
+      // Now animate the hero card in
+      resultEntry.stopAnimation();
+      resultEntry.setValue(0);
+      resultDepth.setValue(0);
+
+RNAnimated.parallel([
+  RNAnimated.timing(resultEntry, {
+    toValue: 1,
+    duration: 420,
+    easing: Easing.out(Easing.cubic),
+    useNativeDriver: true,
+  }),
+  RNAnimated.spring(resultDepth, {
+    toValue: 1,
+    friction: 7,
+    tension: 80,
+    useNativeDriver: true,
+  }),
+]).start();
+
+      // tiny “result reveal” haptic
+      hapticTick();
+    });
+  }, 1280);
+
+  return () => {
+    clearTimeout(t1);
+    clearTimeout(t2);
+    clearTimeout(t3);
+  };
+}, [activeResult, loadingResults, aiRevealOpacity, aiRevealScale, resultEntry, resultDepth]);
+
+  // Heal old saved state
+  useEffect(() => {
+    if (isPro && !isSignedIn) setIsSignedIn(true);
+  }, [isPro, isSignedIn]);
+  // Persist whenever these change
+  useEffect(() => {
+    (async () => {
+try {
+  const payload = {
+    scansUsed,
+    cycleStartMs,
+    isPro,
+    history,
+    watchlist,
+    isSignedIn,
+    savingsTotal,
+    activeResult,
+    lastScan,
+  };
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+} catch (e) {}
+    })();
+  }, [
+    scansUsed,
+    cycleStartMs,
+    isPro,
+    history,
+    watchlist,
+    isSignedIn,
+    savingsTotal,
+    plFlips,
+    activeResult,
+    lastScan,
+  ]);
+  // Instruction sway loop
+  useEffect(() => {
+    const loop = RNAnimated.loop(
+      RNAnimated.sequence([
+        RNAnimated.timing(sway, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        RNAnimated.timing(sway, {
+          toValue: 0,
+          duration: 1400,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [sway]);
+  const swayRotate = sway.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["-2deg", "2deg"],
+  });
+  
+
+// ✅ HUD RECOVERY: make sure camera HUD always reappears after loading/tab switches
+useEffect(() => {
+  const shouldShowHud =
+    tab === "camera" && !photo && !loadingResults && !showSplash;
+
+  try {
+    topHudOpacity?.stopAnimation?.();
+    topHudY?.stopAnimation?.();
+  } catch {}
+
+  if (shouldShowHud) {
+    try { topHudOpacity?.setValue?.(1); } catch {}
+    try { topHudY?.setValue?.(0); } catch {}
+  } else {
+    try { topHudOpacity?.setValue?.(0); } catch {}
+    try { topHudY?.setValue?.(-10); } catch {}
+  }
+}, [tab, photo, loadingResults, showSplash]);
+
+// ✅ Tab transition safety: opacity + pointerEvents must never desync
+const [tabInteractable, setTabInteractable] = useState(true);
+const tabFailSafeRef = useRef<any>(null);
+
+// ✅ full-screen transition mask to prevent split-second tab overlay/bleed
+const [tabMaskVisible, setTabMaskVisible] = useState(false);
+const tabMaskOpacity = useRef(new RNAnimated.Value(0)).current;
+
+// ✅ Smooth tab switch (NO ghost overlay, NO double-render blink, NO scroll memory)
+
+const goTab = (next) => {
+  if (!next || next === tab) return;
+
+  // ✅ HARD throttle: ignores tab spam (prevents animation stacking + lag)
+  const now = Date.now();
+  if (now - goTabLastRef.current < 220) return;
+  goTabLastRef.current = now;
+
+  // ✅ HARD cooldown: ignore spam presses entirely (NO queue spam)
+  const nowMs = Date.now();
+  if (nowMs - lastTabPressRef.current < TAB_COOLDOWN_MS) return;
+  lastTabPressRef.current = nowMs;
+
+  // ✅ If switching already, allow ONLY ONE pending (latest wins)
+  if (tabSwitchingRef.current) {
+    if (pendingTabRef.current !== next) pendingTabRef.current = next;
+    return;
+  }
+
+  closeAllOverlays?.();
+  hapticSelect?.();
+  Keyboard.dismiss?.();
+
+  // ✅ hard-close transient overlays that can visually stack during tab switches
+  try { setResultModalOpen(false); } catch {}
+  try { setSeeMoreOpen(false); } catch {}
+  try { setHelpOpen(false); } catch {}
+  try { setHaggleOpen(false); } catch {}
+  try { setZoomUri(null); } catch {}
+  try { setPreviewImageUri(null); } catch {}
+  try { setProfitCalcOpen(false); } catch {}
+  try { setCloudImportOpen(false); } catch {}
+  try { setInventoryOpen(false); } catch {}
+  try { setBatchOpen(false); } catch {}
+
+  tabSwitchingRef.current = true;
+  pendingTabRef.current = next;
+
+  // ✅ during transition, NO tab should be touchable until fade-in completes
+  setTabInteractable(false);
+
+  // ✅ full-screen mask hides split-second tab overlap
+  setTabMaskVisible(true);
+  try { tabMaskOpacity.stopAnimation?.(); } catch {}
+  try { tabMaskOpacity.setValue?.(0); } catch {}
+  RNAnimated.timing(tabMaskOpacity, {
+    toValue: 1,
+    duration: 90,
+    easing: Easing.out(Easing.cubic),
+    useNativeDriver: true,
+  }).start();
+
+  // ✅ FAILSAFE: if an animation callback never fires, recover anyway
+  try {
+    if (tabFailSafeRef.current) clearTimeout(tabFailSafeRef.current);
+  } catch {}
+  tabFailSafeRef.current = setTimeout(() => {
+    try { tabFade.stopAnimation?.(); } catch {}
+    try { tabFade.setValue?.(1); } catch {}
+
+    tabSwitchingRef.current = false;
+    setTabInteractable(true);
+
+    try {
+      RNAnimated.timing(tabMaskOpacity, {
+        toValue: 0,
+        duration: 110,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => {
+        setTabMaskVisible(false);
+      });
+    } catch {
+      setTabMaskVisible(false);
+    }
+
+    // run any queued request (latest wins)
+    if (pendingTabRef.current) {
+      const queued = pendingTabRef.current;
+      pendingTabRef.current = null;
+      goTab(queued);
+    }
+  }, 700);
+
+  // ✅ Kill any running fade immediately
+  try { tabFade.stopAnimation?.(); } catch {}
+  try { tabFade.setValue?.(1); } catch {}
+
+  // 1) Fade out current
+  RNAnimated.timing(tabFade, {
+    toValue: 0,
+    duration: 110,
+    easing: Easing.out(Easing.cubic),
+    useNativeDriver: true,
+  }).start(() => {
+    const to = pendingTabRef.current || next;
+    pendingTabRef.current = null;
+
+    // ✅ keep barcode from causing camera reconfig mid-switch
+    try {
+      setBarcodeMode(false);
+      setLastBarcode(null);
+      barcodeLockRef.current = false;
+    } catch {}
+
+    // 2) lock opacity at 0 before switching
+    try { tabFade.setValue?.(0); } catch {}
+
+    // 3) switch tab
+    setTab(to);
+
+    // Feature 9: load relist suggestions when navigating to watchlist
+    if (to === "watchlist") {
+      setTimeout(() => loadRelistSuggestions(), 800);
+      setTimeout(() => loadRadar(), 1200);
+    }
+
+    // 4) reset scroll reliably
+    const resetScroll = () => {
+      try {
+        if (to === "profile") profileScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
+        if (to === "history") historyScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
+        if (to === "watchlist") watchlistScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
+      } catch {}
+    };
+
+    requestAnimationFrame(() => {
+      resetScroll();
+      requestAnimationFrame(resetScroll);
+      setTimeout(resetScroll, 40);
+    });
+
+    // 5) fade in new
+    RNAnimated.timing(tabFade, {
+      toValue: 1,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(() => {
+      try {
+        if (tabFailSafeRef.current) clearTimeout(tabFailSafeRef.current);
+      } catch {}
+      tabFailSafeRef.current = null;
+
+      tabSwitchingRef.current = false;
+      setTabInteractable(true);
+
+      RNAnimated.timing(tabMaskOpacity, {
+        toValue: 0,
+        duration: 110,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => {
+        setTabMaskVisible(false);
+      });
+
+      // ✅ ONLY ONE queued switch max
+      if (pendingTabRef.current) {
+        const queued = pendingTabRef.current;
+        pendingTabRef.current = null;
+        goTab(queued);
+      }
+    });
+  });
+};
+
+  // Camera roll picker
+  const pickFromRoll = async () => {
+    if (isFreeLimitReached) {
+requestAnimationFrame(() => {
+  setShowPaywall(true);
+});
+      return;
+    }
+    hapticSelect();
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+const result = await ImagePicker.launchImageLibraryAsync({
+  mediaTypes: ["images"] as any,
+  quality: 0.92,
+  allowsEditing: true,
+  aspect: [4, 5],
+});
+    if (!result.canceled && result.assets && result.assets[0]?.uri) {
+      setPhoto({ uri: result.assets[0].uri });
+      animateUseRetryIn();
+    }
+  };
+const flipCamera = () => {
+  hapticSelect();
+  // ✅ no flash mask, no delay = way less flicker
+  setCameraFacing((prev) => (prev === "back" ? "front" : "back"));
+  // keep HUD sane
+  hideZoomHud();
+  // optional: kill torch if switching away from back
+  setTorchOn(false);
+};
+  // Snap ring burst (not a flash)
+  const playSnapRing = () => {
+    ringScale.setValue(0.6);
+    ringOpacity.setValue(0);
+    RNAnimated.parallel([
+      RNAnimated.timing(ringOpacity, {
+        toValue: 1,
+        duration: 70,
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(ringScale, {
+        toValue: 1.35,
+        duration: 220,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(ringOpacity, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+// ✅ Camera UI GROUP reveal — ensures HUD + buttons appear together (no stagger)
+const cameraUiOpacity = useRef(new RNAnimated.Value(0)).current;
+
+useEffect(() => {
+  const shouldShow =
+    tab === "camera" &&
+    !!permission?.granted &&
+    !showSplash &&
+    !loadingResults &&
+    !photo &&
+    cameraReady;
+
+  try {
+    cameraUiOpacity.stopAnimation?.();
+  } catch {}
+
+  if (shouldShow) {
+    cameraUiOpacity.setValue(0);
+    RNAnimated.timing(cameraUiOpacity, {
+      toValue: 1,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  } else {
+    cameraUiOpacity.setValue(0);
+  }
+}, [tab, permission?.granted, showSplash, loadingResults, photo, cameraReady, cameraUiOpacity]);
+  const animateUseRetryIn = () => {
+    buttonsY.setValue(90);
+    buttonsOpacity.setValue(0);
+    RNAnimated.parallel([
+      RNAnimated.timing(buttonsY, {
+        toValue: 0,
+        duration: 520,
+        easing: Easing.out(Easing.exp),
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(buttonsOpacity, {
+        toValue: 1,
+        duration: 380,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+  const reset = () => {
+    setRefinePhotos([]);
+    scanLockRef.current = false;
+    hapticSelect();
+    setPhoto(null);
+    setScanPriceInput("");
+    setPriceSubmitted(false);
+    Keyboard.dismiss();
+  };
+  const getLoadingCopy = () => {
+    const ms = loadingTick;
+    if (ms < 2200) return "Finding the cheapest match";
+    if (ms < 6200) return "Checking more listings";
+    return "Still working — marketplaces can be slow";
+  };
+// ✅ Cancel scan: HARD cancel (no ghost updates)
+const cancelActiveScan = () => {
+  scanLockRef.current = false;
+  hapticSelect();
+  try {
+    scanAbortRef.current?.abort?.();
+  } catch {}
+  scanAbortRef.current = null;
+  // invalidate pending scan writes
+  scanTokenRef.current = scanTokenRef.current + 1;
+  setShowRetryWhileLoading(false);
+  setUiError(null);
+  stopLoadingSafely();
+  setSavedToast("Canceled");
+  goTab("camera");
+};
+
+
+const tryDecodeMaybe = (value) => {
+  try {
+    return decodeURIComponent(String(value || "").trim());
+  } catch {
+    return String(value || "").trim();
+  }
+};
+
+const unwrapGoogleishUrl = (input) => {
+  const raw = tryDecodeMaybe(input);
+  if (!raw || !/^https?:\/\//i.test(raw)) return "";
+
+  try {
+    const u = new URL(raw);
+    const host = String(u.hostname || "").toLowerCase();
+
+    if (host.includes("google.")) {
+      const redirected =
+        u.searchParams.get("url") ||
+        u.searchParams.get("q") ||
+        u.searchParams.get("adurl");
+
+      if (redirected && /^https?:\/\//i.test(redirected)) {
+        return tryDecodeMaybe(redirected);
+      }
+    }
+
+    return raw;
+  } catch {
+    return raw;
+  }
+};
+
+const isGoogleSearchResultsUrl = (input) => {
+  try {
+    const u = new URL(String(input || ""));
+    const host = String(u.hostname || "").toLowerCase();
+    const path = String(u.pathname || "").toLowerCase();
+    return host.includes("google.") && path === "/search";
+  } catch {
+    return false;
+  }
+};
+
+const isGoogleProductPageUrl = (input) => {
+  try {
+    const u = new URL(String(input || ""));
+    const host = String(u.hostname || "").toLowerCase();
+    const path = String(u.pathname || "").toLowerCase();
+
+    if (!host.includes("google.")) return false;
+
+    return (
+      path.includes("/shopping/product/") ||
+      path.startsWith("/shopping/product") ||
+      path.startsWith("/aclk")
+    );
+  } catch {
+    return false;
+  }
+};
+
+const resolveBestListingUrl = (item, title) => {
+  const candidates = [
+    item?.merchant_link,
+    item?.offer_page_url,
+    item?.offer_link,
+    item?.product_page_url,
+    item?.product_url,
+    item?.itemWebUrl,
+    item?.canonicalUrl,
+    item?.permalink,
+    item?.buyLink,
+    item?.href,
+    item?.product_link,
+    item?.link,
+    item?.url,
+    item?.listingUrl,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const clean = unwrapGoogleishUrl(candidate);
+    if (!clean) continue;
+
+    if (isGoogleProductPageUrl(clean)) return clean;
+    if (!isGoogleSearchResultsUrl(clean)) return clean;
+  }
+
+  for (const candidate of candidates) {
+    const raw = String(candidate || "").trim();
+    if (!raw) continue;
+    if (isGoogleProductPageUrl(raw)) return raw;
+  }
+
+  return `https://www.google.com/search?tbm=shop&q=${encodeURIComponent(
+    String(title || "").trim()
+  )}`;
+};
+
+const normalizeListings = (raw, market, fallbackSource, query) => {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .map((it) => {
+      const title =
+        it?.title ||
+        it?.name ||
+        it?.productTitle ||
+        it?.snippet ||
+        it?.product_title ||
+        it?.itemTitle ||
+        it?.listingTitle ||
+        it?.item_name ||
+        query;
+
+      const rawPrice =
+        it?.price ??
+        it?.extracted_price ??
+        it?.price_value ??
+        it?.value ??
+        it?.salePrice ??
+        it?.current_price ??
+        it?.amount ??
+        it?.listingPrice ??
+        null;
+
+      const safeUrl = resolveBestListingUrl(it, title);
+      const linkVerified =
+        !!safeUrl && (!isGoogleSearchResultsUrl(safeUrl) || isGoogleProductPageUrl(safeUrl));
+
+      const image =
+        it?.image ||
+        it?.thumbnail ||
+        it?.thumbnail_url ||
+        it?.imageUrl ||
+        it?.img ||
+        it?.image_url ||
+        it?.picture ||
+        (Array.isArray(it?.photos) ? it.photos[0] : null) ||
+        null;
+
+      const rating =
+        it?.rating ??
+        it?.stars ??
+        it?.review_rating ??
+        it?.reviews_rating ??
+        it?.reviews ??
+        null;
+
+      const source = it?.source || it?.market || it?.marketplace || fallbackSource;
+
+      const backendTotal = toNumber(
+        it?.totalPrice ??
+          it?.total ??
+          it?.allInPrice ??
+          it?.finalPrice ??
+          it?.price_total
+      );
+
+      const numericPriceRaw = toNumber(rawPrice);
+      const numericPrice = Number.isFinite(numericPriceRaw)
+        ? numericPriceRaw
+        : Number.isFinite(backendTotal)
+        ? backendTotal
+        : null;
+
+      const ship =
+        toNumber(
+          it?.shipping ??
+            it?.shippingCost ??
+            it?.delivery ??
+            it?.shipping_price ??
+            it?.shipping_amount ??
+            0
+        ) || 0;
+
+      const totalPrice = Number.isFinite(backendTotal)
+        ? Math.round(backendTotal * 100) / 100
+        : Number.isFinite(numericPrice)
+        ? Math.round((numericPrice + ship) * 100) / 100
+        : null;
+
+      return {
+        ...it,
+        title,
+        price: rawPrice,
+        url: safeUrl,
+        image,
+        rating,
+        source,
+        __market: market,
+        __linkVerified: linkVerified,
+        __fromMarketSearch: Boolean(
+          it?.__fromMarketSearch ?? it?.fromMarketSearch ?? false
+        ),
+        __serverRank: Number.isFinite(it?.__serverRank ?? it?.serverRank)
+          ? Number(it?.__serverRank ?? it?.serverRank)
+          : null,
+        numericPrice: Number.isFinite(numericPrice) ? Number(numericPrice) : null,
+        shipping: ship,
+        totalPrice,
+      };
+    })
+    .filter((x) => x?.title && Number.isFinite(x?.totalPrice));
+};
+
+const showSavedToast = (amount) => {
+  if (!Number.isFinite(amount) || amount <= 0) return;
+  const msg = `saved ${money(amount)}`;
+  setSavedToast(msg);
+  toastAnim.setValue(0);
+  RNAnimated.sequence([
+    RNAnimated.spring(toastAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      friction: 7,
+      tension: 90,
+    }),
+    RNAnimated.delay(900),
+    RNAnimated.timing(toastAnim, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    }),
+  ]).start(() => setSavedToast(null));
+};
+const addToWatchlist = (card) => {
+  const q = card?.visionQuery || card?.itemName;
+  const best = toNumber(card?.price);
+  if (!q || !Number.isFinite(best)) return;
+  setWatchlist((prev) => {
+if (
+  prev.some(
+    (x) =>
+      String(x.query || "").trim().toLowerCase() ===
+      String(q || "").trim().toLowerCase()
+  )
+) return prev;
+    return [
+      {
+        id: `${Date.now()}`,
+        query: q,
+        lastBest: best,
+        lastCheckedMs: Date.now(),
+        addedAtMs: Date.now(),
+        history: [{ ts: Date.now(), best }],
+        seenDrop: true,
+      },
+      ...prev,
+    ];
+  });
+  setSavedToast("Added to watchlist");
+};
+
+const removeFromWatchlist = (card) => {
+  const q = card?.visionQuery || card?.itemName || card?.query;
+  if (!q) return;
+  setWatchlist((prev) =>
+    prev.filter(
+      (x) =>
+        String(x.query || "").trim().toLowerCase() !==
+        String(q || "").trim().toLowerCase(),
+    ),
+  );
+};
+
+const toggleWatchlist = (card) => {
+  const q = card?.visionQuery || card?.itemName || card?.query;
+  if (!q) return;
+  const exists = (watchlistRef.current || []).some(
+    (x) => String(x.query || "").trim().toLowerCase() === String(q || "").trim().toLowerCase(),
+  );
+  if (exists) removeFromWatchlist(card);
+  else addToWatchlist(card);
+};
+
+const openHistoryPreview = (uri) => {
+  setPreviewImageUri(uri);
+  previewAnim.setValue(0);
+  RNAnimated.timing(previewAnim, {
+    toValue: 1,
+    duration: 220,
+    useNativeDriver: true,
+  }).start();
+};
+const closeHistoryPreview = () => {
+  RNAnimated.timing(previewAnim, {
+    toValue: 0,
+    duration: 180,
+    useNativeDriver: true,
+  }).start(() => {
+    setPreviewImageUri(null);
+  });
+};
+
+const [uiError, setUiError] = useState(null);
+const showUiError = (title, msg) => {
+  setUiError({ title, msg });
+};
+
+const [scanStage, setScanStage] = useState<"idle" | "vision" | "market" | "analysis" | "collector">("idle");
+const [scanStageMeta, setScanStageMeta] = useState("");
+
+// ===============================
+// PRODUCTION SAFE FETCH WRAPPER
+// ===============================
+const fetchWithTimeout = async (
+  url: string,
+  options: any = {},
+  timeout = 15000
+) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const data: any = await apiFetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+    });
+
+    clearTimeout(id);
+    return data;
+  } catch (err: any) {
+    clearTimeout(id);
+
+    if (err?.name === "AbortError") {
+      throw new Error("API_TIMEOUT");
+    }
+
+    throw err;
+  }
+};
+
+// ===============================
+// EXPONENTIAL RETRY WRAPPER
+// ===============================
+const safeApiCall = async (fn: () => Promise<any>, retries = 2) => {
+  let attempt = 0;
+  while (attempt <= retries) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === retries) throw err;
+      const delay = 600 * Math.pow(2, attempt);
+      await new Promise((res) => setTimeout(res, delay));
+      attempt++;
+    }
+  }
+};
+// ===============================
+// CLIENT RATE LIMIT PROTECTION
+// ===============================
+const lastScanTimestampRef = useRef<number>(0);
+const MIN_SCAN_INTERVAL = 2500; // 2.5 seconds hard minimum
+const canTriggerScan = () => {
+  const now = Date.now();
+  if (now - lastScanTimestampRef.current < MIN_SCAN_INTERVAL) {
+    return false;
+  }
+  lastScanTimestampRef.current = now;
+  return true;
+};
+
+const stopLoadingSafely = (reqId?: number) => {
+  if (typeof reqId === "number" && !isReqAlive(reqId)) return;
+  if (!isMountedRef.current) return;
+
+  scanLockRef.current = false;
+
+  setLoadingResults(false);
+  setShowRetryWhileLoading(false);
+
+  setScanStage("idle");
+  setScanStageMeta("");
+
+  // clear loading visuals
+  setLoadingPhotoUri(null);
+
+  try { setScanAnimActive(false); } catch {}
+  try { setCinematicFreeze(false); } catch {}
+  try { setFreezeFrameUri(null); } catch {}
+
+  try { freezeOpacity?.setValue?.(0); } catch {}
+  try { vignetteOpacity?.setValue?.(0); } catch {}
+
+  try { retryReveal.setValue(0); } catch {}
+};
+
+const shippingCost = (item) => {
+  if (typeof item.shipping === "number") return item.shipping;
+  if (typeof item.shippingCost === "number") return item.shippingCost;
+  return 0;
+};
+const conditionWeight = (condition) => {
+  if (!condition) return 0.6;
+  const c = condition.toLowerCase();
+  if (c.includes("new")) return 0;
+  if (c.includes("like new")) return 0.1;
+  if (c.includes("excellent")) return 0.2;
+  if (c.includes("good")) return 0.4;
+  return 0.6;
+};
+// ===============================
+// MAIN SCAN PIPELINE
+// ===============================
+
+const trackEvent = (event: string, payload: any = {}) => {
+  if (!userId) return;
+  fetch(`${resolvedApiBase}/analytics/event`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId,
+      event,
+      payload,
+      ts: Date.now(),
+    }),
+  }).catch(() => {});
+};
+
+
+const runScan = async ({
+  photoUri,
+  scannedPrice,
+  cheapestAlt = null,
+  itemHint = null,
+  sizeHint = null,
+  countScan,
+  forcedMode = null,
+  internalRetry = false,
+}: {
+  photoUri: any;
+  scannedPrice: any;
+  cheapestAlt?: number | null;
+  itemHint?: string | null;
+  sizeHint?: string | null;
+  countScan: any;
+  forcedMode?: any;
+  internalRetry?: boolean;
+}) => {
+  if (!internalRetry && !canTriggerScan()) {
+    return;
+  }
+
+  const reqId = nextScanReqId();
+  activeScanReqIdRef.current = reqId;
+
+  const effectiveScanMode = forcedMode || scanMode;
+
+if (!isPro) {
+  const paidUsed = Number(scansUsed || 0);
+  const bank = Number(bonusScans || 0);
+  const effectiveUsed = Math.max(0, paidUsed - bank);
+
+  if (effectiveUsed >= FREE_SCAN_LIMIT_SAFE) {
+    requestAnimationFrame(() => {
+      setShowPaywall(true);
+    });
+    return;
+  }
+
+  // consume a bonus scan only when a scan is actually counted
+  // (we decrement later when we confirm countScan)
+}
+
+  try {
+    if (scanAbortRef.current) scanAbortRef.current.abort();
+} catch (e) {}
+
+  const controller = new AbortController();
+  scanAbortRef.current = controller;
+
+const startedAt = Date.now();
+
+const token = (scanTokenRef.current += 1);
+const hardStopToken = token;
+
+const isLiveScan = () =>
+  isMountedRef.current &&
+  activeScanReqIdRef.current === reqId &&
+  scanTokenRef.current === token;
+
+const softRetryTimer = setTimeout(() => {
+  if (!isLiveScan() || hardStopToken !== scanTokenRef.current) return;
+
+  try {
+    setShowRetryWhileLoading(true);
+  } catch {}
+
+  console.log("RUNSCAN WATCHDOG → keeping scan alive", {
+    hardStopMs: HARD_SCAN_ABORT_MS,
+    reqId,
+  });
+}, SOFT_SCAN_UI_MS);
+
+const hardStopTimer = setTimeout(() => {
+  if (!isLiveScan() || hardStopToken !== scanTokenRef.current) return;
+
+  console.warn("RUNSCAN HARD ABORT", {
+    reqId,
+    ms: HARD_SCAN_ABORT_MS,
+  });
+
+  try {
+    controller.abort();
+  } catch {}
+
+  try {
+    setShowRetryWhileLoading(true);
+  } catch {}
+}, HARD_SCAN_ABORT_MS);
+
+  scanSessionRef.current = {
+    photoUri,
+    scannedPrice,
+    cheapestAlt: cheapestAlt ?? null,
+    counted: !!countScan,
+    startedAt: Date.now(),
+    visionRetries: 0,
+  };
+
+  setUiError(null);
+  setActiveResult(null);
+  setResults([]);
+  setSeeMoreListings([]);
+  setLastScan(null);
+  setPriceChangeBanner(null);
+  setShowRetryWhileLoading(false);
+  setLoadingPhotoUri(photoUri);
+  const sessionId = nextScanSession();
+
+  setLoadingResults(true);
+  setResultModalOpen(false);
+  setScanStage("vision");
+  setScanStageMeta("Identifying item...");
+
+// ✅ go to results immediately, but ONLY after loading state is already on
+requestAnimationFrame(() => {
+  if (tabRef?.current !== "results") {
+    goTab("results");
+  }
+});
+
+  if (batchMode) {
+    setBatchCount((c) => c + 1);
+    // ✅ NEVER auto-jump tabs mid-scan.
+    // Batch queue should load the next item manually after the current result is done.
+  }
+  try {
+
+const visionTimeout = withTimeout(7000, controller);
+
+// LOCK TO THE CURRENT PHOTO ONLY
+// This removes stale refine-photo bleed and wrong-item query contamination.
+const photosToAnalyze = [photoUri];
+const targets = photosToAnalyze.slice(0, 1);
+
+setScanStage("vision");
+setScanStageMeta("Identifying item...");
+
+const visionResults = await Promise.all(
+  targets.map(async (uri) => {
+    const v = await analyzePhotoToQuery(
+      uri,
+      visionTimeout.signal,
+      Number.isFinite(scannedPrice) && scannedPrice > 0 ? scannedPrice : null,
+      Number.isFinite(cheapestAlt) && (cheapestAlt as number) > 0 ? cheapestAlt : null,
+      itemHint || null,
+    );
+    return v;
+  })
+);
+
+// ✅ CRITICAL FIX:
+// cancel the vision-only timeout immediately after vision returns.
+// otherwise the shared controller can abort the scan during /market/search.
+try {
+  visionTimeout.cancel?.();
+} catch {}
+
+const queries: string[] = [];
+const confidences: number[] = [];
+const identityCandidates: any[] = [];
+
+for (const v of visionResults) {
+  if (v?.query) {
+    queries.push(String(v.query));
+    confidences.push(Number(v.confidence || 0));
+  }
+
+  if (v?.visionIdentity && typeof v.visionIdentity === "object") {
+    identityCandidates.push(v.visionIdentity);
+  }
+}
+
+const queryCounts: Record<string, number> = {};
+queries.forEach((q) => {
+  const cleaned = String(q || "").trim();
+  if (!cleaned) return;
+  queryCounts[cleaned] = (queryCounts[cleaned] || 0) + 1;
+});
+
+const rawVisionQuery =
+  Object.entries(queryCounts).sort(
+    (a, b) => Number(b[1] ?? 0) - Number(a[1] ?? 0)
+  )[0]?.[0] || null;
+
+const visionIdentity =
+  identityCandidates.find((x) => x?.exactQuery) ||
+  identityCandidates.find((x) => Array.isArray(x?.searchQueries) && x.searchQueries.length) ||
+  identityCandidates[0] ||
+  null;
+
+let visionQuery =
+  typeof rawVisionQuery === "string"
+    ? rawVisionQuery.toLowerCase().replace(/\s+/g, " ").trim()
+    : "";
+
+if (visionIdentity?.exactQuery) {
+  visionQuery = cleanVisionQuery(visionIdentity.exactQuery);
+} else if (
+  (!visionQuery || !String(visionQuery).trim()) &&
+  Array.isArray(visionIdentity?.searchQueries) &&
+  visionIdentity.searchQueries.length
+) {
+  visionQuery = cleanVisionQuery(visionIdentity.searchQueries[0]);
+}
+
+const mergedVisionVariants: string[] = [];
+
+for (const v of visionResults) {
+  if (Array.isArray(v?.variants)) {
+    mergedVisionVariants.push(...v.variants);
+  }
+}
+
+if (Array.isArray(visionIdentity?.searchQueries)) {
+  mergedVisionVariants.push(...visionIdentity.searchQueries);
+}
+
+if (visionIdentity?.exactQuery) {
+  mergedVisionVariants.push(visionIdentity.exactQuery);
+}
+
+const normalizedVisionQuery = cleanVisionQuery(visionQuery);
+
+const identityFirstVariants = [
+  ...new Set(
+    mergedVisionVariants
+      .map((x) => cleanVisionQuery(x))
+      .filter(Boolean)
+  ),
+].filter((x) => x !== normalizedVisionQuery);
+
+const fallbackVisionSeed = normalizedVisionQuery || visionQuery || "";
+
+const fallbackVisionVariants =
+  identityFirstVariants.length >= 3 || !fallbackVisionSeed
+    ? []
+    : [
+        ...new Set(
+          buildVisionVariants(String(fallbackVisionSeed || ""))
+        ),
+      ]
+        .map((x) => cleanVisionQuery(x))
+        .filter(Boolean);
+
+const visionVariants = [
+  ...new Set([...identityFirstVariants, ...fallbackVisionVariants]),
+]
+  .filter((x) => {
+    const q = cleanVisionQuery(x);
+    if (!q) return false;
+    if (q === normalizedVisionQuery) return false;
+    if (q === "glasses" || q === "eyewear") return false;
+
+    if (
+      q === "orange glasses" ||
+      q === "wrap glasses" ||
+      q === "lens glasses" ||
+      q === "orange wrap glasses" ||
+      q === "lens wrap glasses"
+    ) {
+      return false;
+    }
+
+    return true;
+  })
+  .slice(0, 8);
+
+console.log("RUNSCAN VISION VARIANTS →", visionVariants);
+
+const rawVisionConfidence =
+  confidences.length > 0
+    ? confidences.reduce((a, b) => a + b, 0) / confidences.length
+    : 0;
+const visionConfidence = smoothConfidence(rawVisionConfidence);
+
+console.log("RUNSCAN VISION QUERY →", visionQuery);
+console.log("RUNSCAN VISION CONFIDENCE →", visionConfidence);	
+
+if (!visionQuery || !String(visionQuery).trim()) {
+  if (
+    typeof scanSessionRef.current !== "object" ||
+    scanSessionRef.current === null
+  ) {
+    scanSessionRef.current = {};
+  }
+
+  const retries = Number(scanSessionRef.current.visionRetries || 0);
+
+  if (retries < MAX_VISION_RETRIES) {
+    scanSessionRef.current.visionRetries = retries + 1;
+    clearTimeout(softRetryTimer);
+    clearTimeout(hardStopTimer);
+    return runScan({
+      photoUri,
+      scannedPrice,
+      cheapestAlt,
+      countScan,
+      forcedMode: forcedMode || scanMode,
+      internalRetry: true,
+    });
+  }
+
+  setResults([]);
+  setActiveResult(null);
+
+  setLastScan({
+    kind: "no-query",
+    confidence: visionConfidence,
+    query: null,
+  });
+
+  showUiError(
+    "Vision couldn’t name the item",
+    "The server responded, but it did not return a usable marketplace search query. Try retaking the photo closer, with the item filling more of the frame."
+  );
+
+  stopLoadingSafely(reqId);
+  goTab("results");
+  return;
+}
+
+if (visionConfidence < CONFIDENCE_THRESHOLD) {
+  setSavedToast("Low confidence — still searching…");
+}
+
+
+if (visionConfidence < CONFIDENCE_THRESHOLD) {
+  // ✅ still continue (don’t hard-fail)
+  setSavedToast("Low confidence — still searching…");
+}
+    const photoKey = await getImageCacheKey(photoUri);
+    const cacheKey = `${effectiveScanMode}|${photoKey}`;
+
+if (scanCacheRef.current.has(cacheKey)) {
+  const cached = scanCacheRef.current.get(cacheKey);
+
+  const cacheFresh =
+    Boolean(cached?.timestamp) &&
+    Date.now() - cached.timestamp <= CACHE_TTL_MS;
+
+  const cachedCard = cached?.card || null;
+  const cachedTop3 = Array.isArray(cached?.results) ? cached.results : [];
+
+  // ✅ Only trust cache if it actually contains a real result card + result rows.
+  const cacheHasUsableResult =
+    !!cachedCard && Array.isArray(cachedTop3) && cachedTop3.length > 0;
+
+  if (cacheFresh && cacheHasUsableResult) {
+    const cachedCheapest = toNumber(
+      cachedCard?.price ??
+        cachedTop3?.[0]?.numericTotal ??
+        cachedTop3?.[0]?.totalPrice ??
+        cachedTop3?.[0]?.price
+    );
+
+    const allowCached =
+      !Number.isFinite(scannedPrice) ||
+      !Number.isFinite(cachedCheapest) ||
+      cachedCheapest <= scannedPrice + 0.01;
+
+    if (allowCached) {
+      if (!isLiveScan() || !isCurrentSession(sessionId)) return;
+
+      setResults(cachedTop3);
+      setActiveResult(cachedCard);
+      setLastScan(cached?.lastScan || null);
+      goTab("results");
+
+      if (countScan && !scanLockRef.current) {
+        scanLockRef.current = true;
+        setScansUsed((prev) => prev + 1);
+
+        if (Number.isFinite(cachedCard?.savedAmount)) {
+          setSavingsTotal((prev) => prev + cachedCard.savedAmount);
+        }
+
+        setHistory((prev) => {
+          const updated = [
+            {
+              id: `${Date.now()}`,
+              uri: photoUri,
+              title: cachedCard?.itemName || "Scan",
+              timestamp: new Date().toLocaleString(),
+              resultCard: cachedCard,
+            },
+            ...prev,
+          ];
+          return updated;
+        });
+      }
+
+      stopLoadingSafely(reqId);
+      return;
+    }
+  }
+
+  // ✅ Any empty / malformed / stale cache entry must be killed
+  scanCacheRef.current.delete(cacheKey);
+}
+
+if (!isLiveScan()) return;
+
+const marketController = new AbortController();
+const abortMarket = () => {
+  try {
+    marketController.abort();
+  } catch {}
+};
+
+try {
+  controller.signal.addEventListener("abort", abortMarket);
+} catch {}
+
+const marketTimer = setTimeout(() => {
+  if (!isLiveScan()) return;
+
+  console.warn("MARKET REQUEST TIMEOUT", {
+    ms: MARKET_REQUEST_ABORT_MS,
+    visionQuery,
+    reqId,
+  });
+
+  abortMarket();
+}, MARKET_REQUEST_ABORT_MS);
+
+const marketCacheKey = `${effectiveScanMode}|${visionQuery}|${visionVariants.join("|")}`;
+const cachedMarket = MARKET_CACHE.get(marketCacheKey);
+
+let combined: any[] = [];
+let preQualityCombined: any[] = [];
+let strictFiltered: any[] = [];
+let strictCount = 0;
+let preCount = 0;
+
+try {
+  const cachedMarketItems =
+    cachedMarket && Array.isArray(cachedMarket.items)
+      ? cachedMarket.items
+      : [];
+
+  // ✅ Only trust market cache if it actually has listings
+  if (cachedMarketItems.length > 0) {
+    combined = cachedMarketItems;
+  } else {
+    setScanStage("market");
+    setScanStageMeta(`Checking live comps for ${visionQuery}...`);
+
+    console.log("RUNSCAN -> STARTING MARKET SEARCH", {
+      visionQuery,
+      visionVariants,
+      scannedPrice,
+      visionConfidence,
+    });
+
+    const marketData: any = await searchMarket(
+      {
+        query: visionQuery,
+        variants: visionVariants,
+        visionConfidence,
+        visionIdentity: visionIdentity || null,
+        scannedPrice,
+        category: inferCategory(visionQuery),
+        sizeHint: sizeHint || null, // Feature 11
+      },
+      marketController.signal
+    );
+
+    const rawItems = Array.isArray(marketData?.items) ? marketData.items : [];
+
+    preQualityCombined = normalizeListings(
+      rawItems,
+      "market",
+      "Marketplace",
+      visionQuery
+    )
+      .map((i) => {
+        const normalizedTotal = Number(i?.totalPrice);
+        const normalizedPrice = Number(i?.numericPrice);
+        const normalizedShip = Number(i?.shipping);
+
+        const price = Number.isFinite(normalizedPrice)
+          ? normalizedPrice
+          : parseMoney(i?.price);
+
+        const shipping = Number.isFinite(normalizedShip)
+          ? normalizedShip
+          : parseMoney(i?.shipping);
+
+        const total = Number.isFinite(normalizedTotal)
+          ? Math.round(normalizedTotal * 100) / 100
+          : Number.isFinite(price)
+          ? Math.round(
+              (price + (Number.isFinite(shipping) ? shipping : 0)) * 100
+            ) / 100
+          : NaN;
+
+        return {
+          ...i,
+          numericPrice: Number.isFinite(price) ? price : null,
+          numericShip: Number.isFinite(shipping) ? shipping : 0,
+          numericTotal: total,
+          __titleNorm: String(i?.title || "")
+            .toLowerCase()
+            .replace(/\s+/g, " ")
+            .trim(),
+        };
+      })
+      .filter((i) => Number.isFinite(i?.numericTotal));
+
+    const seenMarket = new Set<string>();
+    preQualityCombined = preQualityCombined.filter((it) => {
+      const key =
+        String(it?.url || "").trim().toLowerCase() ||
+        `${String(it?.__titleNorm || "")}|${Number(
+          it?.numericTotal || 0
+        )}|${String(it?.source || "").toLowerCase()}`;
+
+      if (!key) return false;
+      if (seenMarket.has(key)) return false;
+      seenMarket.add(key);
+      return true;
+    });
+
+    strictFiltered = qualityFilterListings(preQualityCombined, visionQuery);
+    strictCount = Array.isArray(strictFiltered) ? strictFiltered.length : 0;
+    preCount = Array.isArray(preQualityCombined) ? preQualityCombined.length : 0;
+
+    if (strictCount >= 3) {
+      combined = strictFiltered;
+    } else if (preCount <= 3) {
+      combined = preQualityCombined;
+    } else {
+      const relaxedQuery =
+        typeof marketData?.finalQuery === "string" && marketData.finalQuery.trim()
+          ? marketData.finalQuery.trim()
+          : visionQuery;
+
+      const relaxedQueryNorm = normalizeTitle(relaxedQuery);
+
+      const relaxed = preQualityCombined
+        .map((i) => {
+          const titleNorm = normalizeTitle(i?.title || "");
+          const simRaw = titleSimilarity(titleNorm, relaxedQueryNorm);
+          const sim = Number.isFinite(simRaw) ? simRaw : 0;
+
+          return {
+            ...i,
+            __titleNorm: titleNorm,
+            __sim: sim,
+          };
+        })
+        .filter(
+          (i) =>
+            Number.isFinite(i?.numericTotal) &&
+            Number(i?.__sim || 0) >= 0.18
+        )
+        .sort((a, b) => {
+          const simDiff = Number(b.__sim || 0) - Number(a.__sim || 0);
+          if (Math.abs(simDiff) > 0.05) return simDiff;
+          return Number(a.numericTotal || Infinity) - Number(b.numericTotal || Infinity);
+        });
+
+      combined = relaxed.length ? relaxed : strictFiltered;
+    }
+
+    console.log("MARKET RAW COUNTS →", {
+      market: rawItems.length,
+    });
+
+    console.log("MARKET COMBINED COUNT →", combined.length);
+    console.log(
+      "MARKET TOP TITLES →",
+      combined.slice(0, 5).map((x) => ({
+        title: x?.title,
+        price: x?.numericTotal ?? x?.price,
+        source: x?.source,
+      }))
+    );
+
+    MARKET_CACHE.set(marketCacheKey, {
+      ts: Date.now(),
+      items: combined,
+      finalQuery:
+        typeof marketData?.finalQuery === "string" && marketData.finalQuery.trim()
+          ? marketData.finalQuery.trim()
+          : visionQuery,
+      searchedQueries: Array.isArray(marketData?.searchedQueries)
+        ? marketData.searchedQueries
+        : [visionQuery, ...visionVariants].slice(0, 4),
+      consensus: marketData?.consensus || null,
+      prediction: marketData?.prediction || null,
+      coach: marketData?.coach || null,
+      pulse: marketData?.pulse || null,
+      // Features 8, 10
+      trendIntel: marketData?.trendIntel || null,
+      seasonalFlip: marketData?.seasonalFlip || null,
+      authenticityIntel: marketData?.authenticityIntel || null,
+      buyOrPass: marketData?.buyOrPass || null,
+    });
+  }
+} finally {
+  clearTimeout(marketTimer);
+  try {
+    controller.signal.removeEventListener("abort", abortMarket);
+  } catch {}
+}
+
+const marketMeta = MARKET_CACHE.get(marketCacheKey) || cachedMarket || null;
+
+let collectorInsights: any = null;
+
+// Only run collector pass for categories where it can realistically create upside.
+// Do NOT block normal eyewear/apparel/everyday scans with a slow enrich call.
+const collectorEligible =
+  effectiveScanMode === "item" &&
+  visionQuery &&
+  !/glasses|eyewear|frames|sunglasses|shirt|hoodie|jacket|pants|jeans|hat|cap|shoe|sneaker/i.test(
+    visionQuery
+  );
+
+if (collectorEligible) {
+  try {
+    setScanStage("collector");
+    setScanStageMeta("Checking for hidden collector value...");
+
+    const enrichPromise = fetchVisionEnrich(
+      visionQuery,
+      "item",
+      "resale collector detection"
+    );
+
+    const enrich = await Promise.race([
+      enrichPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), 1800)),
+    ]);
+
+    if (enrich && shouldTriggerCollectorPass(enrich)) {
+      const collectorQuery = buildCollectorSearchQuery(visionQuery, enrich);
+
+      if (
+        collectorQuery &&
+        collectorQuery !== normalizeTitle(visionQuery)
+      ) {
+
+const collectorRaw = await searchSerp(
+  collectorQuery,
+  marketController.signal,
+  buildVisionVariants(collectorQuery).slice(1)
+).catch(() => []);
+
+        const collectorCombined = [
+          ...combined,
+          ...normalizeListings(collectorRaw, "serp", "Google", collectorQuery),
+        ]
+          .map((i) => {
+            const normalizedTotal = Number(i?.totalPrice);
+            const normalizedPrice = Number(i?.numericPrice);
+            const normalizedShip = Number(i?.shipping);
+
+            const price = Number.isFinite(normalizedPrice)
+              ? normalizedPrice
+              : parseMoney(i?.price);
+
+            const shipping = Number.isFinite(normalizedShip)
+              ? normalizedShip
+              : parseMoney(i?.shipping);
+
+            const total = Number.isFinite(normalizedTotal)
+              ? Math.round(normalizedTotal * 100) / 100
+              : Number.isFinite(price)
+              ? Math.round((price + (Number.isFinite(shipping) ? shipping : 0)) * 100) / 100
+              : NaN;
+
+            return {
+              ...i,
+              numericPrice: price,
+              numericShip: Number.isFinite(shipping) ? shipping : 0,
+              numericTotal: total,
+              __titleNorm: String(i?.title || "")
+                .toLowerCase()
+                .replace(/\s+/g, " ")
+                .trim(),
+            };
+          })
+          .filter((i) => Number.isFinite(i.numericTotal));
+
+        combined = qualityFilterListings(
+          mergeMarketResultSets(combined, collectorCombined),
+          collectorQuery
+        );
+
+        collectorInsights = {
+          collectorQuery,
+          collector: enrich?.collector || null,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn("collector pass failed:", e);
+  }
+}
+
+const rankingQuery =
+  typeof marketMeta?.finalQuery === "string" && marketMeta.finalQuery.trim()
+    ? marketMeta.finalQuery.trim()
+    : visionQuery;
+
+
+const sig = extractProductSignature(rankingQuery);
+const queryNorm = normalizeTitle(sig.core);
+const queryTokens = [...new Set(queryNorm.split(" ").filter(Boolean))];
+const combinedCountBeforeRank = Array.isArray(combined) ? combined.length : 0;
+
+combined = (combined || [])
+  .map((item) => {
+    const total = Number(
+      item?.numericTotal ?? item?.totalPrice ?? item?.numericPrice
+    );
+    const titleNorm = normalizeTitle(item?.title || "");
+    const simRaw = titleSimilarity(titleNorm, queryNorm);
+    const sim = Number.isFinite(simRaw) ? simRaw : 0;
+
+    const tokenHits = queryTokens.length
+      ? queryTokens.filter((tok) => titleNorm.includes(tok)).length /
+        queryTokens.length
+      : 0;
+
+    const serverAnchored =
+      !!item?.__fromMarketSearch ||
+      (Number.isFinite(item?.__serverRank) && Number(item.__serverRank) <= 8) ||
+      combinedCountBeforeRank <= 3;
+
+    const eyewearBridge =
+      /(orange|amber)/.test(queryNorm) &&
+      /(orange|amber)/.test(titleNorm) &&
+      /(wrap|glasses)/.test(queryNorm) &&
+      /(wrap|glasses|lens|lenses|sunglasses)/.test(titleNorm);
+
+    const underUserPrice =
+      Number.isFinite(scannedPrice) && Number.isFinite(total)
+        ? total <= scannedPrice + 0.01
+        : true;
+
+    const linkVerified =
+      item?.__linkVerified !== false &&
+      typeof item?.url === "string" &&
+      item.url.trim().length > 0 &&
+      !item.url.includes("google.com/search");
+
+const brandMatch =
+  sig.brand && titleNorm.includes(sig.brand) ? 1 : 0;
+
+const modelMatch =
+  sig.model && titleNorm.includes(sig.model) ? 1 : 0;
+
+const priceScore =
+  Number.isFinite(total) && total > 0
+    ? 1 / Math.max(total, 1)
+    : 0;
+
+const rankScore =
+sim * 0.40 +
+tokenHits * 0.20 +
+brandMatch * 0.16 +
+modelMatch * 0.12 +
+priceScore * 0.12 
+  (serverAnchored ? 0.10 : 0) +
+  (eyewearBridge ? 0.08 : 0) +
+  (linkVerified ? 0.18 : -0.22) +
+  (underUserPrice ? 0.06 : -0.16);
+
+    return {
+      ...item,
+      __titleNorm: titleNorm,
+      __sim: sim,
+      __tokenHits: tokenHits,
+      __serverAnchored: serverAnchored,
+      __eyewearBridge: eyewearBridge,
+      __underUserPrice: underUserPrice,
+      __linkVerified: linkVerified,
+      __rankScore: rankScore,
+      __relevance: rankScore,
+    };
+  })
+  .filter((item) => {
+    const total = Number(
+      item?.numericTotal ?? item?.totalPrice ?? item?.numericPrice
+    );
+
+    return (
+      Number.isFinite(total) &&
+      (Number(item?.__sim || 0) >= 0.18 ||
+        Number(item?.__tokenHits || 0) >= 0.34 ||
+        !!item?.__serverAnchored ||
+        !!item?.__eyewearBridge)
+    );
+  })
+  .sort((a, b) => {
+    if (!!a.__linkVerified !== !!b.__linkVerified) {
+      return a.__linkVerified ? -1 : 1;
+    }
+
+    if (!!a.__underUserPrice !== !!b.__underUserPrice) {
+      return a.__underUserPrice ? -1 : 1;
+    }
+
+    if (!!a.__serverAnchored !== !!b.__serverAnchored) {
+      return a.__serverAnchored ? -1 : 1;
+    }
+
+    if (
+      Math.abs(Number(b.__rankScore || 0) - Number(a.__rankScore || 0)) > 0.03
+    ) {
+      return Number(b.__rankScore || 0) - Number(a.__rankScore || 0);
+    }
+
+    return Number(a.numericTotal || Infinity) - Number(b.numericTotal || Infinity);
+  });
+
+const requiredDealDelta = 0.01;
+
+const qualifiesSavingsFloor = (item) => {
+  if (!Number.isFinite(scannedPrice) || Number(scannedPrice) <= 0) return true;
+
+  const total = Number(
+    item?.numericTotal ?? item?.totalPrice ?? item?.numericPrice
+  );
+
+  if (!Number.isFinite(total)) return false;
+
+  return total <= Number(scannedPrice) + requiredDealDelta;
+};
+
+const promotedPool = (combined || []).filter(
+  (item) => item.__linkVerified !== false
+);
+const promotionPool =
+  promotedPool.length > 0 ? promotedPool : Array.isArray(combined) ? combined : [];
+
+const comparableTop3 = promotionPool.slice(0, 3);
+
+const cheaperExactMatches = promotionPool.filter((item) => {
+  if (!item) return false;
+
+  const price =
+    Number.isFinite(item?.totalPrice)
+      ? item.totalPrice
+      : item?.price;
+
+  if (!Number.isFinite(price)) return false;
+
+  // if scanned price unknown, show items anyway
+  if (!scannedPrice) return true;
+
+  // allow near matches so results don't disappear
+  return price <= scannedPrice * 1.8;
+});
+
+const cheaperRescueMatches = Number.isFinite(scannedPrice)
+  ? promotionPool.filter((item) => {
+      const total = Number(
+        item?.numericTotal ?? item?.totalPrice ?? item?.numericPrice
+      );
+
+      return (
+        Number.isFinite(total) &&
+        total <= Number(scannedPrice) + 0.01 &&
+        (Number(item?.__sim || 0) >= 0.2 ||
+          Number(item?.__tokenHits || 0) >= 0.28 ||
+          !!item?.__serverAnchored ||
+          !!item?.__eyewearBridge)
+      );
+    })
+  : [];
+
+const rankedPool = [
+  ...cheaperExactMatches,
+  ...cheaperRescueMatches,
+  ...comparableTop3,
+]
+  .filter(Boolean)
+  .sort((a, b) => {
+    const priceA = Number.isFinite(a?.totalPrice) ? a.totalPrice : a?.price ?? Infinity;
+    const priceB = Number.isFinite(b?.totalPrice) ? b.totalPrice : b?.price ?? Infinity;
+
+    const simA = Number(a?.__sim || 0);
+    const simB = Number(b?.__sim || 0);
+
+    const verifiedA = a?.__linkVerified ? 1 : 0;
+    const verifiedB = b?.__linkVerified ? 1 : 0;
+
+    // prioritize cheaper listings
+    if (priceA !== priceB) return priceA - priceB;
+
+    // prioritize better visual match
+    if (simA !== simB) return simB - simA;
+
+    // prioritize verified links
+    return verifiedB - verifiedA;
+  });
+
+const top3 = rankedPool.slice(0, 3);
+
+console.log("TOP3 DECISION →", {
+  scannedPrice,
+  requiredDealDelta,
+  promotionPool: promotionPool.length,
+  cheaperExact: cheaperExactMatches.length,
+  cheaperRescue: cheaperRescueMatches.length,
+  top3: top3.length,
+});
+
+const promotedVisionQuery =
+  typeof marketMeta?.finalQuery === "string" && marketMeta.finalQuery.trim()
+    ? marketMeta.finalQuery.trim()
+    : typeof top3?.[0]?.__finalQuery === "string" && top3[0].__finalQuery.trim()
+    ? top3[0].__finalQuery.trim()
+    : rankingQuery;
+
+const searchedQueries =
+  Array.isArray(marketMeta?.searchedQueries) && marketMeta.searchedQueries.length
+    ? marketMeta.searchedQueries
+    : [
+        ...new Set(
+          [
+            promotedVisionQuery,
+            ...visionVariants,
+            ...buildVisionVariants(promotedVisionQuery),
+          ].filter(Boolean)
+        ),
+      ].slice(0, 6);
+
+const marketConsensus = marketMeta?.consensus || null;
+const marketPrediction = marketMeta?.prediction || null;
+const marketCoach = marketMeta?.coach || null;
+const marketPulse = marketMeta?.pulse || null;
+// Features 8, 10
+const marketTrendIntel = marketMeta?.trendIntel || null;
+const marketSeasonalFlip = marketMeta?.seasonalFlip || null;
+const marketAuthenticityIntel = marketMeta?.authenticityIntel || null;
+// Feature 4: eBay sold comps; Feature 5: local comps
+const marketEbaySoldComps = marketMeta?.ebaySoldComps || null;
+const marketLocalComps = marketMeta?.localComps || null;
+
+const comparablePool = chooseComparableDisplayPool(combined, scannedPrice, 60);
+
+const displayPool =
+  comparablePool.length > 0
+    ? comparablePool
+    : Array.isArray(combined)
+    ? combined.slice(0, 60)
+    : [];
+
+if (!isLiveScan()) return;
+
+setSeeMoreListings(displayPool);
+
+if (top3.length === 0) {
+  const comparableTop3 = displayPool.slice(0, 3);
+
+  setResults(comparableTop3);
+  setActiveResult(comparableTop3[0] || null);
+  setLastScan({
+    kind: "no-cheaper",
+    confidence: visionConfidence,
+    query: promotedVisionQuery || rankingQuery,
+    results: displayPool.slice(0, 5),
+  });
+
+showUiError(
+  "No promoted deal passed your floor",
+  Number.isFinite(scannedPrice)
+    ? `We found comparable listings, but none were both trustworthy and at least ${money(requiredDealDelta)} cheaper than your entered price of ${money(scannedPrice)}.`
+    : "We found comparable listings, but none were trustworthy enough to promote as the top result."
+);
+
+  stopLoadingSafely(reqId);
+  goTab("results");
+  return;
+}
+
+const cheapest = top3[0];
+const cheapestPrice = toNumber(cheapest.totalPrice ?? cheapest.price);
+
+// Raw delta: positive = you saved, negative = you’re already cheaper than market
+const rawDelta =
+  Number.isFinite(scannedPrice) && Number.isFinite(cheapestPrice)
+    ? scannedPrice - cheapestPrice
+    : 0;
+
+// Saved (only when market is cheaper than what you pay)
+const savedAmount = Math.max(0, rawDelta);
+
+// If you’re already cheaper, show this (positive number)
+const alreadyCheaperBy = Math.max(0, -rawDelta);
+
+// % cheaper should NEVER go negative in UI
+const cheaperPct =
+  Number.isFinite(scannedPrice) && scannedPrice > 0 && rawDelta > 0
+    ? (rawDelta / scannedPrice) * 100
+    : 0;
+
+// -------------------------
+// ✅ Market snapshot computation (STEP 5)
+// -------------------------
+setScanStage("analysis");
+setScanStageMeta(`Analyzing ${combined.length} live listings...`);
+
+const spread = getMarketSpread(combined);
+const marketPrice = spread?.avg ?? cheapestPrice;
+const stats = buildRealMarketIntel(combined, cheapestPrice);
+const flipPotential = flipScore({
+  scannedPrice,
+  cheapestPrice,
+  estimatedResale: stats.estimatedResale,
+});
+
+const wlMatch = (watchlistRef.current || []).find((x) => x.query === visionQuery);
+const wlPoints = Array.isArray(wlMatch?.history)
+  ? wlMatch.history.map((p) => toNumber(p?.best)).filter((n) => Number.isFinite(n))
+  : [];
+const category = inferCategory(promotedVisionQuery || cheapest.title);
+
+const insights = computeInsights({
+  scannedPrice,
+  cheapestPrice,
+  avgMarket: stats.avgMarket ?? marketPrice,
+  low: spread?.low ?? stats.historicalLow,
+  high: spread?.high ?? stats.historicalHigh,
+  confidence: visionConfidence,
+  totalMatches: combined.length,
+  url: cheapest.url,
+  historyPoints: wlPoints,
+});
+
+const expectedResale =
+  Number.isFinite(marketPrediction?.estimatedResale)
+    ? Number(marketPrediction.estimatedResale)
+    : stats.estimatedResale;
+
+const expectedProfit =
+  Number.isFinite(marketPrediction?.expectedProfit)
+    ? Number(marketPrediction.expectedProfit)
+    : Number.isFinite(scannedPrice) && Number.isFinite(expectedResale)
+    ? Math.max(0, expectedResale - scannedPrice)
+    : null;
+
+const flipScoreValue =
+  Number.isFinite(marketPrediction?.flipScore)
+    ? Number(marketPrediction.flipScore)
+    : null;
+
+const liquidity =
+  typeof marketPrediction?.demand === "string" && marketPrediction.demand.trim()
+    ? marketPrediction.demand.trim()
+    : combined.length > 40
+    ? "Very High"
+    : combined.length > 20
+    ? "High"
+    : combined.length > 8
+    ? "Medium"
+    : "Low";
+
+const sellThroughProbability =
+  Number.isFinite(marketPrediction?.sellThroughProbability)
+    ? Number(marketPrediction.sellThroughProbability)
+    : null;
+
+const sellThroughDays =
+  Number.isFinite(marketPrediction?.sellThroughDays)
+    ? Number(marketPrediction.sellThroughDays)
+    : null;
+
+const card = {
+  rankWhy: [
+  "Lowest price across marketplaces",
+  "High listing confidence",
+  "Seller signals strong",
+],
+scanWhy: [
+  "Vision matched brand + model",
+  "Listings aligned with item",
+  "Confidence score validated",
+],
+  photoUri,
+  itemName: cheapest.title || visionQuery,
+  store: cheapest.source || "Marketplace",
+  price: cheapestPrice,
+  buyLink: cheapest.url,
+  image: cheapest.image || null,
+
+  scannedPrice,
+  savedAmount,
+  cheaperPct,
+  expectedResale,
+  expectedProfit,
+  flipScore: flipScoreValue,
+  marketLiquidity: liquidity,
+  sellThroughProbability,
+  sellThroughDays,
+  alreadyCheaperBy,
+  visionConfidence,
+  visionQuery: promotedVisionQuery,
+  visionVariants,
+  searchedQueries,
+  alternatives: top3,
+  historicalLow: stats.historicalLow,
+  historicalHigh: stats.historicalHigh,
+  avgMarket: stats.avgMarket,
+  estimatedResale: expectedResale,
+  medianMarket: Number.isFinite(marketPrediction?.medianPrice)
+    ? Number(marketPrediction.medianPrice)
+    : stats.medianMarket,
+  marketConsensus,
+  marketPrediction,
+  coachLine: marketCoach?.headline || null,
+  coachBullets: Array.isArray(marketCoach?.bullets) ? marketCoach.bullets : [],
+  pulseScore: Number.isFinite(marketPulse?.score) ? Number(marketPulse.score) : null,
+  pulseLabel: typeof marketPulse?.label === "string" ? marketPulse.label : null,
+  coachSummary:
+    typeof marketCoach?.headline === "string" ? marketCoach.headline : null,
+  coachCta:
+    Array.isArray(marketCoach?.bullets) && marketCoach.bullets[0]
+      ? marketCoach.bullets[0]
+      : null,
+
+  pulseScans24h:
+    Number.isFinite(marketPulse?.scans24h) ? Number(marketPulse.scans24h) : 0,
+  flipScoreValue: stats.flipScoreValue,
+  flipPotential,
+  totalMatches: combined.length,
+
+  // ✅ INTELLIGENCE LAYER (Month 5–6)
+  category,
+  collectorInsights,
+  ...insights,
+
+  // Features 3 & 4: condition label + chart placeholder
+  conditionLabel: visionIdentity?.condition || null,
+  priceChartPoints: null, // fetched lazily by PriceHistoryChart using itemName
+
+  // Feature 8: best time to buy
+  trendIntel: marketTrendIntel,
+  seasonalFlip: marketSeasonalFlip,
+
+  // Feature 10: authenticity
+  authenticityIntel: marketAuthenticityIntel,
+  // Feature 4: eBay sold comps
+  ebaySoldComps: marketEbaySoldComps,
+  // Feature 5: local / hyperlocal comps
+  localComps: marketLocalComps,
+};
+// =========================
+// SAVE + COUNT SCAN (ONCE)
+// =========================
+
+if (countScan && !scanLockRef.current) {
+  scanLockRef.current = true;
+
+  // consume bonus scan first
+  if (!isPro && Number(bonusScans || 0) > 0) {
+    setBonusScans((prev) => {
+      const next = Math.max(0, (Number(prev) || 0) - 1);
+      AsyncStorage.setItem(K.bonusScans, String(next));
+      return next;
+    });
+  } else {
+    setScansUsed((prev) => prev + 1);
+  }
+
+  if (Number.isFinite(card.savedAmount)) {
+    setSavingsTotal((prev) => {
+      const next = prev + card.savedAmount;
+      AsyncStorage.setItem(SAVINGS_STORAGE_KEY, String(next));
+      setSavedToast(`+$${card.savedAmount?.toFixed?.(2) || 0} saved`);
+      return next;
+    });
+  }
+
+  // Feature 5: push latest scan data to iOS home screen widget
+  updateWidgetData({
+    bestDealName:  card.itemName  || "",
+    bestDealPrice: card.price     ?? 0,
+    scanCount:     (scansUsed || 0) + 1,
+    totalSavings:  (savingsTotal  || 0) + (card.savedAmount || 0),
+    // todaySavings is accumulated over multiple widget calls via merge cache
+    todaySavings:  card.savedAmount > 0 ? card.savedAmount : undefined,
+  }).catch(() => {});
+
+  setHistory((prev) => [
+    {
+      id: `${Date.now()}`,
+      uri: photoUri,
+      title: card.itemName || "Scan",
+      timestamp: new Date().toLocaleString(),
+      resultCard: card,
+    },
+    ...prev,
+  ]);
+}
+
+setResults(top3);
+setActiveResult(card);
+
+// Feature 11 + 12: Lazy deep-auth + condition-assess using the scan photo
+// Reset previous scan results first, then fire after a short delay
+// (let the main result UI settle before adding load)
+setDeepAuthResult(null);
+setConditionAssessment(null);
+setCommunityComps(null);
+setHaggleResult(null);
+if (photoUri && (card?.category || (card as any)?.visionIdentity?.brand || (card as any)?.brand)) {
+  const _photoUri     = photoUri;
+  const _brand        = (card as any)?.visionIdentity?.brand || (card as any)?.brand || "";
+  const _category     = (card as any)?.category || "";
+  const _condition    = (card as any)?.visionIdentity?.condition || (card as any)?.conditionLabel || "good";
+  const _marketPrice  = (card as any)?.price || null;
+  const _knownTells   = (card as any)?.authenticityIntel?.knownFakeTells || [];
+
+  // Start both lazily with a stagger so they don't race the main render
+  setTimeout(async () => {
+    try {
+      const compressed = await ImageManipulator.manipulateAsync(
+        _photoUri,
+        [{ resize: { width: 900 } }],
+        { compress: 0.75, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+      );
+      const b64 = compressed.base64;
+      if (!b64) return;
+
+      const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+        (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+
+      // Feature 11: deep auth (only for brand items — not worth it for generic)
+      if (_brand || ["sneakers","luxury","bag","watch","eyewear"].includes(_category)) {
+        setDeepAuthLoading(true);
+        fetch(`${apiBase}/api/auth/deep-scan`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageBase64: b64, brand: _brand, category: _category, knownFakeTells: _knownTells }),
+          signal: AbortSignal.timeout(30000),
+        })
+          .then((r) => r.json())
+          .then((json) => { if (json?.ok) setDeepAuthResult(json); })
+          .catch(() => {})
+          .finally(() => setDeepAuthLoading(false));
+      }
+
+      // Feature 12: condition assessment (only when condition label is known)
+      if (_condition) {
+        setConditionAssessLoading(true);
+        fetch(`${apiBase}/api/condition/visual-assess`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageBase64: b64, statedCondition: _condition, category: _category, marketPrice: _marketPrice }),
+          signal: AbortSignal.timeout(30000),
+        })
+          .then((r) => r.json())
+          .then((json) => { if (json?.ok) setConditionAssessment(json); })
+          .catch(() => {})
+          .finally(() => setConditionAssessLoading(false));
+      }
+
+      // Feature 13: community comps — fetch for this item query
+      const _compQuery = (card as any)?.visionQuery || (card as any)?.itemName || null;
+      if (_compQuery) {
+        setCommunityCompsLoading(true);
+        setCommunityComps(null);
+        fetch(`${apiBase}/api/community/comps?query=${encodeURIComponent(_compQuery)}`, {
+          signal: AbortSignal.timeout(8000),
+        })
+          .then((r) => r.json())
+          .then((json) => { if (json?.ok) setCommunityComps(json as CommunityCompsData); })
+          .catch(() => {})
+          .finally(() => setCommunityCompsLoading(false));
+      }
+
+      // Feature 2: Haggle score — fire when scanned price is known
+      const _scannedPrice = (card as any)?.scannedPrice ?? null;
+      if (_compQuery && _scannedPrice && Number(_scannedPrice) > 0) {
+        setHaggleLoading(true);
+        fetch(`${apiBase}/api/haggle/score`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: _compQuery,
+            currentPrice: Number(_scannedPrice),
+            category: _category || "",
+          }),
+          signal: AbortSignal.timeout(20000),
+        })
+          .then((r) => r.json())
+          .then((json) => { if (json?.ok) setHaggleResult(json as HaggleScoreResult); })
+          .catch(() => {})
+          .finally(() => setHaggleLoading(false));
+      }
+    } catch { /* non-fatal */ }
+  }, 1200);
+}
+
+try {
+  const acb = Number(card?.alreadyCheaperBy || 0);
+  if (Number.isFinite(acb) && acb > 0.01) {
+    setPriceChangeBanner(
+      `✅ You’re already cheaper than the market by ${money(acb)}`
+    );
+  } else {
+    setPriceChangeBanner(null);
+  }
+} catch {
+  setPriceChangeBanner(null);
+}
+
+// Golden Moment animation
+requestAnimationFrame(() => {
+  try {
+    setCinematicFreeze(true);
+
+    RNAnimated.sequence([
+      RNAnimated.timing(freezeOpacity, {
+        toValue: 1,
+        duration: 140,
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(freezeOpacity, {
+        toValue: 0,
+        duration: 260,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setCinematicFreeze(false);
+    });
+
+    playNeuralLock();
+  } catch {}
+});
+
+trackEvent("scan_success", {
+  query: promotedVisionQuery,
+  confidence: visionConfidence,
+  cheapest: cheapestPrice,
+});
+
+setLastScan({
+  kind: "success",
+  confidence: visionConfidence,
+  query: promotedVisionQuery,
+  results: top3,
+});
+
+goTab("results");
+stopLoadingSafely(reqId);
+
+scanCacheRef.current.set(cacheKey, {
+  timestamp: Date.now(),
+  results: top3,
+  card,
+  lastScan: {
+    kind: "cached",
+    confidence: visionConfidence,
+    query: visionQuery,
+    results: top3,
+  },
+});
+
+setIntelState((prev) => {
+  const best = Array.isArray(top3) ? top3[0] : null;
+
+  const next = intelLog(prev, {
+    type: "scan",
+    confidence: visionConfidence,
+    savings: safeNum(card?.savedAmount),
+    store: best?.store,
+    category: best?.category,
+    title: best?.title,
+    verdict: verdictFromPrices(
+      safeNum(scannedPrice),
+      safeNum(spread?.low),
+      safeNum(spread?.high)
+    ),
+  });
+
+  saveIntel(next);
+  return next;
+});
+
+} catch (e) {
+  if (e?.name === "AbortError") {
+    // cancel/hard-timeout path: keep it clean (no crash UI)
+    stopLoadingSafely();
+    return;
+  }
+
+console.warn("runScan error:", e);
+
+const errMsg =
+  typeof e?.message === "string" && e.message.trim()
+    ? e.message.trim()
+    : "Unknown error";
+
+setLastScan({
+  kind: "error",
+  message: errMsg,
+});
+
+showUiError(
+  errMsg.includes("preQualityCombined")
+    ? "Frontend ranking bug"
+    : "Scan failed",
+  errMsg.includes("preQualityCombined")
+    ? "The scan data came back, but the app crashed while ranking results. Apply the market ranking scope fix and reload."
+    : `Scan pipeline error: ${errMsg}`
+);
+
+stopLoadingSafely(reqId);
+} finally {
+  clearTimeout(softRetryTimer);
+  clearTimeout(hardStopTimer);
+}
+};
+  // ─── Offline support ──────────────────────────────────────────────────────
+  const checkServerReachable = async (): Promise<boolean> => {
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 3500);
+      const r = await fetch(`${resolvedApiBase || SAFE_API_BASE}/health`, {
+        method: "GET",
+        signal: ctrl.signal,
+      });
+      clearTimeout(tid);
+      return r.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const queueOfflineScan = async (params: {
+    photoUri: string;
+    scannedPrice: number;
+    cheapestAlt?: number | null;
+    itemHint?: string | null;
+  }) => {
+    try {
+      const raw = await AsyncStorage.getItem(K.offlineQueue);
+      const queue = raw ? JSON.parse(raw) : [];
+      const item = { ...params, queuedAt: Date.now(), id: `${Date.now()}_${Math.random().toString(36).slice(2,6)}` };
+      const next = [...queue, item].slice(-20); // cap at 20 queued scans
+      await AsyncStorage.setItem(K.offlineQueue, JSON.stringify(next));
+      setOfflineQueueCount(next.length);
+      setIsOnline(false);
+      setSavedToast(`Scan saved offline — will process when back online (${next.length} queued)`);
+    } catch {}
+  };
+
+  const drainOfflineQueue = async () => {
+    if (drainQueueInFlightRef.current) return;
+    drainQueueInFlightRef.current = true;
+    try {
+      const reachable = await checkServerReachable();
+      if (!reachable) { setIsOnline(false); return; }
+      setIsOnline(true);
+
+      const raw = await AsyncStorage.getItem(K.offlineQueue);
+      if (!raw) { setOfflineQueueCount(0); return; }
+      const queue: any[] = JSON.parse(raw);
+      if (!Array.isArray(queue) || queue.length === 0) { setOfflineQueueCount(0); return; }
+
+      setSavedToast(`Processing ${queue.length} queued scan${queue.length > 1 ? "s" : ""}…`);
+
+      // Process one at a time
+      for (let i = 0; i < queue.length; i++) {
+        const item = queue[i];
+        try {
+          await runScan({
+            photoUri: item.photoUri,
+            scannedPrice: item.scannedPrice,
+            cheapestAlt: item.cheapestAlt ?? null,
+            itemHint: item.itemHint ?? null,
+            countScan: true,
+          });
+          // Remove processed item
+          const remaining = queue.slice(i + 1);
+          await AsyncStorage.setItem(K.offlineQueue, JSON.stringify(remaining));
+          setOfflineQueueCount(remaining.length);
+          // Only process first item in this pass — let user see the result
+          break;
+        } catch {}
+      }
+    } catch {
+    } finally {
+      drainQueueInFlightRef.current = false;
+    }
+  };
+  // ──────────────────────────────────────────────────────────────────────────
+
+  const handleUsePhoto = async () => {
+    if (!photo?.uri) return;
+    if (!canUsePhoto) return;
+    const scannedPrice = toNumber(scanPriceInput);
+    if (!Number.isFinite(scannedPrice) || scannedPrice <= 0) return;
+    const cheapestAlt = toNumber(cheapestAltInput);
+    if (!Number.isFinite(cheapestAlt) || cheapestAlt <= 0) return;
+    if (isFreeLimitReached) {
+requestAnimationFrame(() => {
+  setShowPaywall(true);
+});
+      return;
+    }
+
+hapticSelect();
+setPriceSubmitted(true);
+Keyboard.dismiss();
+
+const photoUri = photo.uri;
+const itemHint = itemNameInput.trim() || null;
+const sizeHintVal = sizeInput.trim() || null; // Feature 11
+
+// ── Offline check ──────────────────────────────────────────────────────
+const reachable = await checkServerReachable();
+if (!reachable) {
+  setIsOnline(false);
+  setPhoto(null);
+  setScanPriceInput("");
+  setCheapestAltInput("");
+  setItemNameInput("");
+  setSizeInput("");
+  await queueOfflineScan({ photoUri, scannedPrice, cheapestAlt, itemHint });
+  return;
+}
+setIsOnline(true);
+// ──────────────────────────────────────────────────────────────────────
+
+// ✅ set loading panel image BEFORE we clear photo state
+setLoadingPhotoUri(photoUri);
+setLoadingResults(true);
+setShowRetryWhileLoading(false);
+
+scanSessionRef.current = {
+  photoUri,
+  scannedPrice,
+  counted: true,
+  startedAt: Date.now(),
+  visionRetries: 0,
+};
+
+setRefinePhotos([]);
+setPhoto(null);
+setScanPriceInput("");
+setCheapestAltInput("");
+setItemNameInput("");
+setSizeInput("");
+
+trackEvent("scan_started", { price: scannedPrice, mode: scanMode });
+
+runScan({
+  photoUri: scanSessionRef.current.photoUri,
+  scannedPrice,
+  cheapestAlt,
+  itemHint,
+  sizeHint: sizeHintVal,
+  countScan: true,
+});
+  };
+// -------------------------
+// ✅ FEATURE #14: Show Me Cheaper re-search
+// -------------------------
+
+const MIN_LOADING_MS = 2200;
+
+const showMeCheaper = async () => {
+  const q = activeResult?.visionQuery;
+  if (!q) return;
+
+  const reqId = nextScanReqId();
+  activeScanReqIdRef.current = reqId;
+
+  const startedAt = Date.now();
+
+  hapticSelect();
+  setLoadingResults(true);
+  setShowRetryWhileLoading(false);
+
+  const controller = new AbortController();
+
+  try {
+    let data: any = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        data = await safeApiCall(() =>
+          fetchWithTimeout(`${resolvedApiBase}/market/research`, {
+            method: "POST",
+            signal: controller.signal,
+            body: JSON.stringify({ query: q, mode: "cheaper" }),
+          })
+        );
+        break;
+      } catch (e) {
+        if (attempt === 2) throw e;
+        await new Promise((r) =>
+          setTimeout(r, attempt === 0 ? 300 : 700)
+        );
+      }
+    }
+
+    const items = Array.isArray(data?.items) ? data.items : [];
+    const qNorm = normalizeTitle(q);
+    const enteredPrice = toNumber(activeResult?.scannedPrice || 0);
+
+    const normalized = normalizeListings(items, "research", "Resale", q)
+      .map((i) => {
+        const normalizedTotal = Number(i?.totalPrice);
+        const normalizedPrice = Number(i?.numericPrice);
+        const normalizedShip = Number(i?.shipping);
+
+        const price = Number.isFinite(normalizedPrice)
+          ? normalizedPrice
+          : parseMoney(i?.price);
+
+        const shipping = Number.isFinite(normalizedShip)
+          ? normalizedShip
+          : parseMoney(i?.shipping);
+
+        const total = Number.isFinite(normalizedTotal)
+          ? Math.round(normalizedTotal * 100) / 100
+          : Number.isFinite(price)
+          ? Math.round(
+              (price + (Number.isFinite(shipping) ? shipping : 0)) * 100
+            ) / 100
+          : NaN;
+
+        const titleNorm = normalizeTitle(i?.title || "");
+        const simRaw = titleSimilarity(titleNorm, qNorm);
+        const sim = Number.isFinite(simRaw) ? simRaw : 0;
+
+        const underUserPrice =
+          Number.isFinite(enteredPrice) && enteredPrice > 0 && Number.isFinite(total)
+            ? total <= enteredPrice + 0.01
+            : true;
+
+const score =
+  sim * 0.72 +
+  (underUserPrice ? 0.08 : -0.14) +
+  (Number.isFinite(total) && total > 0 ? 1 / total : 0) * 0.2;
+
+        return {
+          ...i,
+          numericPrice: price,
+          numericShip: Number.isFinite(shipping) ? shipping : 0,
+          numericTotal: total,
+          __titleNorm: titleNorm,
+          __sim: sim,
+          __underUserPrice: underUserPrice,
+          __score: score,
+        };
+      })
+      .filter((i) => Number.isFinite(i.numericTotal) && Number(i.__sim || 0) >= 0.22);
+
+    const seen = new Set<string>();
+    const deduped = normalized.filter((it) => {
+      const key =
+        String(it?.url || "").trim().toLowerCase() ||
+        `${it.__titleNorm}|${it.numericTotal}|${String(it?.source || "").toLowerCase()}`;
+      if (!key) return false;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const ranked = deduped.sort((a, b) => {
+      if (!!a.__underUserPrice !== !!b.__underUserPrice) {
+        return a.__underUserPrice ? -1 : 1;
+      }
+
+      const simDiff = Number(b.__sim || 0) - Number(a.__sim || 0);
+      if (Math.abs(simDiff) > 0.08) return simDiff;
+
+      const scoreDiff = Number(b.__score || 0) - Number(a.__score || 0);
+      if (Math.abs(scoreDiff) > 0.03) return scoreDiff;
+
+      return Number(a.numericTotal || Infinity) - Number(b.numericTotal || Infinity);
+    });
+
+    const cheaperOnly =
+      Number.isFinite(enteredPrice) && enteredPrice > 0
+        ? ranked.filter((it) => it.__underUserPrice)
+        : ranked;
+
+    const top3 = cheaperOnly.slice(0, 3);
+
+    if (!top3.length) {
+      setSavedToast("Already at or below the best reliable price");
+      stopLoadingSafely(reqId);
+      return;
+    }
+
+    setResults(top3);
+    setSeeMoreListings(ranked.slice(0, 60));
+
+    const cheapest = top3[0];
+    if (!cheapest) {
+      stopLoadingSafely(reqId);
+      return;
+    }
+
+    const cheapestPrice = Number(cheapest.numericTotal);
+
+    let scannedPriceForLog = 0;
+
+    setActiveResult((prev) => {
+      scannedPriceForLog = toNumber(prev?.scannedPrice || 0);
+
+      const savedAmount =
+        Number.isFinite(scannedPriceForLog) && Number.isFinite(cheapestPrice)
+          ? Math.max(0, scannedPriceForLog - cheapestPrice)
+          : 0;
+
+      const cheaperPct =
+        Number.isFinite(scannedPriceForLog) &&
+        scannedPriceForLog > 0 &&
+        savedAmount > 0
+          ? (savedAmount / scannedPriceForLog) * 100
+          : 0;
+
+      return {
+        ...prev,
+        price: cheapestPrice,
+        store: cheapest.__market === "ebay" ? "eBay" : cheapest?.source || "Resale",
+        buyLink: cheapest.url,
+        image: cheapest.image || prev?.image,
+        alternatives: top3,
+        totalMatches: ranked.length,
+        savedAmount,
+        cheaperPct,
+      };
+    });
+
+    setIntelState((prev) => {
+      const savedAmount = Math.max(0, scannedPriceForLog - toNumber(cheapestPrice));
+      const next = intelLog(prev, {
+        type: "scan",
+        confidence: activeResult?.visionConfidence || 0,
+        savings: Math.round(savedAmount * 100) / 100,
+        store: cheapest?.source || "Resale",
+        category: activeResult?.category,
+        title: activeResult?.itemName || cheapest?.title,
+        verdict: savedAmount > 0 ? "buy" : "fair",
+      });
+      saveIntel(next);
+      return next;
+    });
+  } catch (e) {
+    console.warn("showMeCheaper failed", e);
+
+  } finally {
+    const elapsed = Date.now() - startedAt;
+    const remaining = Math.max(0, MIN_LOADING_MS - elapsed);
+
+    if (remaining > 0) {
+      await new Promise((resolve) => setTimeout(resolve, remaining));
+    }
+
+    stopLoadingSafely(reqId);
+  }
+};
+
+const lockOpacity = useRef(new RNAnimated.Value(0)).current;
+const beamX = useRef(new RNAnimated.Value(-220)).current;
+const beamOpacity = useRef(new RNAnimated.Value(0)).current;
+const stampScale = useRef(new RNAnimated.Value(0.92)).current;
+const stampOpacity = useRef(new RNAnimated.Value(0)).current;
+
+const playNeuralLock = () => {
+  // reset
+  lockOpacity.setValue(0);
+  beamX.setValue(-220);
+  beamOpacity.setValue(0);
+  stampScale.setValue(0.92);
+  stampOpacity.setValue(0);
+
+  // 1) micro-freeze flash on results
+  RNAnimated.sequence([
+    RNAnimated.timing(lockOpacity, { toValue: 1, duration: 70, useNativeDriver: true }),
+    RNAnimated.timing(lockOpacity, { toValue: 0, duration: 160, useNativeDriver: true }),
+  ]).start();
+
+  RNAnimated.timing(stampOpacity, {
+  toValue: 0.15,
+  duration: 80,
+  useNativeDriver: true,
+}).start();
+
+  // 2) diagonal beam sweep (single pass)
+  RNAnimated.parallel([
+    RNAnimated.sequence([
+      RNAnimated.timing(beamOpacity, { toValue: 1, duration: 80, useNativeDriver: true }),
+      RNAnimated.timing(beamOpacity, { toValue: 0, duration: 260, useNativeDriver: true }),
+    ]),
+    RNAnimated.timing(beamX, {
+      toValue: 260,
+      duration: 360,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }),
+  ]).start();
+
+  // 3) verdict stamp pop
+  RNAnimated.sequence([
+    RNAnimated.delay(140),
+    RNAnimated.parallel([
+      RNAnimated.spring(stampScale, {
+        toValue: 1,
+        friction: 6,
+        tension: 140,
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(stampOpacity, {
+        toValue: 1,
+        duration: 140,
+        useNativeDriver: true,
+      }),
+    ]),
+    RNAnimated.delay(650),
+    RNAnimated.timing(stampOpacity, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    }),
+  ]).start();
+
+  // premium haptic “stamp”
+  try {
+    Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Medium);
+  } catch {}
+};
+
+const onScanAnimFinished = () => {
+  setScanAnimActive(false);
+  setFreezeFrameUri(null);
+};
+
+const retrySameScan = () => {
+  const session = scanSessionRef.current;
+  if (!session?.photoUri || !Number.isFinite(session?.scannedPrice)) {
+    return;
+  }
+  hapticSelect();
+  runScan({
+    photoUri: session.photoUri,
+    scannedPrice: session.scannedPrice,
+    countScan: false,
+  });
+};
+const startNewScan = () => {
+  hapticSelect();
+  setPhoto(null);
+  setResults([]);
+  setActiveResult(null);
+  nextScanSession();
+  setLoadingResults(false);
+  setPriceSubmitted(false);
+  setScanPriceInput("");
+  scanSessionRef.current = null;
+  goTab("camera");
+};
+// ===============================
+// LOAD CLOUD HISTORY
+// ===============================
+
+useEffect(() => {
+  if (!userId) return;
+fetch(`${resolvedApiBase}/history/load?userId=${encodeURIComponent(userId)}`)
+  .then(async (res) => {
+    if (!res.ok) return [];
+    const text = await res.text();
+    if (text.trim().startsWith("<")) return [];
+    try {
+      return JSON.parse(text);
+    } catch {
+      return [];
+    }
+  })
+  .then((data) => {
+    if (Array.isArray(data)) {
+      setHistory(data);
+    }
+  })
+  .catch(() => {});
+}, [userId]);
+// permission handled in UI — do not early return before hooks
+// ✅ HARD UI RECOVERY: if camera tab is active, force-clear any stuck overlays
+useEffect(() => {
+  if (tab !== "camera") return;
+
+    // ✅ do NOT force-hide splash here (it has its own timer + fade)
+  // only kill onboarding overlay if it somehow persists
+  try {
+    setShowOnboard(false);
+  } catch {}
+
+  // freeze overlays must never persist into camera idle
+  try {
+    setCinematicFreeze(false);
+  } catch {}
+  try {
+    setFreezeFrameUri(null);
+  } catch {}
+  try {
+    freezeOpacity?.setValue?.(0);
+  } catch {}
+  try {
+    vignetteOpacity?.setValue?.(0);
+  } catch {}
+
+  // tab fade must be visible if we're on camera
+    try { tabFade?.stopAnimation?.(); } catch {}
+try { tabFade?.setValue?.(1); } catch {}
+}, [tab]);
+
+// -------------------------
+// WEAPONIZATION ENGINE (RETENTION + COMPOUNDING + REALTIME + SHARE + BRAND)
+// -------------------------
+const DAY_ID = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD local
+const toNum = (n: any) => {
+  const v = Number(n);
+  return Number.isFinite(v) ? v : 0;
+};
+const clampInt = (n: any, a = 0, b = 9999) => Math.max(a, Math.min(b, Math.floor(toNum(n))));
+const mkInstallId = () =>
+  `${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-6)}`.toUpperCase();
+
+const K = {
+  installId: "EVAN_INSTALL_ID_V1",
+  dailyGoal: "EVAN_DAILY_GOAL_V1",
+  streak: "EVAN_STREAK_V1",
+  lastDay: "EVAN_LAST_DAY_V1",
+  todayCount: "EVAN_TODAY_COUNT_V1",
+  lastWatchCheck: "EVAN_LAST_WATCH_CHECK_MS_V1",
+  autoWatch: "EVAN_AUTO_WATCH_V1",
+
+  // ✅ Referral
+  referredBy: "EVAN_REFERRED_BY_V1",
+  referralUses: "EVAN_REFERRAL_USES_V1",
+  bonusScans: "EVAN_BONUS_SCANS_V1",
+  // Pending: referral link clicked but not yet redeemed (no local reward until server confirms)
+  pendingReferralCode: "EVAN_PENDING_REF_V1",
+
+  // Offline scan queue
+  offlineQueue: "EVAN_OFFLINE_QUEUE_V1",
+};
+
+useEffect(() => {
+  loadIntel();
+}, []);
+
+const parseRefFromUrl = (url: string) => {
+  try {
+    const m = String(url || "").match(/[?&]ref=([^&]+)/i);
+    const code = m?.[1] ? decodeURIComponent(m[1]) : null;
+    if (!code) return null;
+    return String(code).replace(/[^a-z0-9_-]/gi, "").slice(0, 24);
+  } catch {
+    return null;
+  }
+};
+
+useEffect(() => {
+  const applyUrl = async (url?: string | null) => {
+    if (!url) return;
+    const code = parseRefFromUrl(url);
+    if (!code) return;
+
+    // Already redeemed — nothing to do
+    const existing = await AsyncStorage.getItem(K.referredBy);
+    if (existing) return;
+
+    // Store as PENDING only — no scans granted here.
+    // Rewards are only granted after /referral/redeem confirms server-side.
+    await AsyncStorage.setItem(K.pendingReferralCode, code);
+
+    // Register the click with the server (so it can verify this is a fresh install).
+    // Fire-and-forget — safe to fail.
+    try {
+      const iid = await AsyncStorage.getItem(K.installId);
+      if (iid) {
+        fetch(`${SAFE_API_BASE}/referral/register-link`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ installId: iid, code }),
+        }).catch(() => {});
+      }
+    } catch {}
+  };
+
+  (async () => {
+    try {
+      const initial = await Linking.getInitialURL();
+      await applyUrl(initial);
+    } catch {}
+  })();
+
+  const sub = Linking.addEventListener("url", (e) => {
+    applyUrl(e?.url);
+  });
+
+  return () => {
+    try {
+      sub?.remove?.();
+    } catch {}
+  };
+}, []);
+
+const [dailyGoal, setDailyGoal] = useState<number>(6);
+const [bonusScans, setBonusScans] = useState<number>(0);
+const [referredBy, setReferredBy] = useState<string | null>(null);
+const [referralInput, setReferralInput] = useState("");
+const [referralBusy, setReferralBusy] = useState(false);
+
+const grantBonusScans = async (n: number) => {
+  if (!Number.isFinite(n) || n <= 0) return;
+  setBonusScans((prev) => {
+    const next = Math.min(999, (Number(prev) || 0) + n);
+    AsyncStorage.setItem(K.bonusScans, String(next));
+    return next;
+  });
+  setSavedToast(`+${n} bonus scans unlocked`);
+};
+
+const applyReferralCode = async (
+  rawCode: string,
+  source: "manual" | "link" = "manual",
+  overrides: { installId?: string | null; userId?: string | null } = {}
+) => {
+  const code = String(rawCode || "").trim().toUpperCase();
+  if (!code) return false;
+  if (referralBusy) return false;
+
+  if (code === String(effectiveReferralCode || "").trim().toUpperCase()) {
+    setSavedToast("You can’t use your own code");
+    return false;
+  }
+
+  const existingRef = await AsyncStorage.getItem(K.referredBy);
+  if (existingRef) {
+    setReferredBy(existingRef);
+    setReferralInput(existingRef);
+    setSavedToast("Referral already applied");
+    return false;
+  }
+
+  try {
+    setReferralBusy(true);
+
+    const res = await fetch(`${resolvedApiBase || SAFE_API_BASE}/referral/redeem`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId:    overrides.userId    ?? userId    ?? null,
+        installId: overrides.installId ?? installId ?? null,
+        code,
+        source,
+      }),
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!json?.ok) {
+      const reason = json?.reason || "unknown";
+      if (reason === "already_redeemed" || reason === "already_redeemed_device") {
+        // Mark locally as used so the UI disables the input
+        const existingRef = await AsyncStorage.getItem(K.referredBy);
+        if (!existingRef) {
+          await AsyncStorage.setItem(K.referredBy, code);
+          setReferredBy(code);
+          setReferralInput(code);
+        }
+        setSavedToast("Referral already used");
+      } else if (reason === "self_referral_not_allowed") {
+        setSavedToast("You can't use your own code");
+      } else if (reason === "invalid_code") {
+        setSavedToast("Invalid referral code");
+      } else {
+        setSavedToast("Couldn't apply code — try again");
+      }
+      return false;
+    }
+
+    // Server confirmed — NOW grant bonus scans
+    const reward = Number.isFinite(Number(json?.bonusScans)) && Number(json.bonusScans) > 0
+      ? Number(json.bonusScans)
+      : 3;
+    await grantBonusScans(reward);
+
+    await AsyncStorage.setItem(K.referredBy, code);
+    // Clear pending now that it's been redeemed
+    await AsyncStorage.removeItem(K.pendingReferralCode);
+    setReferredBy(code);
+    setReferralInput(code);
+    setSavedToast(source === "link" ? `Referral applied — +${reward} bonus scans! 🎉` : `Code applied — +${reward} bonus scans! 🎉`);
+    return true;
+  } catch {
+    setSavedToast("No connection — try again when online");
+    return false;
+  } finally {
+    setReferralBusy(false);
+  }
+};
+
+const [todayScanCount, setTodayScanCount] = useState<number>(0);
+const [scanStreak, setScanStreak] = useState<number>(0);
+const [welcomeBackOpen, setWelcomeBackOpen] = useState(false);
+const prevHistorySigRef = useRef<string>("");
+const watchCheckInFlightRef = useRef(false);
+const lastGlobalWatchCheckMsRef = useRef(0);
+const prevBestByIdRef = useRef<Record<string, number>>({});
+
+useEffect(() => {
+  (async () => {
+    try {
+      // install id (share growth)
+      const iid = (await AsyncStorage.getItem(K.installId)) || mkInstallId();
+      await AsyncStorage.setItem(K.installId, iid);
+      setInstallId(iid);
+
+      // goal
+      const g = await AsyncStorage.getItem(K.dailyGoal);
+      if (g != null) setDailyGoal(clampInt(g, 1, 25));
+
+      // streak + day info
+      const savedStreak = await AsyncStorage.getItem(K.streak);
+      if (savedStreak != null) setScanStreak(clampInt(savedStreak, 0, 9999));
+
+      const lastDay = await AsyncStorage.getItem(K.lastDay);
+      const today = DAY_ID();
+
+      // today count
+      const savedTodayCount = await AsyncStorage.getItem(K.todayCount);
+      const savedDayForCount = lastDay;
+      if (savedDayForCount === today && savedTodayCount != null) {
+        setTodayScanCount(clampInt(savedTodayCount, 0, 9999));
+      } else {
+        setTodayScanCount(0);
+        await AsyncStorage.setItem(K.todayCount, "0");
+      }
+
+      // welcome-back modal removed — no interruption on app open
+
+      // auto watch toggle
+      const aw = await AsyncStorage.getItem(K.autoWatch);
+      if (aw != null) setAutoWatchEnabled(aw === "1");
+
+      // referral state
+      const rb = await AsyncStorage.getItem(K.referredBy);
+      if (rb) {
+        setReferredBy(rb);
+        setReferralInput(rb);
+      }
+
+      const ru = await AsyncStorage.getItem(K.referralUses);
+      if (ru != null) setReferralUses(clampInt(ru, 0, 9999));
+
+      const bs = await AsyncStorage.getItem(K.bonusScans);
+      if (bs != null) setBonusScans(clampInt(bs, 0, 9999));
+
+      // Load offline queue count
+      try {
+        const oq = await AsyncStorage.getItem(K.offlineQueue);
+        if (oq) {
+          const q = JSON.parse(oq);
+          if (Array.isArray(q) && q.length > 0) setOfflineQueueCount(q.length);
+        }
+      } catch {}
+
+      // AUTO REFERRAL DETECTION FROM SHARED LINK
+      try {
+        const initialUrl = await Linking.getInitialURL();
+        const existingRef = await AsyncStorage.getItem(K.referredBy);
+
+        const refCode =
+          initialUrl && initialUrl.includes("ref=")
+            ? String(initialUrl).split("ref=")[1]?.split("&")[0] || ""
+            : "";
+
+        if (!existingRef && refCode) {
+          // Store as pending + register with server. Actual redemption happens
+          // below once userId is available.
+          await AsyncStorage.setItem(K.pendingReferralCode, String(refCode).trim().toUpperCase());
+          try {
+            fetch(`${SAFE_API_BASE}/referral/register-link`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ installId: iid, code: String(refCode).trim().toUpperCase() }),
+            }).catch(() => {});
+          } catch {}
+        }
+      } catch {}
+
+      // REDEEM PENDING REFERRAL (after userId is ready)
+      try {
+        const existingRef = await AsyncStorage.getItem(K.referredBy);
+        if (!existingRef && userId) {
+          const pending = await AsyncStorage.getItem(K.pendingReferralCode);
+          if (pending) {
+            setReferralInput(pending);
+            // Attempt server redemption — only grants if server confirms
+            await applyReferralCode(pending, "link", { installId: iid, userId });
+          }
+        }
+      } catch {}
+    } catch {}
+  })();
+}, []);
+
+// DATA COMPOUNDING: detect new scans by history signature (no need to touch your scan pipeline)
+useEffect(() => {
+  const today = DAY_ID();
+  const sig =
+    Array.isArray(history) && history.length
+      ? String(history[0]?.id || "") + "|" + String(history.length)
+      : "empty";
+  if (sig === prevHistorySigRef.current) return;
+  prevHistorySigRef.current = sig;
+  // If history grew, count it as "a scan happened"
+  if (Array.isArray(history) && history.length) {
+    (async () => {
+      try {
+        const lastDay = await AsyncStorage.getItem(K.lastDay);
+        const isNewDay = lastDay !== today;
+        // daily counter
+        setTodayScanCount((prev) => {
+          const next = isNewDay ? 1 : prev + 1;
+          AsyncStorage.setItem(K.todayCount, String(next));
+          return next;
+        });
+        // streak: only increments ONCE per new day (first scan)
+        if (isNewDay) {
+          setScanStreak((prev) => {
+            const next = prev + 1;
+            AsyncStorage.setItem(K.streak, String(next));
+            return next;
+          });
+          await AsyncStorage.setItem(K.lastDay, today);
+        }
+      } catch {}
+    })();
+  }
+}, [history]);
+// REAL-TIME PRICE MOVEMENT: auto re-check watchlist (foreground + app resume)
+const doWatchCheck = useCallback(
+  async ({ force = false, quiet = true }: { force?: boolean; quiet?: boolean } = {}) => {
+    if (!autoWatchEnabled) return;
+    if (!Array.isArray(watchlist) || !watchlist.length) return;
+    if (watchCheckInFlightRef.current) return;
+    watchCheckInFlightRef.current = true;
+    try {
+      // your existing function; keep your signature compatibility
+      await runDailyWatchlistCheck?.({ force, quiet });
+      const now = Date.now();
+      lastGlobalWatchCheckMsRef.current = now;
+      AsyncStorage.setItem(K.lastWatchCheck, String(now));
+    } catch {
+      // quiet: no UI error spam
+    } finally {
+      watchCheckInFlightRef.current = false;
+    }
+  },
+  [autoWatchEnabled, watchlist, runDailyWatchlistCheck]
+);
+// foreground intervals (watchlist tab = faster loop)
+useEffect(() => {
+  if (!autoWatchEnabled) return;
+  if (tab === "profile") return;
+  if (tab === "watchlist") {
+    doWatchCheck({ force: false, quiet: true });
+  }
+  const ms = tab === "watchlist" ? 6 * 60 * 1000 : 15 * 60 * 1000;
+  const id = setInterval(() => {
+    doWatchCheck({ force: false, quiet: true });
+  }, ms);
+  return () => {
+    clearInterval(id);
+  };
+}, [tab, autoWatchEnabled, doWatchCheck]);
+// resume check (app comes back)
+useEffect(() => {
+  if (!autoWatchEnabled) return;
+  const sub = AppState.addEventListener("change", async (s) => {
+    if (s !== "active") return;
+    try {
+      const last = toNum(await AsyncStorage.getItem(K.lastWatchCheck));
+      const now = Date.now();
+      // check if stale (2 hours)
+      if (now - last > 2 * 60 * 60 * 1000) {
+        doWatchCheck({ force: false, quiet: true });
+      }
+    } catch {}
+  });
+  return () => sub.remove();
+}, [autoWatchEnabled, doWatchCheck]);
+
+
+// -------------------------
+// ✅ BOOT-SAFETY: never lose HUD / tab bar after splash
+// -------------------------
+useEffect(() => {
+  // when splash is gone + we are not in scan loading, UI MUST be interactive
+  if (!showSplash && !loadingResults) {
+
+    // ✅ HARD: active tab must never stay invisible
+    try {
+      tabFade?.stopAnimation?.();
+      tabFade?.setValue?.(1);
+      setTabInteractable(true);
+      tabSwitchingRef.current = false;
+      pendingTabRef.current = null;
+    } catch {}
+
+    // top HUD must fade back in when returning to camera
+    if (tab === "camera" && !photo) {
+      try {
+        topHudOpacity?.setValue?.(1);
+      } catch {}
+    }
+  }
+}, [showSplash, loadingResults, tab, photo]);
+
+// ✅ HARD TAB FADE RECOVERY — prevents “UI disappears” (tabFade stuck at 0)
+useEffect(() => {
+  // ✅ clamp: never allow the screen to go fully transparent during tab switches
+  try {
+    tabFade?.stopAnimation?.();
+    tabFade?.setValue?.(1);
+  } catch {}
+
+  const id = setTimeout(() => {
+    try {
+      tabFade?.stopAnimation?.();
+      tabFade?.setValue?.(1);
+    } catch {}
+  }, 60);
+
+  return () => clearTimeout(id);
+}, [tab]);
+
+useEffect(() => {
+  if (!showSplash) return;
+
+  splashIPop.setValue(0);
+  splashIY.setValue(10);
+
+  RNAnimated.sequence([
+    RNAnimated.parallel([
+      RNAnimated.spring(splashIPop, {
+        toValue: 1,
+        speed: 18,
+        bounciness: 10,
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(splashIY, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]),
+  ]).start();
+}, [showSplash, splashIPop, splashIY]);
+
+// SHARE-DRIVEN GROWTH: upgraded share copy w/ install ref
+const buildShareCardTextV2 = useCallback(
+  (r: any) => {
+    if (!r) return "Evan AI";
+
+    const name = r?.itemName || r?.title || "Item";
+    const paying =
+      typeof money === "function"
+        ? money(toNum(r?.scannedPrice))
+        : `$${toNum(r?.scannedPrice).toFixed(2)}`;
+
+    const cheapest =
+      typeof money === "function"
+        ? money(toNum(r?.price))
+        : `$${toNum(r?.price).toFixed(2)}`;
+
+    const saved =
+      typeof money === "function"
+        ? money(toNum(r?.savedAmount))
+        : `$${toNum(r?.savedAmount).toFixed(2)}`;
+
+    const pct =
+      typeof percent === "function"
+        ? percent(toNum(r?.cheaperPct))
+        : `${Math.round(toNum(r?.cheaperPct) * 100)}%`;
+
+    const shareCode = String(effectiveReferralCode || "").trim().toUpperCase();
+    const shareUrl = shareCode
+      ? `evanai.app?ref=${encodeURIComponent(shareCode)}`
+      : "evanai.app";
+
+    return [
+      "Evan AI found a cheaper match 🧠",
+      "",
+      name,
+      `Paying: ${paying}`,
+      `Cheapest: ${cheapest}`,
+      `Saved: ${saved} (${pct} cheaper)`,
+      "",
+      `Use my code: ${shareCode}`,
+      "Get bonus scans instantly.",
+      `Try Evan AI: ${shareUrl}`,
+    ].join("\n");
+  },
+  [effectiveReferralCode, money, percent]
+);
+
+// BRAND STATS (investor-grade “intelligence branding”)
+
+const weeklyIntel = useMemo(() => {
+  return weeklyStats(intelState?.events || []);
+}, [intelState]);
+
+const weaponStats = useMemo(() => {
+
+  const scans = Array.isArray(history) ? history.length : 0;
+  const totalSaved = toNum(savingsTotal);
+  let bestSaved = 0;
+  let bestPct = 0;
+  let last: any = null;
+  if (Array.isArray(history) && history.length) {
+    // attempt to pick the most recent (history[0] in your code path)
+    last = Array.isArray(history) && history.length ? history[0]?.resultCard || null : null;
+    for (const h of history) {
+      const r = h?.resultCard;
+      if (!r) continue;
+      bestSaved = Math.max(bestSaved, toNum(r?.savedAmount));
+      bestPct = Math.max(bestPct, toNum(r?.cheaperPct));
+    }
+  }
+  const tracked = Array.isArray(watchlist) ? watchlist.length : 0;
+  const goal = clampInt(dailyGoal, 1, 25);
+  const today = clampInt(todayScanCount, 0, 9999);
+  const progress = goal ? Math.min(1, today / goal) : 0;
+const headline =
+  today >= goal
+    ? `Mission complete. ${today}/${goal} scans today.`
+    : `Mission: ${goal} scans today • ${today} done`;
+  const lines = [
+    `Lifetime scans: ${scans}`,
+    `Lifetime saved: ${typeof money === "function" ? money(totalSaved) : `$${totalSaved.toFixed(2)}`}`,
+    `Best single save: ${typeof money === "function" ? money(bestSaved) : `$${bestSaved.toFixed(2)}`}`,
+    `Best deal: ${Math.round(bestPct * 100)}% cheaper`,
+    `Tracked: ${tracked} items · Drops badge: ${clampInt(dropCount, 0, 99)}`,
+  ];
+const iq = clampInt(
+  scans + tracked * 2 + Math.round(totalSaved / 10) + clampInt(scanStreak, 0, 9999) * 3,
+  0,
+  999
+);
+return {
+  scans,
+  totalSaved,
+  bestSaved,
+  bestPct,
+  tracked,
+  goal,
+  today,
+  progress,
+  headline,
+  lines,
+  last,
+  scanStreak,
+  dropCount,
+  iq,
+};
+}, [history, watchlist, savingsTotal, dailyGoal, todayScanCount, scanStreak, dropCount, money, percent]);
+
+const intelLevel = useMemo(() => {
+  const iq = Number(weaponStats?.iq || 0);
+  return Math.max(1, Math.min(20, Math.floor(iq / 50) + 1));
+}, [weaponStats?.iq]);
+
+const intelIdentityLine = useMemo(() => {
+  const lvl = intelLevel;
+  if (lvl >= 16) return "You’re running investor-grade instincts.";
+  if (lvl >= 11) return "Your market eye is getting sharp.";
+  if (lvl >= 6) return "Pattern recognition is compounding.";
+  return "You’re building your resale intelligence.";
+}, [intelLevel]);
+
+
+// ✅ Tab scroll refs (so tabs don’t “remember” scroll position)
+const profileScrollRef = useRef(null);
+const historyScrollRef = useRef(null);
+const watchlistScrollRef = useRef(null);
+
+// ✅ Barcode must NOT reconfigure camera when toggled (prevents flash)
+const barcodeModeRef = useRef(false);
+useEffect(() => {
+  barcodeModeRef.current = !!barcodeMode;
+}, [barcodeMode]);
+
+// ✅ Removed: preLoadBlack "micro flash" (causes visible flashes)
+
+
+const pulseScale = loadingPulse.interpolate({
+  inputRange: [0, 1],
+  outputRange: [0.96, 1.10],
+});
+
+const pulseOpacity = loadingPulse.interpolate({
+  inputRange: [0, 1],
+  outputRange: [0.6, 1],
+});
+
+return (
+<GestureHandlerRootView style={{ flex: 1 }}>
+<RNAnimated.View
+style={{
+  flex: 1,
+transform: [
+  {
+    scale: uiDepth.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 0.995],
+    }),
+  },
+  {
+    translateY: cameraGlassDepth.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, -2],
+    }),
+  },
+  {
+    scale: uiBreath.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 1.003],
+    }),
+  },
+],
+}}
+>
+    <View style={{ flex: 1 }}>
+      <StatusBar style="light" />
+      
+      {Boolean(showSplash) ? (
+        <RNAnimated.View
+          style={[
+            StyleSheet.absoluteFillObject,
+            {
+              backgroundColor: "#000",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 999,
+              opacity: splashOpacity,
+            },
+          ]}
+        >
+<View style={{ flexDirection: "row", alignItems: "baseline" }}>
+  <Text
+    style={{
+      color: "white",
+      fontSize: 56,
+      fontWeight: "900",
+      letterSpacing: -1.2,
+    }}
+  >
+    Evan A
+  </Text>
+
+  <RNAnimated.Text
+    style={{
+      marginLeft: 6,
+      color: "white", // ✅ not cyan
+      fontSize: 62,
+      fontWeight: "900",
+      transform: [{ translateY: dotY.interpolate({ inputRange: [0, 1], outputRange: [0, -10] }) }],
+    }}
+  >
+    i
+  </RNAnimated.Text>
+</View>
+          <RNAnimated.Text
+            style={{
+              marginTop: 24,
+              color: "rgba(255,255,255,0.7)",
+              fontWeight: "700",
+              letterSpacing: 1,
+            }}
+          >
+            Loading{splashLoadingDots}
+          </RNAnimated.Text>
+        </RNAnimated.View>
+      ) : null}
+
+{/* ✅ FIRST-TIME ONBOARDING OVERLAY */}
+{showOnboard ? (
+
+<Pressable
+  onPress={skipOnboard}
+  pointerEvents={showOnboard ? "auto" : "none"}
+  style={[StyleSheet.absoluteFillObject, { zIndex: 9988 }]}
+>
+    <RNAnimated.View
+      pointerEvents="none"
+      style={[
+        StyleSheet.absoluteFillObject,
+        { opacity: onboardOpacity },
+      ]}
+    >
+      <BlurView intensity={42} tint="dark" style={StyleSheet.absoluteFillObject} />
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.25)" }]} />
+    </RNAnimated.View>
+
+    <RNAnimated.View
+      pointerEvents="none"
+      style={{
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        opacity: onboardOpacity,
+        transform: [{ scale: onboardScale }],
+      }}
+    >
+      <RNAnimated.View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          width: 220,
+          height: 220,
+          borderRadius: 110,
+          borderWidth: 2,
+          borderColor: "rgba(255,255,255,0.12)",
+          opacity: onboardGlow.interpolate({ inputRange: [0, 1], outputRange: [0.22, 0.05] }),
+          transform: [{ scale: onboardGlow.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.08] }) }],
+        }}
+      />
+
+      <Text style={{ color: "white", fontSize: 54, fontWeight: "900", letterSpacing: -1.2 }}>
+        Evan AI
+      </Text>
+      <Text style={{ marginTop: 12, color: "rgba(255,255,255,0.72)", fontWeight: "900", letterSpacing: 0.6 }}>
+        Scan smarter.
+      </Text>
+      <Text style={{ marginTop: 10, color: "rgba(255,255,255,0.55)", fontWeight: "800", fontSize: 12 }}>
+        tap anywhere to start
+      </Text>
+    </RNAnimated.View>
+  </Pressable>
+) : null}
+
+{/* ===== TOP HUD (CAMERA ONLY) ===== */}
+{tab === "camera" && !photo && !loadingResults && !showSplash ? (
+  <RNAnimated.View
+    pointerEvents="box-none"
+    style={{
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      zIndex: 9999,
+      opacity: RNAnimated.multiply(topHudOpacity, cameraUiOpacity),
+      transform: [{ translateY: topHudY }],
+    }}
+  >
+    {/* Free scans pill */}
+    <Pressable
+      onPress={() => {
+        hapticSelect?.();
+        setProfileModal("subscription");
+      }}
+      style={({ pressed }) => [
+        {
+          position: "absolute",
+          top: TOP + 8,
+          left: 16,
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+          borderRadius: 999,
+          backgroundColor: "rgba(0,0,0,0.35)",
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.12)",
+        },
+        pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+      ]}
+    >
+      <Text style={{ color: "white", fontSize: 16, fontWeight: "800" }}>
+        {isPro ? "Pro · Unlimited" : `${scansUsed || 0}/${FREE_SCAN_LIMIT_SAFE} free scans`}
+      </Text>
+      <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, fontWeight: "800", marginTop: 2 }}>
+        Tap to upgrade
+      </Text>
+    </Pressable>
+
+    {/* Flashlight */}
+    <Pressable
+      onPress={() => {
+        hapticSelect?.();
+        setTorchOn((v) => !v);
+      }}
+      style={({ pressed }) => [
+        {
+          position: "absolute",
+          top: TOP + 8,
+          right: 16,
+          width: 46,
+          height: 46,
+          borderRadius: 23,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: torchOn ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.35)",
+          borderWidth: 1,
+          borderColor: torchOn ? "rgba(255,255,255,0.24)" : "rgba(255,255,255,0.12)",
+        },
+        pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+      ]}
+    >
+      <Ionicons name={torchOn ? "flash" : "flash-outline"} size={20} color="white" />
+    </Pressable>
+
+    {/* Scan mode pills */}
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: "absolute",
+        top: TOP + 74,
+        left: 0,
+        right: 0,
+        alignItems: "center",
+      }}
+    >
+      <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+        {Object.values(SCAN_MODES).map((t) => {
+          const active = scanMode === t;
+          return (
+            <Pressable
+              key={t}
+              onPress={() => {
+                hapticSelect?.();
+                setScanMode(t as any);
+              }}
+              style={({ pressed }) => [
+                {
+                  paddingHorizontal: 18,
+                  paddingVertical: 10,
+                  borderRadius: 999,
+                  backgroundColor: active ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.10)",
+                  borderWidth: 1,
+                  borderColor: active ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.14)",
+                },
+                pressed && { opacity: 0.92, transform: [{ scale: 0.985 }] },
+              ]}
+            >
+              <Text style={{ color: "white", fontSize: 16, fontWeight: "900" }}>
+                {t[0].toUpperCase() + t.slice(1)}
+              </Text>
+            </Pressable>
+          );
+        })}
+
+        {/* Barcode pill */}
+        <Pressable
+          onPress={() => {
+            hapticSelect?.();
+            setBarcodeMode((v) => !v);
+            setLastBarcode(null);
+          }}
+          style={({ pressed }) => [
+            {
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              borderRadius: 999,
+              backgroundColor: barcodeMode ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.10)",
+              borderWidth: 1,
+              borderColor: barcodeMode ? "rgba(255,255,255,0.26)" : "rgba(255,255,255,0.14)",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+            },
+            pressed && { opacity: 0.92, transform: [{ scale: 0.985 }] },
+          ]}
+        >
+          <Ionicons name="barcode-outline" size={18} color="white" />
+          <Text style={{ color: "white", fontSize: 16, fontWeight: "900" }}>
+            Barcode
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  </RNAnimated.View>
+) : null}
+
+{/* CAMERA TAB (ALWAYS MOUNTED — NO REMOUNT DELAY) */}
+<RNAnimated.View
+  style={[
+    styles.tabFull,
+{
+  backgroundColor: TOK.C.bg,
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  opacity: tab === "camera" ? tabFade : 0,
+  zIndex: tab === "camera" ? 30 : -1,
+},
+  ]}
+pointerEvents={tab === "camera" && tabInteractable ? "auto" : "none"}
+>
+<View style={{ flex: 1 }}>
+
+  {/* CAMERA + PINCH */}
+  <GestureDetector gesture={pinch}>
+    <View style={{ flex: 1 }} collapsable={false}>
+      {permission?.granted ? (
+
+<AnimatedCameraView
+  ref={cameraRef}
+  key={CAMERA_KEY}
+  style={[
+    StyleSheet.absoluteFillObject, // ✅ force-fill
+    styles.camera,
+    {
+      opacity: showSplash ? 0.85 : 1,
+      transform: [{ scale: showSplash ? 1.02 : 1 }],
+    },
+  ]}
+          facing={cameraFacing}
+          enableTorch={torchOn}
+          animatedProps={cameraAnimatedProps}
+          // ✅ Keep camera session alive to prevent re-init flash
+          active={permission?.granted}
+          onCameraReady={() => setCameraReady(true)}
+          barcodeScannerSettings={{
+            barcodeTypes: [
+              "ean13",
+              "ean8",
+              "upc_a",
+              "upc_e",
+              "code128",
+              "code39",
+            ],
+          }}
+
+onBarcodeScanned={(d) => {
+  if (!barcodeModeRef.current) return;
+  onBarcodeScanned(d);
+}}
+        />
+      ) : (
+        <View style={[styles.black, styles.center]}>
+          <Text style={styles.permissionText}>Camera permission is required</Text>
+          <Pressable onPress={requestPermission} style={styles.permissionBtn}>
+            <Text style={styles.permissionBtnText}>Enable Camera</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  </GestureDetector>
+
+{/* POLISH #4 — cinematic freeze frame */}
+{freezeFrameUri && (
+  <RNAnimated.Image
+    source={{ uri: freezeFrameUri }}
+    style={[
+      StyleSheet.absoluteFillObject,
+      {
+        opacity: freezeOpacity,
+      },
+    ]}
+    resizeMode="cover"
+  />
+)}
+
+<NeuralScanOverlay
+  active={scanAnimActive}
+  onFinished={onScanAnimFinished}
+/>
+
+{/* ✅ Cinematic freeze frame (120–180ms) */}
+{cinematicFreeze ? (
+  <RNAnimated.View
+    pointerEvents="none"
+    style={[
+      StyleSheet.absoluteFillObject,
+      { opacity: freezeOpacity },
+    ]}
+  >
+    <BlurView
+      intensity={14}
+      tint="dark"
+      style={StyleSheet.absoluteFillObject}
+    />
+    <View
+      style={[
+        StyleSheet.absoluteFillObject,
+        { backgroundColor: "rgba(0,0,0,0.10)" },
+      ]}
+    />
+  </RNAnimated.View>
+) : null}
+
+{/* ✅ Dark vignette fade (cinematic) */}
+<RNAnimated.View
+  pointerEvents="none"
+  style={[
+    StyleSheet.absoluteFillObject,
+    {
+      opacity: vignetteOpacity,
+      backgroundColor: "rgba(0,0,0,0.35)",
+    },
+  ]}
+/>
+
+{/* Rectangular framing guide (camera calm) */}
+{!photo && !loadingResults ? (
+  <View
+    pointerEvents="none"
+    style={[
+      styles.frame,
+      {
+        // ✅ centered spacing: push guide a bit lower
+        transform: [{ translateY: 64 }],
+      },
+    ]}
+  />
+) : null}
+
+  {/* Barcode scanning frame (only when barcodeMode ON) */}
+  {barcodeMode && !photo && !loadingResults ? (
+    <View pointerEvents="none" style={styles.barcodeOverlay}>
+      <View style={styles.barcodeFrame}>
+        <RNAnimated.View style={[styles.barcodeFrameGlow, { opacity: barcodeAck }]} />
+        <RNAnimated.View
+          style={[
+            styles.barcodeScanLine,
+            { transform: [{ translateY: barcodeLineY }] },
+          ]}
+        />
+      </View>
+      <Text style={styles.barcodeHint}>Align barcode inside frame</Text>
+    </View>
+  ) : null}
+
+  {/* PREVIEW */}
+  {photo ? (
+    <View style={styles.previewOverlay}>
+      <Image source={{ uri: photo.uri }} style={styles.previewImage} />
+
+      <RNAnimated.View
+        style={{
+          position: "absolute",
+          left: 18,
+          right: 18,
+          bottom: previewBottom,
+          opacity: previewPanelOpacity,
+          transform: [{ translateY: previewPanelY }],
+        }}
+      >
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.priceLabel}>Original price</Text>
+            <TextInput
+              value={scanPriceInput}
+              onChangeText={setScanPriceInput}
+              placeholder="$0.00"
+              placeholderTextColor="rgba(255,255,255,0.35)"
+              keyboardType="numeric"
+              style={styles.priceInput}
+              returnKeyType="next"
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.priceLabel}>Cheapest alternative</Text>
+            <TextInput
+              value={cheapestAltInput}
+              onChangeText={setCheapestAltInput}
+              placeholder="$0.00"
+              placeholderTextColor="rgba(255,255,255,0.35)"
+              keyboardType="numeric"
+              style={styles.priceInput}
+              returnKeyType="done"
+            />
+          </View>
+        </View>
+
+        {/* Optional item name / brand hint — expandable chip */}
+        <ItemHintInput
+          value={itemNameInput}
+          onChange={setItemNameInput}
+          resetKey={photo?.uri ?? null}
+        />
+
+        <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+          <Pressable onPress={reset} style={[styles.modalSecondary, { flex: 1 }]}>
+            <Text style={styles.modalSecondaryText}>Retake</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleUsePhoto}
+            disabled={!canUsePhoto}
+            style={[styles.modalPrimary, { flex: 1, marginBottom: 0, opacity: canUsePhoto ? 1 : 0.45 }]}
+          >
+            <Text style={styles.modalPrimaryText}>Use photo →</Text>
+          </Pressable>
+        </View>
+
+        <Text style={styles.previewHint}>
+          Enter both prices · name helps AI find it faster
+        </Text>
+      </RNAnimated.View>
+    </View>
+  ) : null}
+
+
+{/* Live Activity Ticker */}
+{!photo && !loadingResults && !showSplash ? (
+  <RNAnimated.View
+    pointerEvents="none"
+    style={{
+      position: "absolute",
+      bottom: CAMERA_CONTROLS_BOTTOM + 170,
+      left: 0,
+      right: 0,
+      height: 28,
+      overflow: "hidden",
+      opacity: cameraUiOpacity,
+    }}
+  >
+    <View style={{
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.38)",
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderColor: "rgba(255,255,255,0.08)",
+      justifyContent: "center",
+      overflow: "hidden",
+    }}>
+      <RNAnimated.Text
+        style={{
+          color: "rgba(255,255,255,0.75)",
+          fontSize: 11,
+          fontWeight: "600",
+          letterSpacing: 0.3,
+          transform: [{ translateX: tickerX }],
+          paddingLeft: 16,
+          width: TICKER_TOTAL_W * 2 + 300,
+        }}
+      >
+        {TICKER_TEXT}
+      </RNAnimated.Text>
+    </View>
+  </RNAnimated.View>
+) : null}
+
+{/* BOTTOM CAMERA CONTROLS (ABOVE TAB BAR, NO OVERLAY) */}
+{!photo && !loadingResults ? (
+  <RNAnimated.View
+    style={[
+      styles.cameraControlsRow,
+      { bottom: CAMERA_CONTROLS_BOTTOM, opacity: cameraUiOpacity },
+    ]}
+    pointerEvents={cameraReady && !showSplash ? "auto" : "none"}
+  >
+    {/* ── Mode strip — Batch & Receipt toggles ──────────────────────── */}
+    <View style={{
+      position: "absolute",
+      bottom: 88,
+      left: 0,
+      right: 0,
+      flexDirection: "row",
+      justifyContent: "center",
+      gap: 10,
+      pointerEvents: "box-none",
+    }}>
+      {/* Batch mode toggle */}
+      <Pressable
+        onPress={() => {
+          hapticSelect();
+          setBatchMode((v) => !v);
+          if (receiptMode) setReceiptMode(false);
+        }}
+        style={[{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 5,
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+          borderRadius: 20,
+          borderWidth: 1,
+          backgroundColor: batchMode ? "rgba(120,255,180,0.15)" : "rgba(0,0,0,0.45)",
+          borderColor: batchMode ? "rgba(120,255,180,0.50)" : "rgba(255,255,255,0.18)",
+        }]}
+      >
+        <Ionicons
+          name="layers-outline"
+          size={14}
+          color={batchMode ? "rgba(120,255,180,0.9)" : "rgba(255,255,255,0.65)"}
+        />
+        <Text style={{
+          fontSize: 11,
+          fontWeight: "600",
+          color: batchMode ? "rgba(120,255,180,0.9)" : "rgba(255,255,255,0.65)",
+          letterSpacing: 0.3,
+        }}>
+          {batchMode && batchQueue.filter((j) => j.status === "done").length > 0
+            ? `Batch · ${batchQueue.filter((j) => j.status === "done").length} done`
+            : "Batch"}
+        </Text>
+      </Pressable>
+
+      {/* Receipt mode toggle */}
+      <Pressable
+        onPress={() => {
+          hapticSelect();
+          setReceiptMode((v) => !v);
+          if (batchMode) setBatchMode(false);
+        }}
+        style={[{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 5,
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+          borderRadius: 20,
+          borderWidth: 1,
+          backgroundColor: receiptMode ? "rgba(120,180,255,0.15)" : "rgba(0,0,0,0.45)",
+          borderColor: receiptMode ? "rgba(120,180,255,0.50)" : "rgba(255,255,255,0.18)",
+        }]}
+      >
+        <Ionicons
+          name="receipt-outline"
+          size={14}
+          color={receiptMode ? "rgba(120,180,255,0.9)" : "rgba(255,255,255,0.65)"}
+        />
+        <Text style={{
+          fontSize: 11,
+          fontWeight: "600",
+          color: receiptMode ? "rgba(120,180,255,0.9)" : "rgba(255,255,255,0.65)",
+          letterSpacing: 0.3,
+        }}>
+          Receipt
+        </Text>
+      </Pressable>
+
+      {/* Inventory Scan button — opens new BatchScanScreen */}
+      <Pressable
+        onPress={() => { hapticSelect?.(); setBatchInventoryOpen(true); }}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 5,
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+          borderRadius: 20,
+          borderWidth: 1,
+          backgroundColor: "rgba(0,0,0,0.45)",
+          borderColor: "rgba(255,255,255,0.18)",
+        }}
+      >
+        <Ionicons name="albums-outline" size={14} color="rgba(255,255,255,0.65)" />
+        <Text style={{ fontSize: 11, fontWeight: "600", color: "rgba(255,255,255,0.65)", letterSpacing: 0.3 }}>
+          Inventory
+        </Text>
+      </Pressable>
+    </View>
+
+    {/* LEFT SLOT (fixed width) */}
+    <View style={{ width: 72, alignItems: "flex-start" }}>
+      <Pressable
+        onPress={() => {
+          if (batchMode) {
+            setBatchOpen(true);
+          } else {
+            pickFromRoll();
+          }
+        }}
+        style={({ pressed }) => [
+          styles.sideBtn,
+          pressed && styles.sideBtnPressed,
+        ]}
+      >
+        <Ionicons
+          name={batchMode ? "list-outline" : "images-outline"}
+          size={24}
+          color={batchMode ? "rgba(120,255,180,0.9)" : "white"}
+        />
+        {batchMode && batchQueue.length > 0 ? (
+          <View style={{
+            position: "absolute",
+            top: -4,
+            right: -4,
+            width: 16,
+            height: 16,
+            borderRadius: 8,
+            backgroundColor: "rgba(120,255,180,0.9)",
+            alignItems: "center",
+            justifyContent: "center",
+          }}>
+            <Text style={{ fontSize: 9, color: "#000", fontWeight: "800" }}>
+              {batchQueue.length > 99 ? "99" : String(batchQueue.length)}
+            </Text>
+          </View>
+        ) : null}
+      </Pressable>
+    </View>
+
+    {/* CENTER SLOT (true center) */}
+    <View style={{ flex: 1, alignItems: "center" }}>
+      <Pressable
+        onPress={takePhoto}
+        style={({ pressed }) => [
+          styles.shutterPressable,
+          pressed && { opacity: 0.96, transform: [{ scale: 0.99 }] },
+        ]}
+      >
+        <RNAnimated.View
+          style={[
+            styles.shutterOuter,
+            { transform: [{ scale: snapScale }] },
+            batchMode  ? { borderColor: "rgba(120,255,180,0.7)", borderWidth: 3 } : null,
+            receiptMode ? { borderColor: "rgba(120,180,255,0.7)", borderWidth: 3 } : null,
+          ]}
+        >
+          <RNAnimated.View
+            pointerEvents="none"
+            style={[
+              styles.shutterBurstRing,
+              {
+                opacity: ringOpacity,
+                transform: [{ scale: ringScale }],
+              },
+            ]}
+          />
+          <View style={styles.shutterInner} />
+        </RNAnimated.View>
+      </Pressable>
+
+      {/* Particle burst — 8 dots radiate from shutter center */}
+      <View pointerEvents="none" style={{ position: "absolute", width: 0, height: 0, alignItems: "center", justifyContent: "center" }}>
+        {particleAnims.map((p, i) => (
+          <RNAnimated.View
+            key={i}
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              width: i % 2 === 0 ? 7 : 5,
+              height: i % 2 === 0 ? 7 : 5,
+              borderRadius: 4,
+              backgroundColor: i % 3 === 0 ? "rgba(255,255,255,0.95)" : i % 3 === 1 ? "rgba(200,240,255,0.85)" : "rgba(255,220,120,0.80)",
+              opacity: p.opacity,
+              transform: [{ translateX: p.x }, { translateY: p.y }, { scale: p.scale }],
+            }}
+          />
+        ))}
+      </View>
+    </View>
+
+    {/* RIGHT SLOT (fixed width) */}
+    <View style={{ width: 72, alignItems: "flex-end" }}>
+      <Pressable
+        onPress={flipCamera}
+        style={({ pressed }) => [
+          styles.cameraSideBtn,
+          pressed && styles.cameraSideBtnPressed,
+        ]}
+      >
+        <Ionicons name="camera-reverse-outline" size={24} color="white" />
+      </Pressable>
+    </View>
+  </RNAnimated.View>
+) : null}
+</View>
+
+</RNAnimated.View>
+{/* RESULTS SCREEN */}
+<RNAnimated.View
+style={[
+  styles.full,
+{
+  backgroundColor: "transparent",
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+
+  opacity: tab === "results" ? tabFade : 0,
+
+  transform: [
+    {
+      translateY: tabFade.interpolate({
+        inputRange: [0, 1],
+        outputRange: [8, 0],
+      }),
+    },
+    {
+      scale: tabFade.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.995, 1],
+      }),
+    },
+  ],
+
+  zIndex: tab === "results" ? 30 : -1,
+},
+]}
+  pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
+>
+<SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+<ScrollView
+  style={[styles.page, { flex: 1 }]}
+  contentContainerStyle={{ flexGrow: 1, paddingTop: 12, paddingBottom: 100, backgroundColor: "transparent" }}
+  showsVerticalScrollIndicator={false}
+  bounces={true}
+  alwaysBounceVertical={true}
+  overScrollMode="always"
+  scrollEventThrottle={16}
+  scrollEnabled={!loadingResults}
+  keyboardShouldPersistTaps="handled"
+  nestedScrollEnabled={true}
+>
+
+{/* Top bar (Safe Area protected) */}
+{!loadingResults ? (
+  <View
+    style={[
+      styles.resultsTopBar,
+      {
+        marginBottom: 10,
+        paddingTop: 0,
+        backgroundColor: "transparent",
+        zIndex: 20,
+      },
+    ]}
+  >
+    <Pressable
+      onPress={() => goTab("camera")}
+      style={({ pressed }) => [
+        styles.resultsBackRow,
+        pressed && { opacity: 0.85 },
+      ]}
+    >
+      <Ionicons name="chevron-back" size={20} color="white" />
+      <Text style={styles.resultsBackText}>Camera</Text>
+    </Pressable>
+
+    <Pressable
+      onPress={startNewScan}
+      style={({ pressed }) => [
+        styles.resultsNewScanPill,
+        pressed && {
+          opacity: 0.92,
+          transform: [{ scale: 0.985 }],
+        },
+      ]}
+    >
+      <Ionicons name="camera-outline" size={18} color="white" />
+      <Text style={styles.resultsNewScanText}>New scan</Text>
+    </Pressable>
+  </View>
+) : null}
+
+
+<ResultsContent
+  activeResult={activeResult}
+  results={results}
+  loadingResults={loadingResults}
+  loadingPhotoUri={loadingPhotoUri}
+  uiError={uiError}
+  priceChangeBanner={priceChangeBanner}
+  scanStage={scanStage}
+  scanStageMeta={scanStageMeta}
+  showRetryWhileLoading={showRetryWhileLoading}
+  loadingDots={loadingDots}
+  retryReveal={retryReveal}
+  retryScale={retryScale}
+  resultEntry={resultEntry}
+  neuralPulse={neuralPulse}
+  aiRevealActive={aiRevealActive}
+  weaponStats={weaponStats}
+  intelLevel={intelLevel}
+  lastScan={lastScan}
+  onCancel={cancelActiveScan}
+  onRetry={retrySameScan}
+  onNewScan={startNewScan}
+  onOpenListing={safeOpenUrl}
+  onTrack={addToWatchlist}
+  onCopy={async () => {
+    if (!activeResult) return;
+    hapticSelect?.();
+    await Clipboard.setStringAsync(buildShareCardTextV2(activeResult));
+    setSavedToast("Copied");
+  }}
+  onScanAgain={async () => {
+    if (!activeResult?.photoUri || loadingResults) return;
+    hapticSelect();
+    await runScan({
+      photoUri: activeResult.photoUri,
+      scannedPrice: activeResult.scannedPrice,
+      countScan: false,
+    });
+  }}
+  onProfitCalc={() => setProfitCalcOpen(true)}
+  onDetails={() => setResultModalOpen(true)}
+  onDismissError={() => setUiError(null)}
+  onRetryAfterError={() => { setUiError(null); retrySameScan(); }}
+  onZoomImage={(uri) => setZoomUri(uri)}
+  watchlist={watchlist}
+  onToggleWatchlist={toggleWatchlist}
+  onShareCard={async (card) => {
+    const name  = card?.itemName || card?.title || "this item";
+    const price = card?.price;
+    const saved = card?.savedAmount;
+    const msg   = saved && saved > 0
+      ? `Just saved $${Number(saved).toFixed(0)} using Evan AI! Found ${name} for $${Number(price).toFixed(2)}.\nCheck it out: https://evanai.app`
+      : `Found ${name} for $${Number(price).toFixed(2)} using Evan AI — AI price scanner.\nhttps://evanai.app`;
+    try { await Share.share({ message: msg }); } catch {}
+  }}
+  offlineCachedAt={offlineCachedAt}
+  onRefreshFromCache={() => {
+    // Clear cached state and retry the scan
+    setOfflineCachedAt(null);
+    if (activeResult?.photoUri) {
+      runScan({
+        photoUri: activeResult.photoUri,
+        scannedPrice: activeResult.scannedPrice ?? null,
+        countScan: false,
+      });
+    }
+  }}
+/>
+
+{/* Feature 8: Set Alert row — visible below results when item is loaded */}
+{activeResult && !loadingResults ? (
+  <View style={{ paddingHorizontal: 18, paddingTop: 6 }}>
+    <Pressable
+      onPress={() => setProfitCalcOpen(true)}
+      style={({ pressed }) => [{
+        flexDirection: "row", alignItems: "center", gap: 8,
+        backgroundColor: "rgba(255,200,0,0.07)",
+        borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+        borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,200,0,0.25)",
+        opacity: pressed ? 0.7 : 1,
+      }]}
+    >
+      <Ionicons name="notifications-outline" size={15} color="#ffc800" />
+      <Text style={{ color: "#ffc800", fontSize: 13, fontWeight: "600", flex: 1 }}>
+        {watchlist?.find((w: any) => w.query === activeResult?.query)?.targetPrice
+          ? `Alert set · $${watchlist.find((w: any) => w.query === activeResult?.query)?.targetPrice}`
+          : "Set price alert — notify me when below $X"}
+      </Text>
+      <Ionicons name="chevron-forward" size={13} color="rgba(255,200,0,0.5)" />
+    </Pressable>
+  </View>
+) : null}
+
+{/* Feature 12: Visual condition mismatch card */}
+{(activeResult && !loadingResults) ? (
+  <ConditionMismatchCard
+    assessment={conditionAssessment}
+    loading={conditionAssessLoading}
+    scannedPrice={activeResult?.scannedPrice}
+  />
+) : null}
+
+{/* Feature 11: Deep auth card */}
+{(activeResult && !loadingResults) ? (
+  <DeepAuthCard
+    result={deepAuthResult}
+    loading={deepAuthLoading}
+  />
+) : null}
+
+{/* Feature 13: Community comps */}
+{(activeResult && !loadingResults) ? (
+  <CommunityCompsCard
+    data={communityComps}
+    loading={communityCompsLoading}
+    query={activeResult?.visionQuery || activeResult?.itemName || null}
+    apiBase={process.env.EXPO_PUBLIC_API_URL ??
+      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001")}
+    userId={installId || effectiveReferralCode || "anon"}
+  />
+) : null}
+
+{/* Feature 2: Haggle Score */}
+{(activeResult && !loadingResults) ? (
+  <HaggleScoreCard
+    result={haggleResult}
+    loading={haggleLoading}
+    scannedPrice={activeResult?.scannedPrice ?? null}
+  />
+) : null}
+
+{/* Feature 10: Flip Scanner CTA row */}
+{activeResult && !loadingResults && (
+  <View style={{ paddingHorizontal: 18, paddingTop: 6, paddingBottom: 14 }}>
+    <Pressable
+      onPress={() => runFlipScanner(activeResult?.category || "sneakers")}
+      style={({ pressed }) => [{
+        flexDirection: "row", alignItems: "center", gap: 8,
+        backgroundColor: "rgba(80,255,150,0.07)",
+        borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+        borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(80,255,150,0.2)",
+        opacity: pressed ? 0.7 : 1,
+      }]}
+    >
+      <Text style={{ fontSize: 14 }}>🔍</Text>
+      <Text style={{ color: "#50ff96", fontSize: 13, fontWeight: "600", flex: 1 }}>
+        {zipCode ? "Scan for flip opportunities near me" : "Flip Scanner — set zip to find local deals"}
+      </Text>
+      {flipScanLoading
+        ? <ActivityIndicator size="small" color="#50ff96" />
+        : <Ionicons name="chevron-forward" size={13} color="rgba(80,255,150,0.5)" />}
+    </Pressable>
+  </View>
+)}
+</ScrollView>
+</SafeAreaView>
+</RNAnimated.View>
+
+
+{/* HISTORY (ALWAYS MOUNTED — NO REMOUNT DELAY) */}
+<RNAnimated.View
+  style={[
+    styles.tabFull,
+{
+  backgroundColor: "transparent",
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  opacity: tab === "history" ? tabFade : 0,
+  zIndex: tab === "history" ? 30 : -1,
+},
+  ]}
+pointerEvents={tab === "history" && tabInteractable ? "auto" : "none"}
+>
+  <View style={styles.page}>
+          <Text style={styles.pageTitle}>History</Text>
+          <View style={styles.savingsBox}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={styles.savingsTitle}>
+                Total saved: {money(savingsTotal)}
+              </Text>
+              {savingsTotal > 0 ? (
+                <Pressable
+                  onPress={() => {
+                    hapticSelect();
+                    Share.share({
+                      message: `I've saved ${money(savingsTotal)} using Evan AI — the AI-powered price scanner. Try it at evanai.app`,
+                    }).catch(() => {});
+                  }}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.08)", borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" }}
+                >
+                  <Ionicons name="share-outline" size={13} color="rgba(255,255,255,0.6)" />
+                  <Text style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", fontWeight: "500" }}>Share</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            <Text style={styles.savingsSub}>Savings across your scans.</Text>
+            {!hasUnlimited ? (
+              <Text style={styles.savingsSubStrong}>
+                Free scans reset every 30 days.
+              </Text>
+            ) : null}
+            </View>
+          {history.length === 0 ? (
+            <Text style={styles.muted}>No scans yet.</Text>
+          ) : (
+
+<RNAnimated.ScrollView
+  ref={historyScrollRef}
+  style={{ marginTop: 8 }}
+  contentContainerStyle={{ paddingBottom: 260, flexGrow: 1, minHeight: "120%" }}
+  showsVerticalScrollIndicator={false}
+  bounces={true}
+  alwaysBounceVertical={true}
+  overScrollMode="always"
+  scrollEventThrottle={16}
+  contentInsetAdjustmentBehavior="automatic"
+>
+
+{history.map((h) => {
+  return (
+<Pressable
+  key={h.id}
+  onPress={() => {
+    if (!h.resultCard) return;
+    hapticSelect();
+    setActiveResult(h.resultCard);
+    setNeuralLearningLevel((p) => Math.min(p + 1, 12));
+    setResults(h.resultCard.alternatives || []);
+    setLoadingResults(false);
+    setLoadingPhotoUri(h.uri || null);
+    setLastScan({
+      kind: "history",
+      confidence: h.resultCard.visionConfidence ?? 0,
+      query: h.resultCard.visionQuery ?? null,
+      results: h.resultCard.alternatives || [],
+    });
+    goTab("results");
+  }}
+  style={({ pressed }) => [
+    styles.historyRow,
+    pressed && { opacity: 0.9 },
+  ]}
+>
+
+<Pressable
+  onPress={() => {
+    hapticSelect();
+    if (h.uri) openHistoryPreview(h.uri);
+  }}
+  style={styles.historyThumbWrap}
+>
+  {h.uri ? (
+    <Image source={{ uri: h.uri }} style={styles.historyThumb} />
+  ) : (
+    <View style={styles.historyThumbFallback} />
+  )}
+</Pressable>
+
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={1} style={styles.historyTitle}>
+          {h.title || "Scan"}
+        </Text>
+        <Text style={styles.historyTime}>{h.timestamp}</Text>
+      </View>
+    </Pressable>
+  );
+})}
+</RNAnimated.ScrollView>
+          )}
+        </View>
+      </RNAnimated.View>
+
+{/* WATCHLIST */}
+<RNAnimated.View
+  style={[
+    styles.tabFull,
+{
+  backgroundColor: "transparent",
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  opacity: tab === "watchlist" ? tabFade : 0,
+  zIndex: tab === "watchlist" ? 30 : -1,
+},
+  ]}
+pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
+>
+  <View style={styles.page}>
+    <Text style={styles.pageTitle}>Watchlist</Text>
+    <Text style={styles.subStatus}>Daily price re-check · drop alerts · trends</Text>
+    <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+      <Pressable
+        onPress={() => {
+          hapticSelect();
+          runDailyWatchlistCheck({ force: true, quiet: false });
+          setSavedToast("Checking watchlist…");
+        }}
+        style={({ pressed }) => [
+          styles.profileBtn,
+          pressed && { opacity: 0.9, transform: [{ scale: 0.995 }] },
+          { flex: 1, alignItems: "center" },
+        ]}
+      >
+        <Text style={styles.profileBtnText}>Check now</Text>
+      </Pressable>
+      <Pressable
+        onPress={async () => {
+          hapticSelect();
+          const rows = [
+            "query,lastBest,lastChecked",
+            ...(watchlist || []).map((w) => {
+              const q = String(w.query || "").replace(/"/g, '""');
+              const b = toNumber(w.lastBest);
+              const t = w.lastCheckedMs ? new Date(w.lastCheckedMs).toISOString() : "";
+              return `"${q}",${Number.isFinite(b) ? b : ""},"${t}"`;
+            }),
+          ];
+          const csv = rows.join("\n");
+          await Clipboard.setStringAsync(csv);
+          setSavedToast("Watchlist CSV copied");
+        }}
+        style={({ pressed }) => [
+          styles.profileBtn,
+          pressed && { opacity: 0.9, transform: [{ scale: 0.995 }] },
+          { flex: 1, alignItems: "center" },
+        ]}
+      >
+        <Text style={styles.profileBtnText}>Export CSV</Text>
+      </Pressable>
+    </View>
+
+    {/* Feature 5: Hyperlocal pricing — zip code input */}
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.10)" }}>
+      <Ionicons name="location-outline" size={16} color="rgba(255,255,255,0.5)" />
+      <TextInput
+        value={zipCode}
+        onChangeText={setZipCode}
+        placeholder="Zip code for local pricing"
+        placeholderTextColor="rgba(255,255,255,0.3)"
+        keyboardType="numeric"
+        maxLength={10}
+        style={{ flex: 1, color: "white", fontSize: 13, fontFamily: "System" }}
+      />
+      {!!zipCode && (
+        <Pressable onPress={() => setZipCode("")} hitSlop={8}>
+          <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.4)" />
+        </Pressable>
+      )}
+    </View>
+
+{watchlist.length === 0 ? (
+  <Text style={[styles.muted, { marginTop: 18 }]}>
+    No tracked items yet. Go to Results → Track.
+  </Text>
+) : (
+
+<ScrollView
+  ref={watchlistScrollRef}
+  style={{ marginTop: 12 }}
+  showsVerticalScrollIndicator={false}
+  bounces
+  alwaysBounceVertical
+  overScrollMode="always"
+  scrollEventThrottle={16}
+  contentInsetAdjustmentBehavior="automatic"
+  contentContainerStyle={{
+  paddingBottom: 220,
+  paddingTop: 6,
+  flexGrow: 1,
+  minHeight: "100%",
+}}
+>
+
+    {watchlist.map((w, wIdx) => (
+      <WatchlistCard
+        key={w.id}
+        item={w}
+        index={wIdx}
+        tabVisible={tab === "watchlist"}
+        onRecheck={() => {
+          hapticSelect();
+          runDailyWatchlistCheck({ force: true, quiet: false });
+          setSavedToast("Checking…");
+        }}
+        onRemove={() => {
+          hapticSelect();
+          setWatchlist((prev) => prev.filter((x) => x.id !== w.id));
+          setSavedToast("Removed");
+        }}
+        onVisitScan={handleVisitScan}
+      />
+    ))}
+
+    {/* Feature 9: Smart Sell Suggestions */}
+    {relistSuggestions.length > 0 && (
+      <View style={{ marginTop: 20 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <Text style={{ fontSize: 14 }}>💰</Text>
+          <Text style={{ color: "white", fontWeight: "800", fontSize: 15 }}>Smart Sell Suggestions</Text>
+          {relistLoading && <ActivityIndicator size="small" color="rgba(255,255,255,0.4)" style={{ marginLeft: "auto" }} />}
+        </View>
+        {relistSuggestions.map((s: any, i: number) => {
+          const urgColor = s.urgency === "high" ? "#ff5050" : s.urgency === "medium" ? "#ffc800" : "rgba(255,255,255,0.45)";
+          const actionLabel = s.action === "sell_now" ? "SELL NOW" : s.action === "hold" ? "HOLD" : "WAIT";
+          const actionBg = s.action === "sell_now" ? "rgba(80,255,150,0.10)" : s.action === "hold" ? "rgba(100,180,255,0.08)" : "rgba(255,255,255,0.04)";
+          const actionColor = s.action === "sell_now" ? "#50ff96" : s.action === "hold" ? "#64b4ff" : "rgba(255,255,255,0.4)";
+          return (
+            <View key={i} style={{
+              backgroundColor: actionBg, borderRadius: 14,
+              borderWidth: StyleSheet.hairlineWidth, borderColor: `${actionColor}40`,
+              padding: 14, marginBottom: 10, gap: 6,
+            }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: "white", fontWeight: "700", fontSize: 13 }} numberOfLines={1}>{s.query}</Text>
+                  <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, marginTop: 1 }}>
+                    Held {s.daysHeld}d · Market {money(s.currentMarket)} · {s.trend === "rising" ? "📈" : s.trend === "falling" ? "📉" : "→"} {Math.abs(s.trendPct)}%
+                  </Text>
+                </View>
+                <View style={{ backgroundColor: `${actionColor}20`, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8 }}>
+                  <Text style={{ color: actionColor, fontWeight: "800", fontSize: 11 }}>{actionLabel}</Text>
+                </View>
+              </View>
+              <Text style={{ color: urgColor, fontSize: 12, lineHeight: 17 }}>{s.reason}</Text>
+              {s.profitEstimate !== null && (
+                <View style={{ flexDirection: "row", gap: 12 }}>
+                  <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>
+                    Net: <Text style={{ color: s.profitEstimate > 0 ? "#50ff96" : "#ff6060", fontWeight: "700" }}>{money(s.profitEstimate)}</Text>
+                  </Text>
+                  {s.roiPct !== null && (
+                    <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>
+                      ROI: <Text style={{ color: s.roiPct >= 20 ? "#50ff96" : s.roiPct >= 0 ? "#ffc800" : "#ff6060", fontWeight: "700" }}>{s.roiPct}%</Text>
+                    </Text>
+                  )}
+                  {s.optimalListPrice && (
+                    <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>
+                      List at: <Text style={{ color: "white", fontWeight: "600" }}>{money(s.optimalListPrice)}</Text>
+                    </Text>
+                  )}
+                </View>
+              )}
+              {s.expiresIn && (
+                <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>⏱ Opportunity window: {s.expiresIn}</Text>
+              )}
+            </View>
+          );
+        })}
+      </View>
+    )}
+    {relistLoading && relistSuggestions.length === 0 && (
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 20, padding: 14 }}>
+        <ActivityIndicator size="small" color="rgba(255,255,255,0.3)" />
+        <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Analyzing your items…</Text>
+      </View>
+    )}
+
+    {/* Feature 3: Local Deal Radar */}
+    <LocalRadar
+      data={radarData}
+      loading={radarLoading}
+      zipCode={zipCode}
+      watchlistQueries={watchlist.map((w) => w.query).filter(Boolean)}
+      watchlistTargets={Object.fromEntries(
+        watchlist
+          .filter((w) => w.query && Number.isFinite(toNumber(w.lastBest)))
+          .map((w) => [w.query, toNumber(w.lastBest)])
+      )}
+      apiBase={process.env.EXPO_PUBLIC_API_URL ??
+        (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001")}
+      onRefresh={loadRadar}
+      onPressItem={(url) => { try { Linking.openURL(url); } catch {} }}
+    />
+
+  </ScrollView>
+)}
+
+  </View>
+</RNAnimated.View>
+
+ {/* PROFILE */}
+<RNAnimated.View
+  style={[
+    styles.tabFull,
+{
+  backgroundColor: "transparent",
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  opacity: tab === "profile" ? 1 : 0,
+  zIndex: tab === "profile" ? 30 : -1,
+}
+  ]}
+  pointerEvents={tab === "profile" && tabInteractable ? "auto" : "none"}
+>
+  {/* ✅ fade ONLY the content, not the actual tab container */}
+  <RNAnimated.View style={{ flex: 1, opacity: tab === "profile" ? tabFade : 0 }}>
+
+<ScrollView
+  ref={profileScrollRef}
+  style={{ flex: 1 }}
+  contentContainerStyle={{ paddingBottom: 280, flexGrow: 1, minHeight: "120%" }}
+  showsVerticalScrollIndicator={false}
+  bounces={true}
+  alwaysBounceVertical={true}
+  overScrollMode="always"
+  scrollEventThrottle={16}
+  contentInsetAdjustmentBehavior="always"
+  keyboardShouldPersistTaps="handled"
+>
+
+        <View style={styles.page}>
+<View
+  style={{
+    marginTop: 24,
+    padding: 16,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+  }}
+>
+{/* Referral Program moved to bottom */}
+<View style={[styles.profileHeaderRow, { gap: 12 }]}>
+  <View style={{ flex: 1, paddingRight: 10 }}>
+    <Text style={styles.pageTitle}>Profile</Text>
+
+    <Text
+      style={{
+        color: "rgba(255,255,255,0.55)",
+        fontWeight: "800",
+        marginTop: 2,
+      }}
+      numberOfLines={1}
+      ellipsizeMode="tail"
+    >
+      {`Your resale intelligence is compounding${loadingDots}`}
+    </Text>
+
+    <Text style={styles.subStatus} numberOfLines={1} ellipsizeMode="tail">
+      {statusLabel}
+    </Text>
+  </View>
+
+  <Pressable
+    onPress={() => {
+      hapticSelect();
+      if (isSignedIn) {
+        setIsSignedIn(false);
+        setIsPro(false);
+        setShowPaywall(false);
+      } else {
+        setAuthModalOpen(true);
+      }
+    }}
+    style={({ pressed }) => [
+      styles.signInBtn,
+      pressed && styles.tabPressed,
+      {
+        maxWidth: 130,        // ✅ prevents off-screen
+        paddingHorizontal: 10, // ✅ slightly tighter
+        paddingVertical: 9,
+        borderRadius: 14,
+      },
+    ]}
+  >
+    <Ionicons name="person-circle-outline" size={18} color="white" />
+    <Text style={[styles.signInText, { fontSize: 13 }]} numberOfLines={1}>
+      {isSignedIn ? "Sign out" : "Sign in"}
+    </Text>
+  </Pressable>
+</View>
+
+{/* Feature 14: Public Savings Profile Card */}
+{(savingsTotal > 0 || scansUsed > 0) ? (
+  <View style={{
+    marginTop: 14,
+    padding: 16,
+    borderRadius: 18,
+    backgroundColor: "rgba(80,255,150,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(80,255,150,0.18)",
+    gap: 10,
+  }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "rgba(80,255,150,0.10)", paddingHorizontal: 9, paddingVertical: 4, borderRadius: 99 }}>
+        <Ionicons name="trophy-outline" size={13} color="#50ff96" />
+        <Text style={{ color: "#50ff96", fontSize: 11, fontWeight: "700" }}>My Savings Card</Text>
+      </View>
+      <Pressable
+        onPress={() => {
+          hapticSelect?.();
+          const uid = installId || effectiveReferralCode || "EVAN";
+          const msg = `🏆 My Evan AI Stats:\n💰 Saved: ${money(savingsTotal)}\n📸 Scans: ${scansUsed}\n\nScan smarter → https://evanai.app`;
+          Share.share({ message: msg }).catch(() => {});
+        }}
+        style={({ pressed }) => [{
+          marginLeft: "auto",
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 4,
+          backgroundColor: "rgba(80,255,150,0.12)",
+          paddingHorizontal: 10,
+          paddingVertical: 5,
+          borderRadius: 99,
+          opacity: pressed ? 0.7 : 1,
+        }]}
+      >
+        <Ionicons name="share-outline" size={13} color="#50ff96" />
+        <Text style={{ color: "#50ff96", fontSize: 11, fontWeight: "700" }}>Share</Text>
+      </Pressable>
+    </View>
+
+    <View style={{ flexDirection: "row", gap: 12 }}>
+      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(80,255,150,0.06)", borderRadius: 12, padding: 12, gap: 2 }}>
+        <Text style={{ color: "#50ff96", fontSize: 22, fontWeight: "900" }}>{money(savingsTotal)}</Text>
+        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 10, fontWeight: "600", textTransform: "uppercase" }}>Total Saved</Text>
+      </View>
+      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(130,200,255,0.06)", borderRadius: 12, padding: 12, gap: 2 }}>
+        <Text style={{ color: "#82c8ff", fontSize: 22, fontWeight: "900" }}>{scansUsed}</Text>
+        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 10, fontWeight: "600", textTransform: "uppercase" }}>Scans Run</Text>
+      </View>
+      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(255,200,0,0.06)", borderRadius: 12, padding: 12, gap: 2 }}>
+        <Text style={{ color: "#ffd060", fontSize: 22, fontWeight: "900" }}>{history?.length ?? 0}</Text>
+        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 10, fontWeight: "600", textTransform: "uppercase" }}>Items Found</Text>
+      </View>
+    </View>
+
+    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 10, fontWeight: "500", textAlign: "center" }}>
+      Tap Share to show your savings · powered by Evan AI
+    </Text>
+  </View>
+) : null}
+
+{/* Feature 1: P&L Tracker */}
+<PLTracker
+  flips={plFlips}
+  onAdd={handlePlAdd}
+  onDelete={handlePlDelete}
+  onMarkSold={handlePlMarkSold}
+/>
+
+          <Pressable
+            style={styles.profileBtn}
+            onPress={() => {
+              hapticSelect();
+              if (!isSignedIn) {
+                setAuthModalOpen(true);
+                return;
+              }
+              setProfileModal("subscription");
+            }}
+          >
+            <View style={styles.inlineRow}>
+              <Ionicons name="sparkles-outline" size={18} color="white" />
+              <Text style={styles.profileBtnText}>Subscription</Text>
+            </View>
+          </Pressable>
+          <Pressable
+            style={styles.profileBtn}
+            onPress={() => {
+              hapticSelect();
+              setProfileModal("payments");
+            }}
+          >
+            <View style={styles.inlineRow}>
+              <Ionicons name="card-outline" size={18} color="white" />
+              <Text style={styles.profileBtnText}>Payment methods</Text>
+            </View>
+          </Pressable>
+{watchlist.length ? (
+  <View style={styles.savingsBox}>
+    <Text style={styles.savingsTitle}>Price tracking</Text>
+    <Text style={styles.savingsSub}>Tap to check if it dropped.</Text>
+    <View style={{ marginTop: 10, gap: 10 }}>
+      {watchlist.slice(0, 5).map((w) => (
+        <Pressable
+          key={w.id}
+          style={styles.profileBtn}
+          onPress={async () => {
+            hapticSelect();
+runDailyWatchlistCheck({ force: true, quiet: false });
+setSavedToast("Checking…");
+          }}
+        >
+          <Text style={styles.profileBtnText} numberOfLines={2}>
+            {w.query}
+          </Text>
+          <Text style={styles.savingsSub}>Last best: {money(toNumber(w.lastBest))}</Text>
+        </Pressable>
+      ))}
+    </View>
+  </View>
+) : null}
+
+<Pressable
+  style={styles.profileBtn}
+  onPress={() => {
+    hapticSelect?.();
+    setProfileModal("billion");
+  }}
+>
+  <View style={styles.inlineRow}>
+    <Ionicons name="rocket-outline" size={18} color="white" />
+    <Text style={styles.profileBtnText}>Billionaire features</Text>
+  </View>
+  <Text style={styles.savingsSub}>
+    Seller mode · inventory · multi-item scan · cloud tools · referral rewards
+  </Text>
+</Pressable>
+
+<Pressable
+  style={styles.profileBtn}
+  onPress={() => {
+    hapticSelect();
+    setProfileModal("different");
+  }}
+>
+  <Text style={styles.profileBtnText}>
+    How Evan AI is different
+  </Text>
+</Pressable>
+<Pressable
+  style={styles.profileBtn}
+  onPress={() => {
+    hapticSelect();
+    openHelp();
+  }}
+>
+  <View style={styles.inlineRow}>
+    <Ionicons name="help-circle-outline" size={18} color="white" />
+    <Text style={styles.profileBtnText}>Help</Text>
+  </View>
+</Pressable>
+          <Pressable
+            style={styles.profileBtn}
+            onPress={() => {
+              hapticSelect();
+              setProfileModal("review");
+            }}
+          >
+            <View style={styles.inlineRow}>
+              <Ionicons name="star-outline" size={18} color="white" />
+              <Text style={styles.profileBtnText}>Leave a review</Text>
+            </View>
+          </Pressable>
+          <Pressable
+            style={styles.profileBtn}
+            onPress={() => {
+              hapticSelect();
+              setProfileModal("terms");
+            }}
+          >
+            <View style={styles.inlineRow}>
+              <Ionicons name="document-text-outline" size={18} color="white" />
+              <Text style={styles.profileBtnText}>Terms of Service</Text>
+            </View>
+          </Pressable>
+<View style={{ marginTop: 18 }}>
+  <View
+    style={{
+      padding: 16,
+      borderRadius: 20,
+      backgroundColor: "rgba(255,255,255,0.06)",
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.15)",
+    }}
+  >
+    <Text style={{ color: "white", fontWeight: "900", fontSize: 16 }}>
+      Referral Program
+    </Text>
+
+    <Text style={{ color: "rgba(255,255,255,0.7)", marginTop: 6, fontWeight: "700" }}>
+      Code
+    </Text>
+
+    <Pressable
+      onPress={async () => {
+        hapticSelect?.();
+        await Clipboard.setStringAsync(effectiveReferralCode);
+        setSavedToast?.("Code copied");
+      }}
+      style={({ pressed }) => [
+        {
+          marginTop: 8,
+          paddingVertical: 12,
+          paddingHorizontal: 14,
+          borderRadius: 16,
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.14)",
+          backgroundColor: "rgba(0,0,0,0.25)",
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        },
+        pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+      ]}
+    >
+      <Text style={{ color: "white", fontWeight: "900", fontSize: 18, letterSpacing: 0.8 }}>
+        {effectiveReferralCode}
+      </Text>
+      <Ionicons name="copy-outline" size={18} color="rgba(255,255,255,0.85)" />
+    </Pressable>
+
+    <Text style={{ color: "rgba(255,255,255,0.6)", marginTop: 8, fontWeight: "700" }}>
+      Uses: {Number(referralUses || 0)}
+    </Text>
+
+<View style={{ marginTop: 12 }}>
+  <Text style={{ color: "rgba(255,255,255,0.7)", fontWeight: "700" }}>
+    Have a referral code?
+  </Text>
+
+  <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
+    <TextInput
+      value={referralInput}
+      onChangeText={(t) => setReferralInput(String(t || "").toUpperCase())}
+      editable={!referredBy && !referralBusy}
+      autoCapitalize="characters"
+      autoCorrect={false}
+      placeholder="ENTER CODE"
+      placeholderTextColor="rgba(255,255,255,0.35)"
+      style={{
+        flex: 1,
+        minHeight: 48,
+        paddingHorizontal: 14,
+        borderRadius: 14,
+        color: "white",
+        fontWeight: "900",
+        letterSpacing: 0.6,
+        backgroundColor: "rgba(255,255,255,0.08)",
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.14)",
+      }}
+    />
+
+    <Pressable
+      disabled={!referralInput.trim() || !!referredBy || referralBusy}
+      onPress={async () => {
+        hapticSelect?.();
+        await applyReferralCode(referralInput, "manual");
+      }}
+      style={({ pressed }) => [
+        {
+          minWidth: 96,
+          paddingHorizontal: 16,
+          borderRadius: 14,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor:
+            !referralInput.trim() || !!referredBy || referralBusy
+              ? "rgba(255,255,255,0.06)"
+              : "rgba(255,255,255,0.12)",
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.16)",
+        },
+        pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+      ]}
+    >
+      <Text style={{ color: "white", fontWeight: "900" }}>
+        {referralBusy ? "..." : referredBy ? "Used" : "Apply"}
+      </Text>
+    </Pressable>
+  </View>
+
+  <Text
+    style={{
+      color: "rgba(255,255,255,0.58)",
+      marginTop: 8,
+      fontWeight: "700",
+      fontSize: 12,
+    }}
+  >
+    {referredBy
+      ? `Applied code: ${referredBy}`
+      : "Enter a friend’s code to unlock bonus scans."}
+  </Text>
+</View>
+
+    <Pressable
+      onPress={async () => {
+        hapticSelect?.();
+        const shareLink = `https://evanai.app?ref=${effectiveReferralCode}`;
+        await Share.share({
+          message:
+`Download Evan AI.
+Scan smarter. Resell better.
+Use my code: ${effectiveReferralCode}
+${shareLink}`
+        });
+      }}
+      style={({ pressed }) => [
+        {
+          marginTop: 12,
+          paddingVertical: 12,
+          borderRadius: 999,
+          backgroundColor: "rgba(255,255,255,0.10)",
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.16)",
+          alignItems: "center",
+        },
+        pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+      ]}
+    >
+      <Text style={{ color: "white", fontWeight: "900" }}>Share & Earn</Text>
+    </Pressable>
+
+<Pressable
+  onPress={() => {
+    hapticSelect?.();
+    setReferralInfoExpanded((p) => !p);
+  }}
+  style={({ pressed }) => [
+    {
+      marginTop: 10,
+      alignSelf: "center",
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 14,
+      backgroundColor: "rgba(255,255,255,0.06)",
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.12)",
+    },
+    pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+  ]}
+>
+  <Text style={{ color: "rgba(255,255,255,0.85)", fontWeight: "900" }}>
+    {referralInfoExpanded ? "Hide details" : "What is the referral program?"}
+  </Text>
+</Pressable>
+
+{referralInfoExpanded ? (
+  <View
+    style={{
+      marginTop: 12,
+      padding: 12,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.12)",
+      backgroundColor: "rgba(255,255,255,0.06)",
+    }}
+  >
+    <Text style={{ color: "white", fontWeight: "900", marginBottom: 6 }}>
+      How it works
+    </Text>
+
+    <Text style={{ color: "rgba(255,255,255,0.75)", fontWeight: "700" }}>
+      • Share your code.
+    </Text>
+
+    <Text
+      style={{
+        color: "rgba(255,255,255,0.75)",
+        fontWeight: "700",
+        marginTop: 6,
+      }}
+    >
+      • When someone installs + uses Evan AI, bonus scans unlock.
+    </Text>
+
+    <Text
+      style={{
+        color: "rgba(255,255,255,0.75)",
+        fontWeight: "700",
+        marginTop: 6,
+      }}
+    >
+      • Rewards will activate when you share.
+    </Text>
+  </View>
+) : null}
+  </View>
+</View>
+
+
+{helpOpen ? (
+  <Pressable style={styles.helpBackdrop} onPress={closeHelp}>
+    {/* ✅ optional blur (remove if you don’t want it) */}
+    <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFillObject} />
+
+    <RNAnimated.View
+      style={[
+        styles.helpBox,
+        {
+          opacity: helpOpacity,
+          transform: [
+            {
+              scale: helpOpacity.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.98, 1],
+              }),
+            },
+          ],
+        },
+      ]}
+    >
+<Text style={styles.helpTitle}>Scan tips</Text>
+<Text style={styles.helpItem}>• Fill the frame with the item.</Text>
+<Text style={styles.helpItem}>• Use strong lighting and avoid glare.</Text>
+<Text style={styles.helpItem}>• Include branding, labels, or model text if possible.</Text>
+<Text style={styles.helpItem}>• After taking a photo, enter your price and tap Use photo.</Text>
+<Text style={styles.helpHint}>Tap anywhere to close</Text>
+    </RNAnimated.View>
+  </Pressable>
+) : null}
+    </View>
+  </View>
+</ScrollView>
+</RNAnimated.View>
+</RNAnimated.View>
+
+{tabMaskVisible ? (
+  <RNAnimated.View
+    pointerEvents="none"
+    style={[
+      StyleSheet.absoluteFillObject,
+      {
+        zIndex: 6000,
+        backgroundColor: "transparent",
+        opacity: tabMaskOpacity,
+      },
+    ]}
+  />
+) : null}
+
+<Modal
+  visible={profileModal === "payments"}
+  animationType="fade"
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setProfileModal(null)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <View style={styles.modalTopRow}>
+        <Text style={styles.modalTitle}>Payment methods</Text>
+        <Pressable
+          onPress={() => {
+            hapticSelect();
+            setProfileModal(null);
+          }}
+          style={styles.backPill}
+        >
+          <Ionicons name="close" size={16} color="white" />
+          <Text style={styles.backText}>Close</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.modalDesc}>
+        Subscriptions are billed through the App Store. Payment methods are managed in your Apple ID settings.
+      </Text>
+      <View style={styles.payRow}>
+        <View style={{ marginRight: 10 }}>
+          <PayPill icon="card" label="Credit / Debit" />
+        </View>
+        <View style={{ marginRight: 10 }}>
+          <PayPill icon="logo-apple" label="Apple Pay" />
+        </View>
+        <PayPill icon="logo-paypal" label="PayPal" />
+      </View>
+      <Pressable
+        onPress={() => {
+          hapticSelect();
+          setProfileModal("subscription");
+        }}
+        style={styles.modalPrimary}
+      >
+        <Text style={styles.modalPrimaryText}>Manage subscription</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => {
+          hapticSelect();
+          setProfileModal(null);
+        }}
+        style={styles.modalSecondary}
+      >
+        <Text style={styles.modalSecondaryText}>Done</Text>
+      </Pressable>
+    </View>
+  </View>
+</Modal>
+      {/* ✅ HAGGLE MODE MODAL */}
+<Modal
+  visible={haggleOpen}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setHaggleOpen(false)}
+>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Haggle mode</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setHaggleOpen(false);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.modalDesc}>
+              Quick scripts you can say in-store. Tap to copy.
+            </Text>
+            <View style={{ gap: 10 }}>
+              {(haggleLines || []).map((line, i) => (
+                <Pressable
+                  key={`${i}`}
+                  onPress={() => {
+                    hapticSelect();
+                    copyText(line);
+                  }}
+                  style={({ pressed }) => [
+                    styles.haggleRow,
+                    pressed && { opacity: 0.9, transform: [{ scale: 0.995 }] },
+                  ]}
+                >
+                  <Text style={styles.haggleText}>{line}</Text>
+                  <Ionicons
+                    name="copy-outline"
+                    size={18}
+                    color="rgba(255,255,255,0.85)"
+                  />
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.modalFoot}>
+              (Copy uses expo-clipboard if installed. If not, nothing breaks.)
+            </Text>
+          </View>
+        </View>
+      </Modal>
+      {/* RESULT MODAL (reopen from history) */}
+<Modal
+  visible={resultModalOpen}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent 
+  onRequestClose={() => setResultModalOpen(false)}
+>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Cheapest exact match</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setResultModalOpen(false);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+            {activeResult ? (
+              <>
+                <Text style={{ color: "white", fontWeight: "900", fontSize: 16 }}>
+                  {activeResult.itemName}
+                </Text>
+{/* 🧠 AI VERDICT CARD */}
+<Text
+  style={{
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#7CFFB2",
+    letterSpacing: 0.3,
+  }}
+>
+  {activeResult?.aiVerdict}
+</Text>
+{!!activeResult?.intuitionLine && (
+  <Text
+    style={{
+      marginTop: 8,
+      color: "rgba(255,255,255,0.82)",
+      fontWeight: "800",
+      fontSize: 13,
+      lineHeight: 18,
+    }}
+  >
+    {activeResult.intuitionLine}
+  </Text>
+)}
+{(() => {
+  const v = getVerdict({
+    scannedPrice: toNumber(activeResult.scannedPrice),
+    cheapestPrice: toNumber(activeResult.price),
+  });
+  if (!v) return null;
+  return (
+    <View style={styles.verdictRow}>
+      <Text
+        style={[
+          styles.verdictChip,
+          v.tone === "green"
+            ? styles.verdict_green
+            : v.tone === "yellow"
+            ? styles.verdict_yellow
+            : styles.verdict_red,
+        ]}
+      >
+        {v.label}
+      </Text>
+    </View>
+  );
+})()}
+                <View
+                  style={{ flexDirection: "row", alignItems: "center", marginTop: 6, flexWrap: "wrap" }}
+                >
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                    }}
+                  >
+                    {money(activeResult.price)} · {activeResult.store}
+                  </Text>
+
+                  {typeof activeResult.rating === "number" ? (
+                    <View style={{ flexDirection: "row", alignItems: "center", marginLeft: 8 }}>
+                      <StarRating value={activeResult.rating} size={13} />
+                    </View>
+                  ) : null}
+                </View>
+
+                {/* ✅ INTELLIGENCE CHIPS */}
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  {Number.isFinite(activeResult.buyScore) ? (
+                    <View style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.12)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)" }}>
+                      <Text style={{ color: "white", fontWeight: "900", fontSize: 12 }}>
+                        Buy Score {Math.round(activeResult.buyScore)}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {activeResult.buyVerdict ? (
+                    <View style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.10)" }}>
+                      <Text style={{ color: "rgba(255,255,255,0.92)", fontWeight: "900", fontSize: 12 }}>
+                        {activeResult.buyVerdict}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {activeResult.resaleVelocity ? (
+                    <View style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)" }}>
+                      <Text style={{ color: "rgba(255,255,255,0.8)", fontWeight: "800", fontSize: 12 }}>
+                        Velocity {activeResult.resaleVelocity}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {activeResult.category ? (
+                    <View style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.08)" }}>
+                      <Text style={{ color: "rgba(255,255,255,0.8)", fontWeight: "800", fontSize: 12 }}>
+                        {activeResult.category}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+<View style={styles.verdictRow}>
+<Text
+  style={[
+    styles.verdictChip,
+    activeResult?.buyVerdict === "GREAT FLIP"
+      ? styles.verdict_green
+      : activeResult?.buyVerdict === "RISKY"
+      ? styles.verdict_red
+      : styles.verdict_yellow,
+  ]}
+>
+  {String(activeResult?.buyVerdict || "GOOD BUY").toUpperCase()}
+</Text>
+</View>
+<View style={styles.confidenceBreakdown}>
+  {getConfidenceBreakdown({
+    confidence: activeResult.visionConfidence,
+    nikeLikely,
+    totalMatches: activeResult.totalMatches,
+  }).map((line, i) => (
+    <Text key={i} style={styles.confidenceLine}>
+      • {line}
+    </Text>
+  ))}
+</View>
+<View
+  style={{
+    marginBottom: 10,
+    padding: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  }}
+>
+  <Text style={{ color: "white", fontWeight: "900", marginBottom: 6 }}>
+    Why this match?
+  </Text>
+
+  <View style={{ marginTop: 10 }}>
+    <Text style={{ color: "white", fontWeight: "700", marginBottom: 6 }}>
+      Why this is ranked #1
+    </Text>
+
+    {(activeResult?.rankWhy || []).map((r, i) => (
+      <Text
+        key={`rank-why-${i}`}
+        style={{ color: "rgba(255,255,255,0.75)", marginBottom: 4 }}
+      >
+        ✔ {r}
+      </Text>
+    ))}
+  </View>
+</View>
+  <ConfidenceBar value={activeResult.visionConfidence ?? 0} />
+<Text
+  style={{
+    marginTop: 10,
+    color: "rgba(255,255,255,0.60)",
+    fontWeight: "800",
+    fontSize: 12,
+  }}
+>
+  {activeResult?.rescanTip ||
+    "Rescan in 24–48h — listings update constantly."}
+</Text>
+                <View style={{ marginTop: 12 }}>
+                  <Text style={{ color: "white", fontWeight: "900" }}>
+                    Saved {money(activeResult.savedAmount)}
+                  </Text>
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                      marginTop: 2,
+                    }}
+                  >
+                    {percent(activeResult.cheaperPct)} cheaper than{" "}
+                    {money(activeResult.scannedPrice)}
+                  </Text>
+                </View>
+                <View
+                  style={{
+                    marginTop: 12,
+                    paddingTop: 10,
+                    borderTopWidth: 1,
+                    borderTopColor: "rgba(255,255,255,0.10)",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.9)",
+                      fontWeight: "900",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Market snapshot
+                  </Text>
+                  <Text style={{ color: "rgba(255,255,255,0.75)", fontWeight: "700" }}>
+                    Range: {money(activeResult.historicalLow)} –{" "}
+                    {money(activeResult.historicalHigh)}
+                  </Text>
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                      marginTop: 2,
+                    }}
+                  >
+                    Avg: {money(activeResult.avgMarket)}
+                  </Text>
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                      marginTop: 2,
+                    }}
+                  >
+                    Resale est.: {money(activeResult.estimatedResale)}
+                  </Text>
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                      marginTop: 2,
+                    }}
+                  >
+                    Flip grade: {activeResult.flipPotential}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => {
+                    if (!activeResult?.buyLink) return;
+safeOpenUrl(activeResult.buyLink, activeResult.itemName || "Listing" );
+                  }}
+                  style={[styles.modalPrimary, { marginTop: 14 }]}
+                >
+                  <View style={styles.inlineRow}>
+                    <Ionicons name="open-outline" size={16} color="white" />
+                    <Text style={styles.modalPrimaryText}>Open listing</Text>
+                  </View>
+                </Pressable>
+{sellerMode ? (
+  <View style={{ marginTop: 14 }}>
+    {(() => {
+      const predicted = predictNext7dPrice({
+        estValue: activeResult?.avgMarket ?? activeResult?.estimatedResale ?? activeResult?.price,
+        marketLow: activeResult?.historicalLow,
+        marketHigh: activeResult?.historicalHigh,
+        drops: 0,
+      });
+      const listPrice = predicted ?? clampPrice(activeResult?.estimatedResale) ?? clampPrice(activeResult?.avgMarket) ?? clampPrice(activeResult?.price);
+      const title = activeResult?.itemName || activeResult?.title || "Item";
+      const desc =
+        `Listing generated by Evan AI.\n\n` +
+        `Condition: (fill)\n` +
+        `Notes: (fill)\n\n` +
+        `Market range: ${money(activeResult?.historicalLow)} – ${money(activeResult?.historicalHigh)}\n` +
+        `Suggested list: ${money(listPrice)}\n` +
+        `Confidence: ${Math.round((activeResult?.visionConfidence || 0) * 100)}%`;
+      return (
+        <View style={{ padding: 12, borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.06)" }}>
+          <Text style={{ color: "white", fontWeight: "900", marginBottom: 6 }}>Seller mode</Text>
+          <Text style={{ color: "rgba(255,255,255,0.75)", fontWeight: "800" }}>
+            Suggested list price: <Text style={{ color: "white" }}>{money(listPrice)}</Text>
+          </Text>
+<View style={[styles.resultsActionRowTight, { marginTop: 10 }]}>
+            <Pressable
+              style={styles.resultsMiniAction}
+              onPress={async () => { hapticSelect?.(); await Clipboard.setStringAsync(title); setSavedToast?.("Title copied"); }}
+            >
+              <Ionicons name="copy-outline" size={16} color="white" />
+              <Text style={styles.resultsMiniActionText}>Copy title</Text>
+            </Pressable>
+            <Pressable
+              style={styles.resultsMiniActionGhost}
+              onPress={async () => { hapticSelect?.(); await Clipboard.setStringAsync(desc); setSavedToast?.("Description copied"); }}
+            >
+              <Ionicons name="document-text-outline" size={16} color="white" />
+              <Text style={styles.resultsMiniActionText}>Copy desc</Text>
+            </Pressable>
+            <Pressable
+              style={styles.resultsMiniAction}
+              onPress={async () => {
+                hapticSelect?.();
+                const invItem: InventoryItem = {
+                  id: makeId(),
+                  title,
+                  qty: 1,
+                  estResale: listPrice ?? null,
+                  buyPrice: clampPrice(activeResult?.scannedPrice) ?? null,
+                  createdAt: Date.now(),
+                  thumbUri: activeResult?.photoUri || null,
+                  notes: null,
+                };
+                const next = [invItem, ...(inventory || [])].slice(0, 500);
+                setInventory(next);
+                await saveInventory(next);
+                setSavedToast?.("Added to inventory");
+              }}
+            >
+              <Ionicons name="cube-outline" size={16} color="white" />
+              <Text style={styles.resultsMiniActionText}>Add to inv</Text>
+            </Pressable>
+          </View>
+          {predicted != null ? (
+            <Text style={{ marginTop: 10, color: "rgba(255,255,255,0.62)", fontWeight: "800", fontSize: 12 }}>
+              Price prediction (7d): {money(predicted)}
+            </Text>
+          ) : null}
+        </View>
+      );
+    })()}
+  </View>
+) : null}
+              </>
+           ) : null}
+          </View>
+        </View>
+      </Modal>
+      {/* PROFILE MODAL: SUBSCRIPTION */}
+
+<Modal
+  visible={profileModal === "subscription"}
+  animationType="fade"
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setProfileModal(null)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <View style={styles.modalTopRow}>
+        <Text style={styles.modalTitle}>Unlimited scans</Text>
+        <Pressable
+          onPress={() => {
+            hapticSelect();
+            setProfileModal(null);
+          }}
+          style={styles.backPill}
+        >
+          <Ionicons name="close" size={16} color="white" />
+          <Text style={styles.backText}>Close</Text>
+        </Pressable>
+      </View>
+
+      {/* SIDE-BY-SIDE TIERS */}
+      <View style={{ flexDirection: "row", gap: 12, marginTop: 10 }}>
+        {/* FREE */}
+        <View
+          style={{
+            flex: 1,
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.12)",
+            backgroundColor: "rgba(255,255,255,0.06)",
+            padding: 14,
+          }}
+        >
+          <Text style={{ color: "white", fontWeight: "900", fontSize: 14 }}>
+            Evan AI (Free)
+          </Text>
+          <Text style={{ marginTop: 8, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 }}>
+            • {FREE_SCAN_LIMIT_SAFE} scans / 30 days
+          </Text>
+          <Text style={{ marginTop: 6, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 }}>
+            • Watch automation
+          </Text>
+          <Text style={{ marginTop: 6, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 }}>
+            • Seller mode
+          </Text>
+          <Text style={{ marginTop: 6, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 }}>
+            • Inventory
+          </Text>
+          <Text style={{ marginTop: 6, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 }}>
+            • Batch scan
+          </Text>
+          <Text style={{ marginTop: 6, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 }}>
+            • Intelligence
+          </Text>
+        </View>
+
+        {/* PRO */}
+        <View
+          style={{
+            flex: 1,
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: "rgba(0,229,255,0.35)",
+            backgroundColor: "rgba(0,229,255,0.08)",
+            padding: 14,
+          }}
+        >
+          <Text style={{ color: "white", fontWeight: "900", fontSize: 14 }}>
+            Evan AI Pro
+          </Text>
+          <Text style={{ marginTop: 8, color: "rgba(255,255,255,0.88)", fontWeight: "900", fontSize: 12 }}>
+            • Unlimited scans
+          </Text>
+          <Text style={{ marginTop: 6, color: "rgba(255,255,255,0.76)", fontWeight: "800", fontSize: 12 }}>
+            • Same full feature access
+          </Text>
+       
+{/* PRICE STACK — APPLE PREMIUM */}
+<View
+  style={{
+    alignItems: "flex-start",
+  }}
+>
+  {/* Monthly */}
+  <Text
+    style={{
+      color: "white",
+      fontWeight: "900",
+      fontSize: 30,
+      letterSpacing: -0.8,
+      lineHeight: 32,
+    }}
+  >
+    ${PRO_MONTHLY_PRICE.toFixed(2)}
+    <Text
+      style={{
+        fontSize: 14,
+        color: "rgba(255,255,255,0.70)",
+        fontWeight: "800",
+      }}
+    >
+      {" "} / mo
+    </Text>
+  </Text>
+
+  <Text
+    style={{
+      marginTop: 4,
+      color: "rgba(255,255,255,0.78)",
+      fontWeight: "800",
+      fontSize: 12,
+      letterSpacing: 0.2,
+    }}
+  >
+    unlimited scans
+  </Text>
+
+  {/* divider */}
+  <View
+    style={{
+      marginTop: 12,
+      marginBottom: 10,
+      width: "100%",
+      height: 1,
+      backgroundColor: "rgba(255,255,255,0.10)",
+    }}
+  />
+
+  {/* OR label */}
+  <Text
+    style={{
+      color: "rgba(255,255,255,0.45)",
+      fontWeight: "900",
+      fontSize: 10,
+      letterSpacing: 1.4,
+    }}
+  >
+    OR SAVE MORE
+  </Text>
+
+  {/* Yearly */}
+  <Text
+    style={{
+      marginTop: 5,
+      color: "white",
+      fontWeight: "900",
+      fontSize: 20,
+      letterSpacing: -0.3,
+    }}
+  >
+    ${PRO_YEARLY_PRICE.toFixed(2)} / year
+  </Text>
+
+  <Text
+    style={{
+      marginTop: 2,
+      color: "rgba(0,229,255,0.85)",
+      fontWeight: "900",
+      fontSize: 12,
+      letterSpacing: 0.2,
+    }}
+  >
+    best value
+  </Text>
+</View>
+</View> 
+</View>
+
+<Text
+  style={[
+    styles.modalDesc,
+    {
+      marginTop: 14,
+      textAlign: "center",
+      color: "rgba(255,255,255,0.82)",
+      fontWeight: "700",
+      lineHeight: 20,
+    },
+  ]}
+>
+  Cancel anytime.{" "}
+  <Text style={{ color: "rgba(0,229,255,0.95)", fontWeight: "900" }}>
+    Most users save more on their first scan.
+  </Text>
+</Text>
+
+<Pressable
+  onPress={() => {
+    hapticSelect();
+    setIsSignedIn(true);
+    setIsPro(true);
+    setProfileModal(null);
+  }}
+  style={styles.modalPrimary}
+>
+  <Text style={styles.modalPrimaryText}>
+    Go Pro — ${PRO_MONTHLY_PRICE.toFixed(2)}/mo
+  </Text>
+</Pressable>
+
+{/* ✅ NEW: Yearly CTA directly under monthly */}
+<Pressable
+  onPress={() => {
+    hapticSelect();
+    setIsSignedIn(true);
+    setIsPro(true);
+    setProfileModal(null);
+  }}
+  style={[
+    styles.modalPrimary,
+    {
+      marginTop: 10,
+      backgroundColor: "rgba(0,229,255,0.12)",
+      borderWidth: 1,
+      borderColor: "rgba(0,229,255,0.28)",
+    },
+  ]}
+>
+  <Text style={[styles.modalPrimaryText, { color: "white" }]}>
+    Go yearly — ${PRO_YEARLY_PRICE.toFixed(2)}/yr (best value)
+  </Text>
+</Pressable>
+
+<Pressable
+  onPress={() => {
+    hapticSelect();
+    setProfileModal(null);
+  }}
+  style={styles.modalSecondary}
+>
+  <Text style={styles.modalSecondaryText}>Later</Text>
+</Pressable>
+
+      <Text style={styles.modalFoot}>
+        Billing handled by the App Store. Cancel anytime in Apple ID settings.
+      </Text>
+    </View>
+  </View>
+</Modal>
+
+<Modal
+  visible={seeMoreOpen}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setSeeMoreOpen(false)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <View style={styles.modalTopRow}>
+        <Text style={styles.modalTitle}>More matches</Text>
+        <Pressable
+          onPress={() => {
+            hapticSelect();
+            setSeeMoreOpen(false);
+          }}
+          style={styles.backPill}
+        >
+          <Ionicons name="close" size={16} color="white" />
+          <Text style={styles.backText}>Close</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.modalDesc}>
+        Tap a listing to open it. (This won’t use another scan.)
+      </Text>
+      <ScrollView
+        style={{ maxHeight: 420 }}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 220 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        {(seeMoreListings || []).slice(0, 60).map((it, idx) => {
+const m = String(it?.__market || it?.source || "").toLowerCase();
+const store =
+  m.includes("ebay") ? "eBay" :
+  m.includes("etsy") ? "Etsy" :
+  m.includes("mercari") ? "Mercari" :
+  m.includes("posh") ? "Poshmark" :
+  m.includes("facebook") ? "Facebook" :
+  m.includes("stockx") ? "StockX" :
+  m ? String(it.__market || it.source) :
+  "Google";
+          return (
+            <Pressable
+              key={`${it?.url || idx}`}
+              onPress={() => {
+                const u = it?.url;
+                if (u) safeOpenUrl(u, it?.title || "Listing");
+              }}
+              style={({ pressed }) => [
+                styles.listingRow,
+                pressed && { opacity: 0.9, transform: [{ scale: 0.995 }] },
+              ]}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.listingTitle} numberOfLines={2}>
+                  {it?.title || "Listing"}
+                </Text>
+                <Text style={styles.listingMeta}>
+                  {money(toNumber(it?.price))} · {store}
+                </Text>
+              </View>
+              <Ionicons
+                name="open-outline"
+                size={18}
+                color="rgba(255,255,255,0.85)"
+              />
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
+  </View>
+</Modal>
+
+{/* PAYWALL MODAL */}
+<Modal
+  visible={showPaywall}
+  animationType="fade"
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setShowPaywall(false)}
+>
+  <View style={styles.modalBackdrop}>
+    {/* ✅ Blur background (premium) */}
+    <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFillObject} />
+    <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.18)" }]} />
+
+    {/* ✅ Scale + opacity pop */}
+    <RNAnimated.View
+      style={{
+        width: "100%",
+        opacity: paywallPop,
+        transform: [
+          {
+            scale: paywallPop.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.96, 1],
+            }),
+          },
+        ],
+      }}
+    >
+      <View style={styles.modalCard}>
+        <Text style={styles.modalTitle}>Free scans used ({FREE_SCAN_LIMIT_FALLBACK})</Text>
+        <Text style={styles.modalDesc}>
+          You get 6 free scans every 30 days. Upgrade for unlimited access.
+        </Text>
+
+        <View style={styles.paywallBox}>
+          <View style={styles.inlineRow}>
+            <Ionicons name="sparkles-outline" size={18} color="white" />
+            <Text style={styles.paywallTitle}>
+              Pro — ${PRO_MONTHLY_PRICE.toFixed(2)}/month
+            </Text>
+          </View>
+          <Text style={styles.paywallSub}>
+            Resale intelligence that pays for itself
+          </Text>
+        </View>
+
+        <Pressable
+          onPress={() => {
+            hapticSelect();
+            setShowPaywall(false);
+            setProfileModal("subscription");
+          }}
+          style={styles.modalPrimary}
+        >
+          <Text style={styles.modalPrimaryText}>
+            Go Pro — ${PRO_MONTHLY_PRICE.toFixed(2)}/mo
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => {
+            hapticSelect();
+            setShowPaywall(false);
+          }}
+          style={styles.modalSecondary}
+        >
+          <Text style={styles.modalSecondaryText}>Not now</Text>
+        </Pressable>
+      </View>
+    </RNAnimated.View>
+  </View>
+</Modal>
+
+      {/* PROFILE MODAL: REVIEW */}
+<Modal
+  visible={profileModal === "review"}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setProfileModal(null)}
+>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Leave a review</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setProfileModal(null);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.modalDesc}>
+              If Evan AI saved you money, a quick review helps a ton.
+            </Text>
+            <Pressable
+onPress={() => {
+  hapticSelect();
+  setProfileModal(null);
+  safeOpenUrl(
+    "https://apps.apple.com/app/idYOUR_APP_ID?action=write-review",
+    "Write a review"
+  );
+}}
+              style={styles.modalPrimary}
+            >
+              <Text style={styles.modalPrimaryText}>Write a review</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                setProfileModal(null);
+              }}
+              style={styles.modalSecondary}
+            >
+              <Text style={styles.modalSecondaryText}>Later</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+{/* PROFILE MODAL: HOW WE'RE DIFFERENT */}
+<Modal
+  visible={profileModal === "different"}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen" 
+  transparent
+  onRequestClose={() => setProfileModal(null)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <View style={styles.modalTopRow}>
+        <Text style={styles.modalTitle}>How Evan AI is different</Text>
+        <Pressable
+          onPress={() => { hapticSelect(); setProfileModal(null); }}
+          style={styles.backPill}
+        >
+          <Ionicons name="close" size={16} color="white" />
+          <Text style={styles.backText}>Close</Text>
+        </Pressable>
+      </View>
+      <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+        <Text style={styles.modalDesc}>
+          Evan AI prioritizes thrift, resale, and niche marketplaces first — and ranks results by value, not ads.
+        </Text>
+        <Text style={styles.modalDesc}>• Niche-first identification (vintage / weird / collector items)</Text>
+        <Text style={styles.modalDesc}>• Resale-first search (eBay, Etsy, resale platforms)</Text>
+        <Text style={styles.modalDesc}>• Confidence shown honestly (no forced certainty)</Text>
+        <Text style={styles.modalDesc}>• Value-first ranking (price + condition + shipping)</Text>
+        <Text style={styles.modalDesc}>• Parts / labels / maker’s marks supported via scan modes</Text>
+      </ScrollView>
+      <Pressable
+        style={styles.modalPrimary}
+        onPress={() => { hapticSelect(); setProfileModal(null); }}
+      >
+        <Text style={styles.modalPrimaryText}>Done</Text>
+      </Pressable>
+    </View>
+  </View>
+</Modal>
+      {/* PROFILE MODAL: TERMS */}
+<Modal
+  visible={profileModal === "terms"}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setProfileModal(null)}
+>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Terms of Service</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setProfileModal(null);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalDesc}>
+                Welcome to Evan AI. By accessing or using the app, you agree to these Terms of Service (“Terms”).
+                If you do not agree, do not use Evan AI.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                1. What Evan AI Does
+              </Text>
+              <Text style={styles.modalDesc}>
+                Evan AI helps you identify items and find potentially cheaper alternatives by linking to third-party
+                marketplaces (such as Google Shopping and eBay). Evan AI does not sell items and is not responsible
+                for third-party listings, pricing, availability, shipping, returns, or seller behavior.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                2. Eligibility & Accounts
+              </Text>
+              <Text style={styles.modalDesc}>
+                You must follow applicable laws and the App Store rules. You are responsible for activity that occurs
+                under your account or device, including maintaining the confidentiality of any login method you use.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                3. Free Scans & Subscription
+              </Text>
+              <Text style={styles.modalDesc}>
+                Evan AI may offer a limited number of free scans. If you upgrade to Pro, you may receive unlimited scans
+                and additional features. Subscription pricing, renewal, cancellation, and refunds are handled by the App Store.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                4. User Content (Photos)
+              </Text>
+              <Text style={styles.modalDesc}>
+                You may upload or capture photos for the purpose of item identification. You confirm you have the right to
+                use the content you submit. Do not submit content that is illegal, harmful, or violates someone else’s rights.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                5. Accuracy & Disclaimers
+              </Text>
+              <Text style={styles.modalDesc}>
+                Evan AI provides results “as is” and “as available.” We do not guarantee that identification results or price
+                comparisons are accurate, complete, or current. Prices and listings change frequently and may differ by
+                location, size, condition, shipping, or seller.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                6. Limitation of Liability
+              </Text>
+              <Text style={styles.modalDesc}>
+                To the maximum extent permitted by law, Evan AI and its creators will not be liable for any indirect,
+                incidental, special, consequential, or punitive damages, or any loss of profits or data, arising from your use
+                of the app or third-party links.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>7. Changes</Text>
+              <Text style={styles.modalDesc}>
+                We may update these Terms from time to time. Continuing to use Evan AI after changes means you accept the updated Terms.
+              </Text>
+              <Text style={styles.modalFoot}>Last updated: {new Date().getFullYear()}</Text>
+            </ScrollView>
+            <Pressable
+              style={styles.profileBtn}
+              onPress={() => {
+                hapticSelect();
+                setProfileModal("privacy");
+              }}
+            >
+              <Text style={styles.profileBtnText}>Privacy Policy</Text>
+            </Pressable>
+            <Pressable
+              style={styles.modalPrimary}
+              onPress={() => {
+                hapticSelect();
+                setProfileModal(null);
+              }}
+            >
+              <Text style={styles.modalPrimaryText}>Accept</Text>
+            </Pressable>
+          </View>
+        </View>
+    </Modal>
+   {/* PROFILE MODAL: PRIVACY */}
+<Modal
+  visible={profileModal === "privacy"}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setProfileModal(null)}
+>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Privacy Policy</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setProfileModal(null);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalDesc}>
+                This Privacy Policy explains how Evan AI handles information when you use the app.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                1. Information You Provide
+              </Text>
+              <Text style={styles.modalDesc}>
+                • Photos you capture or select for item identification{"\n"}• Optional account identifiers you enter (such as email/phone for sign-in placeholder)
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                2. How We Use Information
+              </Text>
+              <Text style={styles.modalDesc}>
+                We use your photo inputs to identify an item and display results. We use basic app state (like scan count and pro status) to operate the app experience on your device.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                3. Third-Party Services & Links
+              </Text>
+              <Text style={styles.modalDesc}>
+                Evan AI may link you to third-party marketplaces. When you tap a link, you are subject to that third party’s privacy policy and terms. Evan AI is not responsible for third-party practices.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                4. Data Storage & Retention
+              </Text>
+              <Text style={styles.modalDesc}>
+                Evan AI stores basic app state locally on your device (for example, scan counts and history thumbnails). We do not sell your personal information. If we add cloud features later, this policy will be updated.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>5. Security</Text>
+              <Text style={styles.modalDesc}>
+                We take reasonable steps to protect information, but no method of transmission or storage is 100% secure.
+              </Text>
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>6. Your Choices</Text>
+              <Text style={styles.modalDesc}>
+                You can stop using Evan AI at any time. You may also clear local app data by removing the app or clearing storage.
+              </Text>
+              <Text style={styles.modalFoot}>Last updated: {new Date().getFullYear()}</Text>
+            </ScrollView>
+            <Pressable
+              style={styles.modalPrimary}
+              onPress={() => {
+                hapticSelect();
+                setProfileModal(null);
+              }}
+            >
+              <Text style={styles.modalPrimaryText}>Done</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+{/* ✅ UNVERIFIED LINK MODAL (premium, replaces system alert) */}
+{unverifiedPrompt ? (
+<Modal
+  visible={!!unverifiedPrompt}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setUnverifiedPrompt(null)}
+>
+    <View style={styles.modalBackdrop}>
+      <View style={styles.modalCard}>
+        <View style={styles.modalTopRow}>
+          <Text style={styles.modalTitle}>Open unverified link?</Text>
+          <Pressable
+            onPress={() => {
+              hapticSelect();
+              setUnverifiedPrompt(null);
+            }}
+            style={styles.backPill}
+          >
+            <Ionicons name="close" size={16} color="white" />
+            <Text style={styles.backText}>Close</Text>
+          </Pressable>
+        </View>
+<Text style={styles.modalDesc}>
+  This link hasn’t been verified yet:
+  {"\n\n"}
+  <Text style={{ fontWeight: "900", color: "white" }}>
+    {getDomain(unverifiedPrompt?.url || "")}
+  </Text>
+  {"\n\n"}
+  Double-check the domain before entering sensitive info.
+</Text>
+        <Pressable
+          style={styles.modalPrimary}
+          onPress={async () => {
+            hapticSelect();
+            const opener = unverifiedPrompt?.onOpen;
+            setUnverifiedPrompt(null);
+            try {
+              await opener?.();
+            } catch (e) {}
+          }}
+        >
+          <Text style={styles.modalPrimaryText}>Open link</Text>
+        </Pressable>
+        <Pressable
+          style={styles.modalSecondary}
+          onPress={() => {
+            hapticSelect();
+            setUnverifiedPrompt(null);
+          }}
+        >
+          <Text style={styles.modalSecondaryText}>Cancel</Text>
+        </Pressable>
+        <Text style={styles.modalFoot}>
+          We don’t collect anything from linked sites.
+        </Text>
+      </View>
+    </View>
+  </Modal>
+) : null}
+{/* BILLION: CLOUD IMPORT */}
+<Modal
+  visible={cloudImportOpen}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setCloudImportOpen(false)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <View style={styles.modalTopRow}>
+        <Text style={styles.modalTitle}>Cloud import</Text>
+        <Pressable onPress={() => setCloudImportOpen(false)} style={styles.backPill}>
+          <Ionicons name="close" size={16} color="white" />
+          <Text style={styles.backText}>Close</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.modalDesc}>Paste a snapshot JSON (from Cloud export). This restores local state.</Text>
+      <TextInput
+        value={cloudImportText}
+        onChangeText={setCloudImportText}
+        placeholder="Paste snapshot JSON here"
+        placeholderTextColor="rgba(255,255,255,0.35)"
+        style={[styles.authInput, { height: 140, textAlignVertical: "top" }]}
+        multiline
+      />
+      <Pressable
+        style={styles.modalPrimary}
+        onPress={async () => {
+          hapticSelect?.();
+          try {
+            const snap = JSON.parse(cloudImportText || "");
+            if (snap?.watchlist) setWatchlist(Array.isArray(snap.watchlist) ? snap.watchlist : []);
+            if (snap?.intelState) setIntelState(snap.intelState);
+            if (snap?.inventory) {
+              const inv = Array.isArray(snap.inventory) ? snap.inventory : [];
+              setInventory(inv);
+              await saveInventory(inv);
+            }
+            if (typeof snap?.sellerMode === "boolean") {
+              setSellerMode(snap.sellerMode);
+              await AsyncStorage.setItem(SELLER_KEY, snap.sellerMode ? "1" : "0");
+            }
+            setCloudImportText("");
+            setCloudImportOpen(false);
+            setSavedToast?.("Imported successfully");
+          } catch {
+            setSavedToast?.("Invalid snapshot JSON");
+          }
+        }}
+      >
+        <Text style={styles.modalPrimaryText}>Import</Text>
+      </Pressable>
+      <Pressable style={styles.modalSecondary} onPress={() => setCloudImportOpen(false)}>
+        <Text style={styles.modalSecondaryText}>Cancel</Text>
+      </Pressable>
+    </View>
+  </View>
+</Modal>
+{/* BILLION: INVENTORY */}
+<Modal
+  visible={inventoryOpen}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setInventoryOpen(false)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <View style={styles.modalTopRow}>
+        <Text style={styles.modalTitle}>Inventory</Text>
+        <Pressable onPress={() => setInventoryOpen(false)} style={styles.backPill}>
+          <Ionicons name="close" size={16} color="white" />
+          <Text style={styles.backText}>Close</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.modalDesc}>
+        Track your flips locally. Add from Results (seller mode) or manually.
+      </Text>
+      <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+        {(inventory || []).length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>No inventory yet.</Text>
+            <Text style={styles.emptyBody}>Turn on Seller mode and add listings from Results.</Text>
+          </View>
+        ) : (
+          (inventory || []).slice(0, 200).map((it) => (
+            <View key={it.id} style={styles.historyRow}>
+              {it.thumbUri ? (
+                <Image source={{ uri: it.thumbUri }} style={styles.historyThumb} />
+              ) : (
+                <View style={styles.miniImgFallback}>
+                  <Ionicons name="cube" size={18} color="rgba(255,255,255,0.55)" />
+                </View>
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={styles.historyTitle} numberOfLines={1}>{it.title}</Text>
+                <Text style={styles.historyTime}>
+                  Qty {it.qty} · Est {money(it.estResale)} · Buy {money(it.buyPrice)}
+                </Text>
+              </View>
+              <Pressable
+                onPress={async () => {
+                  hapticSelect?.();
+                  const next = (inventory || []).filter((x) => x.id !== it.id);
+                  setInventory(next);
+                  await saveInventory(next);
+                  setSavedToast?.("Removed");
+                }}
+                style={styles.watchTrash}
+              >
+                <Ionicons name="trash" size={18} color="rgba(255,255,255,0.85)" />
+              </Pressable>
+            </View>
+          ))
+        )}
+      </ScrollView>
+      <Pressable
+        style={styles.modalPrimary}
+        onPress={async () => {
+          hapticSelect?.();
+          const json = JSON.stringify(inventory || []);
+          await Clipboard.setStringAsync(json);
+          setSavedToast?.("Inventory copied");
+        }}
+      >
+        <Text style={styles.modalPrimaryText}>Export inventory (copy)</Text>
+      </Pressable>
+    </View>
+  </View>
+</Modal>
+{/* Feature 4: Batch Scan / Inventory Mode */}
+<BatchScanScreen
+  visible={batchInventoryOpen}
+  apiBase={process.env.EXPO_PUBLIC_API_URL ?? (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001")}
+  zipCode={zipCode || null}
+  onClose={() => setBatchInventoryOpen(false)}
+/>
+
+{/* BILLION: MULTI-ITEM SCAN QUEUE */}
+<Modal
+  visible={batchOpen}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setBatchOpen(false)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <View style={styles.modalTopRow}>
+        <Text style={styles.modalTitle}>Multi-item scan</Text>
+        <Pressable onPress={() => setBatchOpen(false)} style={styles.backPill}>
+          <Ionicons name="close" size={16} color="white" />
+          <Text style={styles.backText}>Close</Text>
+        </Pressable>
+      </View>
+<Text style={styles.modalDesc}>
+  Add photos → load the next queued item into scan preview. Safe, local-first, no crash risk.
+</Text>
+      <View style={{ flexDirection: "row", gap: 10, marginBottom: 12 }}>
+        <Pressable
+          style={[styles.modalPrimary, { flex: 1, marginBottom: 0 }]}
+          onPress={async () => {
+            hapticSelect?.();
+            try {
+const pick = await ImagePicker.launchImageLibraryAsync({
+  mediaTypes: ["images"] as any,
+  allowsMultipleSelection: true as any,
+  quality: 0.9,
+} as any);
+              if ((pick as any)?.canceled) return;
+              const assets = (pick as any)?.assets || [];
+              const next = [
+                ...batchQueue,
+                ...assets.map((a: any) => ({ id: makeId(), uri: a.uri, createdAt: Date.now() })),
+              ].slice(-60);
+              setBatchQueue(next);
+              await saveBatchQueue(next);
+              setSavedToast?.(`Added ${assets.length}`);
+            } catch {
+              setSavedToast?.("Couldn’t add photos");
+            }
+          }}
+        >
+          <Text style={styles.modalPrimaryText}>Add photos</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.modalSecondary, { width: 120 }]}
+          onPress={async () => {
+            hapticSelect?.();
+            setBatchQueue([]);
+            await saveBatchQueue([]);
+            setSavedToast?.("Cleared");
+          }}
+        >
+          <Text style={styles.modalSecondaryText}>Clear</Text>
+        </Pressable>
+      </View>
+      {/* Batch summary header when results exist */}
+      {batchQueue.some((j) => j.status === "done") ? (
+        <View style={{ marginBottom: 10, padding: 10, borderRadius: 10, backgroundColor: "rgba(120,255,180,0.06)", borderWidth: 1, borderColor: "rgba(120,255,180,0.15)" }}>
+          <Text style={{ color: "rgba(120,255,180,0.85)", fontSize: 12, fontWeight: "600" }}>
+            {batchQueue.filter((j) => j.status === "done").length} of {batchQueue.length} scanned
+            {batchQueue.filter((j) => j.status === "scanning").length ? " · scanning…" : ""}
+          </Text>
+          {(() => {
+            const totalValue = batchQueue
+              .filter((j) => j.status === "done" && Number.isFinite(j.price))
+              .reduce((s, j) => s + (j.price ?? 0), 0);
+            return totalValue > 0 ? (
+              <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 11, marginTop: 2 }}>
+                Total market value: {money(totalValue)}
+              </Text>
+            ) : null;
+          })()}
+        </View>
+      ) : null}
+
+      <ScrollView style={{ maxHeight: 340 }} showsVerticalScrollIndicator={false}>
+        {(batchQueue || []).length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>Queue empty.</Text>
+            <Text style={styles.emptyBody}>
+              {batchMode
+                ? "Switch to Camera tab and shoot items — they'll auto-scan here."
+                : "Add photos or enable batch mode to scan multiple items."}
+            </Text>
+          </View>
+        ) : (
+          (batchQueue || []).map((j) => {
+            const statusColor =
+              j.status === "done"     ? "rgba(120,255,180,0.85)" :
+              j.status === "scanning" ? "rgba(255,210,80,0.85)" :
+              j.status === "error"    ? "rgba(255,100,80,0.85)" :
+              "rgba(255,255,255,0.35)";
+            const statusLabel =
+              j.status === "done"     ? (j.verdict || "DONE") :
+              j.status === "scanning" ? "SCANNING…" :
+              j.status === "error"    ? "ERROR" :
+              "QUEUED";
+
+            return (
+              <Pressable
+                key={j.id}
+                style={styles.historyRow}
+                onPress={() => {
+                  if (j.status === "done" && j.result) {
+                    hapticSelect?.();
+                    setActiveResult(j.result);
+                    setResults([]);
+                    goTab?.("results");
+                    setBatchOpen(false);
+                  }
+                }}
+              >
+                <Image source={{ uri: j.uri }} style={styles.historyThumb} />
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Text style={styles.historyTitle} numberOfLines={1}>
+                    {j.itemName || "Scanning…"}
+                  </Text>
+                  {j.status === "done" && Number.isFinite(j.price) ? (
+                    <Text style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>
+                      {money(j.price)}
+                    </Text>
+                  ) : j.status === "error" ? (
+                    <Text style={{ color: "rgba(255,100,80,0.75)", fontSize: 11 }}>
+                      {j.errorMsg || "Scan failed"}
+                    </Text>
+                  ) : null}
+                  <Text style={{ color: statusColor, fontSize: 10, fontWeight: "600", letterSpacing: 0.5 }}>
+                    {statusLabel}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={async (e) => {
+                    e.stopPropagation?.();
+                    hapticSelect?.();
+                    const next = batchQueue.filter((x) => x.id !== j.id);
+                    setBatchQueue(next);
+                    await saveBatchQueue(next);
+                  }}
+                  style={styles.watchTrash}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="trash" size={18} color="rgba(255,255,255,0.85)" />
+                </Pressable>
+              </Pressable>
+            );
+          })
+        )}
+      </ScrollView>
+
+<Pressable
+  style={styles.modalPrimary}
+  onPress={async () => {
+    hapticSelect?.();
+    if (batchRunning || loadingResults) return;
+    if (!batchQueue.length) return;
+
+    const first = batchQueue[0];
+    const next = batchQueue.slice(1);
+
+    setBatchRunning(true);
+
+    try {
+      try { scanAbortRef.current?.abort?.(); } catch {}
+      scanAbortRef.current = null;
+      scanTokenRef.current += 1;
+      scanLockRef.current = false;
+
+      setLoadingResults(false);
+      setShowRetryWhileLoading(false);
+      setUiError(null);
+      setResultModalOpen(false);
+      setSeeMoreOpen(false);
+      setActiveResult(null);
+      setResults([]);
+      setLoadingPhotoUri(null);
+      setPriceSubmitted(false);
+      setScanPriceInput("");
+      setPhoto(null);
+      Keyboard.dismiss?.();
+
+      setBatchQueue(next);
+      await saveBatchQueue(next);
+
+      setBatchOpen(false);
+      goTab?.("camera");
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setPhoto({ uri: first.uri } as any);
+          setSavedToast?.("Queued item loaded");
+          setBatchRunning(false);
+        });
+      });
+    } catch {
+      setBatchRunning(false);
+      setSavedToast?.("Couldn’t load queued item");
+    }
+  }}
+>
+  <Text style={styles.modalPrimaryText}>Load next queued item</Text>
+</Pressable>
+    </View>
+  </View>
+</Modal>
+{/* Feature 3: RECEIPT RESULT PANEL */}
+<ReceiptResultPanel
+  visible={receiptPanelOpen}
+  loading={receiptLoading}
+  data={receiptData}
+  error={receiptError}
+  onDone={() => {
+    setReceiptPanelOpen(false);
+    setReceiptData(null);
+    setReceiptError(null);
+  }}
+  onAddToHistory={(items) => {
+    // Add to scan history as individual entries
+    const ts = Date.now();
+    const newEntries = items
+      .filter((item) => item.paid > 0 && item.name)
+      .map((item) => ({
+        id: `rcpt_${ts}_${Math.random().toString(36).slice(2, 6)}`,
+        ts,
+        query: item.name,
+        savedAmount: item.delta != null && item.delta < 0 ? Math.abs(item.delta) : 0,
+        resultCard: {
+          itemName: item.name,
+          price: item.marketPrice ?? item.paid,
+          scannedPrice: item.paid,
+          savedAmount: item.delta != null && item.delta < 0 ? Math.abs(item.delta) : 0,
+          buyVerdict: item.overpaid ? "OVERPRICED" : "FAIR",
+        },
+      }));
+    if (newEntries.length) {
+      setHistory((prev) => [...newEntries, ...prev].slice(0, 200));
+      const totalSaved = newEntries.reduce((s, e) => s + (e.savedAmount || 0), 0);
+      if (totalSaved > 0) setSavingsTotal((prev) => prev + totalSaved);
+      setSavedToast(`Added ${newEntries.length} item${newEntries.length > 1 ? "s" : ""} to history`);
+    }
+  }}
+/>
+
+{/* AUTH MODAL */}
+<Modal
+  visible={authModalOpen}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setAuthModalOpen(false)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <Text style={styles.modalTitle}>Sign in</Text>
+      <Text style={styles.modalDesc}>
+        Enter an email or phone number to continue.
+      </Text>
+      <TextInput
+        value={authInput}
+        onChangeText={setAuthInput}
+        placeholder="Email or phone"
+        placeholderTextColor="rgba(255,255,255,0.4)"
+        style={styles.authInput}
+        autoCapitalize="none"
+        keyboardType="default"
+      />
+      <Pressable
+        onPress={() => {
+          hapticSelect();
+          if (!authInput.trim()) return;
+          setIsSignedIn(true);
+          setAuthInput("");
+          setAuthModalOpen(false);
+        }}
+        style={styles.modalPrimary}
+      >
+        <Text style={styles.modalPrimaryText}>Continue</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => {
+          hapticSelect();
+          setAuthInput("");
+          setAuthModalOpen(false);
+        }}
+        style={styles.modalSecondary}
+      >
+        <Text style={styles.modalSecondaryText}>Cancel</Text>
+      </Pressable>
+    </View>
+  </View>
+</Modal>
+{/* IMAGE ZOOM MODAL */}
+{zoomUri ? (
+  <Modal
+    visible={!!zoomUri}
+    transparent
+    animationType="fade"
+    onRequestClose={() => setZoomUri(null)}
+  >
+    <Pressable
+      style={{
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.25)",
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+      onPress={() => setZoomUri(null)}
+    >
+      <RNAnimated.View
+        style={{
+          width: "92%",
+          aspectRatio: 1,
+          transform: [
+            {
+              scale: zoomAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.92, 1],
+              }),
+            },
+          ],
+          opacity: zoomAnim,
+        }}
+      >
+        <Image
+          source={{ uri: zoomUri }}
+          style={{ width: "100%", height: "100%", borderRadius: 18 }}
+          resizeMode="contain"
+        />
+        <View
+          style={{
+            position: "absolute",
+            bottom: 14,
+            left: 0,
+            right: 0,
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 13 }}>
+            tap anywhere to exit
+          </Text>
+        </View>
+      </RNAnimated.View>
+    </Pressable>
+  </Modal>
+) : null}
+
+{/* welcome back modal removed */}
+
+{/* ── OFFLINE BANNER ── */}
+{!isOnline ? (
+  <View
+    pointerEvents="none"
+    style={{
+      position: "absolute",
+      top: 54,
+      alignSelf: "center",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 999,
+      backgroundColor: "rgba(255,200,0,0.12)",
+      borderWidth: 1,
+      borderColor: "rgba(255,200,0,0.30)",
+      zIndex: 99990,
+    }}
+  >
+    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: "rgba(255,200,0,0.90)" }} />
+    <Text style={{ color: "rgba(255,210,60,0.95)", fontSize: 11, fontWeight: "800", letterSpacing: 0.6 }}>
+      {offlineQueueCount > 0
+        ? `Offline · ${offlineQueueCount} scan${offlineQueueCount > 1 ? "s" : ""} queued`
+        : "Offline · scans will queue"}
+    </Text>
+  </View>
+) : offlineQueueCount > 0 ? (
+  <View
+    pointerEvents="box-none"
+    style={{
+      position: "absolute",
+      top: 54,
+      alignSelf: "center",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 999,
+      backgroundColor: "rgba(120,255,160,0.10)",
+      borderWidth: 1,
+      borderColor: "rgba(120,255,160,0.28)",
+      zIndex: 99990,
+    }}
+  >
+    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: "rgba(120,255,160,0.90)" }} />
+    <Pressable onPress={drainOfflineQueue}>
+      <Text style={{ color: "rgba(140,255,180,0.95)", fontSize: 11, fontWeight: "800", letterSpacing: 0.6 }}>
+        {`Back online · tap to process ${offlineQueueCount} queued scan${offlineQueueCount > 1 ? "s" : ""}`}
+      </Text>
+    </Pressable>
+  </View>
+) : null}
+
+{/* ✅ SAVED TOAST — RIGHT HERE */}
+{Boolean(savedToast) && (
+  <RNAnimated.View
+    pointerEvents="none"
+    style={{
+      position: "absolute",
+      bottom: 110,
+      alignSelf: "center",
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 18,
+      backgroundColor: "rgba(255,255,255,0.92)",
+      transform: [
+        {
+          translateY: toastAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [12, 0],
+          }),
+        },
+        {
+          scale: toastAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.96, 1],
+          }),
+        },
+      ],
+      opacity: toastAnim,
+    }}
+  >
+    <Text style={{ color: TOK.C.bg, fontWeight: "900" }}>
+      {savedToast}
+    </Text>
+  </RNAnimated.View>
+)}
+
+{!!previewImageUri && (
+<Modal
+  visible={!!previewImageUri}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={closeHistoryPreview}
+>
+    <Pressable
+      style={{
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.25)",
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+      onPress={closeHistoryPreview}
+    >
+      <RNAnimated.Image
+        source={{ uri: previewImageUri }}
+        resizeMode="contain"
+        style={{
+          width: "90%",
+          height: "70%",
+          transform: [
+            {
+              scale: previewAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.95, 1],
+              }),
+            },
+          ],
+          opacity: previewAnim,
+        }}
+      />
+      <RNAnimated.Text
+        style={{
+          marginTop: 20,
+          color: "rgba(255,255,255,0.7)",
+          fontSize: 13,
+          letterSpacing: 0.5,
+          opacity: previewAnim,
+        }}
+      >
+        tap anywhere to exit
+      </RNAnimated.Text>
+    </Pressable>
+  </Modal>
+)}
+
+{(() => {
+
+  // 🔥 MASTER RULE:
+  // Tab bar ONLY disappears for splash OR full image preview
+  // (keep tabs visible even if `photo` is set, unless you're literally in the camera photo-preview)
+const tabBarVisible =
+  !showSplash &&
+  !previewImageUri &&
+  tab !== "results" &&
+  !(tab === "camera" && !!photo);
+  return (
+<RNAnimated.View
+  pointerEvents={tabBarVisible ? "auto" : "none"}
+style={[
+  styles.tabBar,
+  {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: TAB_BAR_BOTTOM,
+    zIndex: 99999,
+    elevation: 99999,
+
+    shadowColor: "#000",
+    shadowOpacity: 0.28,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 10 },
+  },
+  {
+    opacity: tabBarVisible ? 1 : 0,
+    transform: [
+      { scale: tabBarVisible ? 1 : 0.98 },
+      { translateY: showSplash ? 4 : 0 },
+    ],
+  },
+]}
+>
+      <TabButton
+        active={tab === "history"}
+        icon="time-sharp"
+        onPress={() => goTab("history")}
+      />
+
+      <TabButton
+        active={tab === "watchlist"}
+        icon={watchlist && watchlist.length > 0 ? "heart" : "heart-outline"}
+        badge={dropCount}
+        onPress={() => {
+          hapticSelect();
+          setDropCount(0);
+          goTab("watchlist");
+        }}
+      />
+
+      <TabButton
+        active={tab === "camera"}
+        icon="camera-sharp"
+        onPress={() => goTab("camera")}
+      />
+
+      <TabButton
+        active={tab === "profile"}
+        icon="settings-sharp"
+        onPress={() => goTab("profile")}
+      />
+    </RNAnimated.View>
+  );
+})()}
+
+{/* FREE SCANS INFO MODAL */}
+<Modal
+  visible={freePassInfoOpen}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setFreePassInfoOpen(false)}
+>
+  {Platform.OS === "ios" ? (
+    <View style={{ flex: 1 }}>
+      <View style={styles.modalCard}>
+        <Text style={styles.modalTitle}>Free scans</Text>
+        <Text style={styles.modalDesc}>
+          You get {FREE_SCAN_LIMIT_FALLBACK} free scans every 30 days.{"\n"}
+          Upgrade to Pro for unlimited scans anytime.
+        </Text>
+
+        <Pressable
+          style={styles.modalPrimary}
+          onPress={() => {
+            hapticSelect();
+            setFreePassInfoOpen(false);
+            setProfileModal("subscription");
+          }}
+        >
+          <Text style={styles.modalPrimaryText}>
+            Go Pro — ${PRO_MONTHLY_PRICE.toFixed(2)}/mo
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.modalSecondary}
+          onPress={() => setFreePassInfoOpen(false)}
+        >
+          <Text style={styles.modalSecondaryText}>Got it</Text>
+        </Pressable>
+      </View>
+    </View>
+  ) : (
+    <Pressable
+      style={styles.modalBackdrop}
+      onPress={() => setFreePassInfoOpen(false)}
+    >
+      <Pressable style={styles.modalCard} onPress={() => {}}>
+        <Text style={styles.modalTitle}>Free scans</Text>
+        <Text style={styles.modalDesc}>
+          You get {FREE_SCAN_LIMIT_SAFE} free scans every 30 days.{"\n"}
+          Upgrade to Pro for unlimited scans anytime.
+        </Text>
+
+        <Pressable
+          style={styles.modalPrimary}
+          onPress={() => {
+            hapticSelect();
+            setFreePassInfoOpen(false);
+            setProfileModal("subscription");
+          }}
+        >
+          <Text style={styles.modalPrimaryText}>
+            Go Pro — ${PRO_MONTHLY_PRICE.toFixed(2)}/mo
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.modalSecondary}
+          onPress={() => setFreePassInfoOpen(false)}
+        >
+          <Text style={styles.modalSecondaryText}>Got it</Text>
+        </Pressable>
+      </Pressable>
+    </Pressable>
+  )}
+</Modal>
+
+{/* ✅ SPLASH INFO MODAL */}
+<Modal
+  visible={splashInfoOpen}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setSplashInfoOpen(false)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <View style={styles.modalTopRow}>
+        <Text style={styles.modalTitle}>Evan AI</Text>
+        <Pressable
+          onPress={() => {
+            hapticSelect();
+            setSplashInfoOpen(false);
+          }}
+          style={styles.backPill}
+        >
+          <Ionicons name="close" size={16} color="white" />
+          <Text style={styles.backText}>Close</Text>
+        </Pressable>
+      </View>
+      <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+        <Text style={styles.modalDesc}>
+          Evan AI scans items and finds potentially cheaper matches.
+        </Text>
+        <Text style={styles.modalDesc}>• No ads</Text>
+        <Text style={styles.modalDesc}>• Honest confidence scoring</Text>
+        <Text style={styles.modalDesc}>• History stored locally</Text>
+      </ScrollView>
+      <Pressable
+        style={styles.modalPrimary}
+        onPress={() => {
+          hapticSelect();
+          setSplashInfoOpen(false);
+        }}
+      >
+        <Text style={styles.modalPrimaryText}>Got it</Text>
+      </Pressable>
+    </View>
+  </View>
+ </Modal>
+{/* PROFILE MODAL: BILLIONAIRE HUB */}
+<Modal
+  visible={profileModal === "billion"}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setProfileModal(null)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <View style={styles.modalTopRow}>
+        <Text style={styles.modalTitle}>Billionaire features</Text>
+        <Pressable onPress={() => { hapticSelect?.(); setProfileModal(null); }} style={styles.backPill}>
+          <Ionicons name="close" size={16} color="white" />
+          <Text style={styles.backText}>Close</Text>
+        </Pressable>
+      </View>
+      <ScrollView style={{ maxHeight: 560 }} showsVerticalScrollIndicator={false}>
+<Text style={styles.modalDesc}>
+  Local-first power tools. Seller mode, inventory, export/import, queue tools, referrals, and intelligence controls.
+</Text>
+        {/* Seller Mode toggle */}
+        <Pressable
+          onPress={async () => {
+            hapticSelect?.();
+            setSellerMode((p) => {
+              const next = !p;
+              AsyncStorage.setItem(SELLER_KEY, next ? "1" : "0");
+              return next;
+            });
+            setSavedToast?.("Seller mode toggled");
+          }}
+          style={styles.profileBtn}
+        >
+          <View style={styles.inlineRow}>
+            <Ionicons name="pricetag-outline" size={18} color="white" />
+            <Text style={styles.profileBtnText}>Seller mode: {sellerMode ? "ON" : "OFF"}</Text>
+          </View>
+          <Text style={styles.savingsSub}>Auto listing title · price · description · copy tools</Text>
+        </Pressable>
+        {/* Batch scan */}
+        <Pressable
+          onPress={() => { hapticSelect?.(); setBatchOpen(true); }}
+          style={styles.profileBtn}
+        >
+          <View style={styles.inlineRow}>
+            <Ionicons name="layers-outline" size={18} color="white" />
+            <Text style={styles.profileBtnText}>Multi-item scan</Text>
+          </View>
+<Text style={styles.savingsSub}>Queue photos → load the next item into scan preview</Text>
+        </Pressable>
+        {/* Inventory */}
+        <Pressable
+          onPress={() => { hapticSelect?.(); setInventoryOpen(true); }}
+          style={styles.profileBtn}
+        >
+          <View style={styles.inlineRow}>
+            <Ionicons name="cube-outline" size={18} color="white" />
+            <Text style={styles.profileBtnText}>Inventory</Text>
+          </View>
+          <Text style={styles.savingsSub}>Track flips · quantities · resale estimates · export</Text>
+        </Pressable>
+        {/* Cloud export/import */}
+        <Pressable
+          onPress={async () => {
+            hapticSelect?.();
+const snapshot = {
+  v: 1,
+  t: Date.now(),
+  intelState,
+  watchlist,
+  inventory,
+  sellerMode,
+  installId,
+  referral: typeof refState !== "undefined" ? refState : null,
+};
+            const json = await exportCloudSnapshot(snapshot);
+            if (json) {
+              await Clipboard.setStringAsync(json);
+              setSavedToast?.("Cloud snapshot copied");
+            } else {
+              setSavedToast?.("Cloud export failed");
+            }
+          }}
+          style={styles.profileBtn}
+        >
+          <View style={styles.inlineRow}>
+            <Ionicons name="cloud-upload-outline" size={18} color="white" />
+            <Text style={styles.profileBtnText}>Cloud export</Text>
+          </View>
+          <Text style={styles.savingsSub}>Copies a JSON snapshot to clipboard (safe backup)</Text>
+        </Pressable>
+        <Pressable
+          onPress={async () => {
+            hapticSelect?.();
+            setCloudImportOpen(true);
+          }}
+          style={styles.profileBtn}
+        >
+          <View style={styles.inlineRow}>
+            <Ionicons name="cloud-download-outline" size={18} color="white" />
+            <Text style={styles.profileBtnText}>Cloud import</Text>
+          </View>
+          <Text style={styles.savingsSub}>Paste snapshot JSON → restore watchlist + intel + inventory</Text>
+        </Pressable>
+
+<Pressable
+  onPress={async () => {
+    hapticSelect?.();
+
+    const code =
+      (typeof refState !== "undefined" && refState?.code) ||
+      effectiveReferralCode ||
+      buildReferralCode(installId) ||
+      "EVANAI";
+
+    const earned =
+      (typeof refState !== "undefined" && Number(refState?.earned || 0)) || 0;
+
+    const msg =
+      `Evan AI referral: ${code}\n` +
+      `Download + use this code to unlock ${REF_REWARD_FREE_SCANS} extra free scans.\n` +
+      `Built for resale intelligence.`;
+
+    try {
+      await Share.share({ message: msg });
+      setSavedToast?.("Referral shared");
+    } catch {
+      setSavedToast?.("Couldn’t share referral");
+    }
+  }}
+  style={styles.profileBtn}
+>
+  <View style={styles.inlineRow}>
+    <Ionicons name="gift-outline" size={18} color="white" />
+    <Text style={styles.profileBtnText}>Referral rewards</Text>
+  </View>
+  <Text style={styles.savingsSub}>
+    Code: {((typeof refState !== "undefined" && refState?.code) || effectiveReferralCode || buildReferralCode(installId) || "EVANAI")} · earned: {((typeof refState !== "undefined" && Number(refState?.earned || 0)) || 0)}
+  </Text>
+</Pressable>
+
+<Text style={styles.modalFoot}>
+  Seller mode, inventory, cloud tools, and referrals are user-facing. Ranking and prediction enhance results when available.
+</Text>
+      </ScrollView>
+    </View>
+  </View>
+</Modal>
+{/* PROFILE MODAL: INTELLIGENCE */}
+<Modal
+  visible={profileModal === "intelligence"}
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  presentationStyle="overFullScreen"
+  transparent
+  onRequestClose={() => setProfileModal(null)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <View style={styles.modalTopRow}>
+        <Text style={styles.modalTitle}>Evan AI Intelligence</Text>
+        <Pressable
+          onPress={() => {
+            hapticSelect?.();
+            setProfileModal(null);
+          }}
+          style={styles.backPill}
+        >
+          <Ionicons name="close" size={16} color="white" />
+          <Text style={styles.backText}>Close</Text>
+        </Pressable>
+      </View>
+      <ScrollView style={{ maxHeight: 520 }} showsVerticalScrollIndicator={false}>
+        <Text style={styles.modalDesc}>
+          Retention loops + compounding + realtime watch checks + share growth — all local-first.
+        </Text>
+{(() => {
+  const w = weeklyStats(intelState?.events || []);
+  const amt = Number.isFinite(Number(w?.weeklySavings))
+  ? Number(w.weeklySavings)
+  : 0;
+  return (
+    <View style={chipStyle()}>
+      <Text style={chipTextStyle()}>
+        {`Week +$${amt.toFixed(2)}`}
+      </Text>
+    </View>
+  );
+})()}
+        {/* Headline */}
+        <View style={{ padding: 14, borderRadius: 18, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.06)", marginBottom: 12 }}>
+          <Text style={{ color: "white", fontWeight: "900", fontSize: 15 }}>{weaponStats.headline}</Text>
+          <View style={{ height: 10 }} />
+          <View style={{ height: 10, borderRadius: 999, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)", backgroundColor: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+            <View style={{ width: `${Math.round(weaponStats.progress * 100)}%`, height: "100%", backgroundColor: "rgba(255,255,255,0.20)" }} />
+          </View>
+          <Text style={{ marginTop: 10, color: "rgba(255,255,255,0.72)", fontWeight: "800" }}>
+            Goal: {weaponStats.today}/{weaponStats.goal}
+          </Text>
+        </View>
+        {/* Stats */}
+        <View style={{ gap: 6, marginBottom: 14 }}>
+          {weaponStats.lines.map((t: string, i: number) => (
+            <Text key={i} style={{ color: "rgba(255,255,255,0.78)", fontWeight: "700" }}>
+              • {t}
+            </Text>
+          ))}
+        </View>
+        {/* Controls */}
+        <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 8 }]}>Retention controls</Text>
+        <View style={{ flexDirection: "row", gap: 10, alignItems: "center", marginBottom: 12 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: "rgba(255,255,255,0.75)", fontWeight: "800", marginBottom: 6 }}>Daily scan goal</Text>
+            <TextInput
+              value={String(dailyGoal)}
+              onChangeText={(t) => {
+                const n = clampInt(t, 1, 25);
+                setDailyGoal(n);
+                AsyncStorage.setItem("EVAN_DAILY_GOAL_V1", String(n));
+              }}
+              placeholder="6"
+              placeholderTextColor="rgba(255,255,255,0.35)"
+              keyboardType="numeric"
+              style={[styles.authInput, { marginBottom: 0 }]}
+            />
+          </View>
+          <Pressable
+            onPress={() => {
+              hapticSelect?.();
+              setAutoWatchEnabled((p) => {
+                const next = !p;
+                AsyncStorage.setItem("EVAN_AUTO_WATCH_V1", next ? "1" : "0");
+                return next;
+              });
+            }}
+            style={({ pressed }) => [
+              {
+                paddingVertical: 12,
+                paddingHorizontal: 14,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.12)",
+                backgroundColor: autoWatchEnabled ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.06)",
+                alignItems: "center",
+                justifyContent: "center",
+              },
+              pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+            ]}
+          >
+            <Text style={{ color: "white", fontWeight: "900" }}>
+              Auto watch: {autoWatchEnabled ? "ON" : "OFF"}
+            </Text>
+          </Pressable>
+        </View>
+        <Pressable
+          onPress={() => {
+            hapticSelect?.();
+            doWatchCheck({ force: true, quiet: false });
+            setSavedToast?.("Checking watchlist…");
+          }}
+          style={styles.modalPrimary}
+        >
+          <Text style={styles.modalPrimaryText}>Force re-check now</Text>
+        </Pressable>
+        <View style={{ height: 10 }} />
+        <Pressable
+          onPress={() => {
+            hapticSelect?.();
+            setProfileModal(null);
+            goTab?.("camera");
+          }}
+          style={styles.modalSecondary}
+        >
+          <Text style={styles.modalSecondaryText}>Scan now</Text>
+        </Pressable>
+        <Text style={styles.modalFoot}>
+          Share ref: {installId ? installId : "…"} · local-first tracking only
+        </Text>
+      </ScrollView>
+    </View>
+  </View>
+</Modal>
+<FlipCalculatorPanel
+  visible={profitCalcOpen}
+  buyPrice={activeResult?.scannedPrice ?? null}
+  sellPrice={activeResult?.price ?? null}
+  category={activeResult?.category ?? null}
+  onClose={() => setProfitCalcOpen(false)}
+  onSetPriceAlert={(targetPrice: number) => {
+    // Add to watchlist if not already there, then set target
+    if (!activeResult) return;
+    const existingIdx = watchlist?.findIndex(
+      (w: any) => w.query === (activeResult.query || activeResult.title)
+    );
+    if (existingIdx >= 0 && watchlist[existingIdx]) {
+      // update existing watchlist item's target
+      setWatchlist((prev: any[]) =>
+        prev.map((x: any, i: number) =>
+          i === existingIdx ? { ...x, targetPrice, updatedAt: Date.now() } : x
+        )
+      );
+    } else {
+      // Create new watchlist entry with target set
+      const newItem = {
+        id: `wl_${Date.now()}`,
+        query: activeResult.query || activeResult.title || "",
+        title: activeResult.title || activeResult.query || "",
+        estValue: activeResult.price || null,
+        scannedPrice: activeResult.scannedPrice || null,
+        category: activeResult.category || null,
+        targetPrice,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        history: [],
+      };
+      setWatchlist((prev: any[]) => [newItem, ...(prev || [])]);
+    }
+    setSavedToast(`🎯 Alert set for ${activeResult.title || "item"} at $${targetPrice}`);
+    setProfitCalcOpen(false);
+  }}
+/>
+
+{/* Feature 10: Flip Scanner Results Modal */}
+<Modal
+  visible={flipScanOpen}
+  transparent
+  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  onRequestClose={() => setFlipScanOpen(false)}
+>
+  <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "flex-end" }}>
+    <View style={{
+      backgroundColor: "#111", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+      borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.10)",
+      maxHeight: "88%", overflow: "hidden",
+    }}>
+      {/* Header */}
+      <View style={{ flexDirection: "row", alignItems: "center", padding: 18, paddingBottom: 12, gap: 10 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: "white", fontWeight: "800", fontSize: 18 }}>🔍 Flip Scanner</Text>
+          <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 2 }}>
+            {zipCode ? `Near ${zipCode} · Local buy vs eBay sell` : "Local deals vs national sold prices"}
+          </Text>
+        </View>
+        <Pressable onPress={() => setFlipScanOpen(false)} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.07)", alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name="close" size={16} color="rgba(255,255,255,0.7)" />
+        </Pressable>
+      </View>
+      <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: "rgba(255,255,255,0.08)", marginHorizontal: 18 }} />
+      {/* Content */}
+      {flipScanLoading ? (
+        <View style={{ alignItems: "center", paddingVertical: 60, gap: 12 }}>
+          <ActivityIndicator size="large" color="#50ff96" />
+          <Text style={{ color: "rgba(255,255,255,0.6)", fontSize: 14 }}>Scanning local market…</Text>
+          <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>Comparing local vs eBay sold prices</Text>
+        </View>
+      ) : flipScanResults.length === 0 ? (
+        <View style={{ alignItems: "center", paddingVertical: 60, gap: 10 }}>
+          <Ionicons name="search-outline" size={36} color="rgba(255,255,255,0.2)" />
+          <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>No strong opportunities found</Text>
+          <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Try a different category or check back later</Text>
+        </View>
+      ) : (
+        <ScrollView style={{ marginTop: 6 }} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+          {flipScanResults.map((opp: any, i: number) => {
+            const riskColor = opp.risk === "low" ? "#50ff96" : opp.risk === "medium" ? "#ffc800" : "#ff6060";
+            return (
+              <View key={i} style={{
+                backgroundColor: "rgba(255,255,255,0.04)", borderRadius: 12,
+                borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.08)",
+                padding: 14, marginBottom: 10, gap: 8,
+              }}>
+                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: "white", fontWeight: "700", fontSize: 14 }} numberOfLines={2}>{opp.query}</Text>
+                    <Text style={{ color: "#50ff96", fontWeight: "800", fontSize: 12, marginTop: 2 }}>{opp.signal}</Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Text style={{ color: "#50ff96", fontWeight: "900", fontSize: 20 }}>{opp.roi}%</Text>
+                    <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 9 }}>ROI</Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  {[
+                    { label: "Buy local", value: `$${opp.localPrice}`, sub: `${opp.localCount} listings` },
+                    { label: "Sell on eBay", value: `$${opp.nationalSoldMedian}`, sub: `${opp.nationalSoldCount} sold` },
+                    { label: "Profit", value: `$${opp.profitAfterFees}`, sub: "after fees" },
+                  ].map((col, j) => (
+                    <View key={j} style={{ flex: 1, backgroundColor: "rgba(255,255,255,0.03)", borderRadius: 8, padding: 8, gap: 2 }}>
+                      <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 9 }}>{col.label}</Text>
+                      <Text style={{ color: "white", fontWeight: "700", fontSize: 14 }}>{col.value}</Text>
+                      <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 9 }}>{col.sub}</Text>
+                    </View>
+                  ))}
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: `${riskColor}15`, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 }}>
+                    <Ionicons name="shield-outline" size={10} color={riskColor} />
+                    <Text style={{ color: riskColor, fontSize: 10, fontWeight: "600" }}>{opp.risk} risk</Text>
+                  </View>
+                  <Pressable
+                    onPress={() => { setFlipScanOpen(false); setProfitCalcOpen(true); }}
+                    style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+                  >
+                    <Text style={{ color: "#50ff96", fontSize: 11, fontWeight: "600" }}>Calculate flip</Text>
+                    <Ionicons name="calculator-outline" size={11} color="#50ff96" />
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+      )}
+    </View>
+  </View>
+</Modal>
+</View>
+  </RNAnimated.View>
+  </GestureHandlerRootView>
+);
+}
+
+// -------------------------
+// EVAN AI — INTUITION LINE (FINAL FEATURE)
+// -------------------------
+
+const buildIntuitionLine = ({
+  cheaperPct,
+  flipPotential,
+  totalMatches,
+  confidence,
+}: any) => {
+  const pct = Number(cheaperPct || 0);
+  const flip = Number(flipPotential || 0);
+  const conf = Number(confidence || 0);
+
+  if (pct >= 15 && conf > 0.7) {
+    return "🔥 Strong deal — priced well below typical market.";
+  }
+
+  if (flip >= 70) {
+    return "🧠 High resale potential — spread suggests a profitable flip.";
+  }
+
+  if (totalMatches <= 2) {
+    return "⚠️ Limited market data — verify condition before buying.";
+  }
+
+  if (pct <= 3) {
+    return "⚠️ Fair price — market looks stable right now.";
+  }
+
+  return "✨ Smart match — pricing looks aligned with current market.";
+};
+
+// -------------------------
+// PRICE NORMALIZATION (bulletproof)
+// -------------------------
+const parseMoney = (raw: any) => {
+  if (raw == null) return NaN;
+  if (typeof raw === "number")
+    return Number.isFinite(raw) ? raw : NaN;
+  const s0 = String(raw).trim();
+  if (!s0) return NaN;
+  let s = s0
+    .replace(/[A-Za-z]/g, "")
+    .replace(/[^\d.,\-]/g, "")
+    .trim();
+  if (!s) return NaN;
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  if (lastComma !== -1 && (lastDot === -1 || lastComma > lastDot)) {
+    s = s.replace(/\./g, "").replace(/,/g, ".");
+  } else {
+    s = s.replace(/,/g, "");
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+};
+// -------------------------
+// TITLE NORMALIZATION
+// -------------------------
+const normalizeTitle = (s: string = "") =>
+  String(s)
+    .toLowerCase()
+    .replace(/wrap[\s-]*around/g, "wrap")
+    .replace(/\b(sun[\s-]*glasses|sunglasses|shades|eyewear|frames?)\b/g, "glasses")
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+// -------------------------
+// TITLE SIMILARITY SCORE
+// -------------------------
+const titleSimilarity = (a = "", b = "") => {
+  const STOP = new Set([
+    "the",
+    "a",
+    "an",
+    "and",
+    "with",
+    "for",
+    "of",
+    "to",
+    "in",
+    "on",
+    "by",
+    "new",
+    "used",
+    "seller",
+    "marketplace",
+    "vintage",
+    "collectibles",
+    "color",
+  ]);
+
+  const A = [...new Set(
+    normalizeTitle(a)
+      .split(" ")
+      .filter((w) => w && !STOP.has(w))
+  )];
+
+  const B = [...new Set(
+    normalizeTitle(b)
+      .split(" ")
+      .filter((w) => w && !STOP.has(w))
+  )];
+
+  if (!A.length || !B.length) return 0;
+
+  let matches = 0;
+  for (const w of A) {
+    if (B.includes(w)) matches++;
+  }
+
+  const overlap = matches / Math.max(A.length, B.length);
+  const containment = B.filter((w) => A.includes(w)).length / B.length;
+
+  return Math.max(overlap, containment * 0.92);
+};
+
+const clampPrice = (n: any) => {
+  const v = parseMoney(n);
+  if (!Number.isFinite(v)) return NaN;
+  if (v <= 0) return NaN;
+  if (v > 1000000) return NaN;
+  return Math.round(v * 100) / 100;
+};
+const calcTotalCost = (item: any) => {
+  const p = clampPrice(item?.price);
+  const ship = clampPrice(item?.shipping);
+  if (!Number.isFinite(p)) return NaN;
+  return Number.isFinite(ship)
+    ? Math.round((p + ship) * 100) / 100
+    : p;
+};
+// -------------------------
+// COMPONENTS
+// -------------------------
+function CountUpNumber({
+  value = 0,
+  prefix = "",
+  suffix = "",
+  duration = 650,
+  style,
+}: any) {
+  const anim = useRef(new RNAnimated.Value(0)).current;
+  const [txt, setTxt] = useState("0");
+
+  useEffect(() => {
+    const target = Number(value) || 0;
+    anim.setValue(0);
+    const id = anim.addListener(({ value: t }) => {
+      const v = Math.round(target * t);
+      setTxt(String(v));
+    });
+    RNAnimated.timing(anim, {
+      toValue: 1,
+      duration,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start(() => {
+      anim.removeListener(id);
+    });
+    return () => {
+      anim.removeAllListeners();
+    };
+  }, [value, duration, anim]);
+  return (
+    <Text style={style}>
+      {prefix}
+      {txt}
+      {suffix}
+    </Text>
+  );
+}
+function IconButton({ icon, onPress }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.iconBtn,
+        pressed && styles.iconBtnPressed,
+      ]}
+    >
+      <Ionicons name={icon} size={26} color="white" />
+    </Pressable>
+  );
+}
+function TabButton({ active, icon, onPress, badge = 0 }) {
+  const show = Number(badge) > 0;
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.tabBtn,
+        active && styles.tabActive,
+        pressed && styles.tabPressed,
+      ]}
+    >
+      <Ionicons
+        name={icon}
+        size={26}
+        color={active ? "white" : "rgba(255,255,255,0.65)"}
+      />
+      {show ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 10,
+            right: 16,
+            minWidth: 18,
+            height: 18,
+            borderRadius: 9,
+            paddingHorizontal: 5,
+            backgroundColor: "rgba(255,255,255,0.92)",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: TOK.C.bg, fontWeight: "900", fontSize: 11 }}>
+            {Math.min(99, Number(badge))}
+          </Text>
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+function PayPill({ icon, label }) {
+  return (
+    <View style={styles.payPill}>
+      <Ionicons name={icon} size={18} color="white" />
+      <Text style={styles.payPillText}>{label}</Text>
+    </View>
+  );
+}
+function LogoChip({ uri, label, dim = false }) {
+  return (
+    <View style={[styles.logoChip, dim && { opacity: 0.35 }]}>
+      <Image source={{ uri }} style={styles.logoImg} resizeMode="contain" />
+      <Text style={styles.logoText}>{label}</Text>
+    </View>
+  );
+}
+function BrandIntelligenceCard({ stats, intelEvents = [], onPress, ...rest }: any) {
+  if (!stats) return null;
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        {
+          marginTop: 10,
+          padding: 14,
+          borderRadius: 22,
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.12)",
+          backgroundColor: "rgba(255,255,255,0.06)",
+          overflow: "hidden",
+        },
+        pressed && { opacity: 0.92, transform: [{ scale: 0.995 }] },
+      ]}
+    >
+      <Text style={{ color: "rgba(255,255,255,0.92)", fontWeight: "900", letterSpacing: 0.5 }}>
+        EVAN AI INTELLIGENCE
+      </Text>
+      <Text style={{ marginTop: 6, color: "rgba(255,255,255,0.78)", fontWeight: "800" }}>
+{stats.headline}  •  IQ {stats.iq}
+      </Text>
+      {/* progress bar */}
+      <View
+        style={{
+          marginTop: 10,
+          height: 10,
+          borderRadius: 999,
+          borderWidth: 1,
+          borderColor: "rgba(255,255,255,0.12)",
+          backgroundColor: "rgba(255,255,255,0.06)",
+          overflow: "hidden",
+        }}
+      >
+        <View
+          style={{
+            width: `${Math.round((stats.progress || 0) * 100)}%`,
+            height: "100%",
+            backgroundColor: "rgba(255,255,255,0.20)",
+          }}
+        />
+      </View>
+      {/* chips */}
+      <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+        <View style={chipStyle()}>
+          <Text style={chipTextStyle()}>Streak {stats.scanStreak ?? ""}</Text>
+        </View>
+        <View style={chipStyle()}>
+          <Text style={chipTextStyle()}>Today {stats.today}/{stats.goal}</Text>
+        </View>
+<View style={chipStyle()}>
+  <Text style={chipTextStyle()}>Tracked {stats.tracked}</Text>
+</View>
+{(() => {
+  const w = weeklyStats(intelEvents || []);
+  const amt = Number(w?.weeklySavings || 0);
+  return (
+    <View style={chipStyle()}>
+      <Text style={chipTextStyle()}>
+        {`Week +$${amt.toFixed(2)}`}
+      </Text>
+    </View>
+  );
+})()}
+        <View style={chipStyle()}>
+          <Text style={chipTextStyle()}>Drops {Math.min(99, Number(stats.dropCount || 0))}</Text>
+        </View>
+      </View>
+      <Text style={{ marginTop: 10, color: "rgba(255,255,255,0.60)", fontWeight: "800", fontSize: 12 }}>
+        Tap to open Intelligence → controls + stats + realtime checks
+      </Text>
+<Text style={{ marginTop: 6, color: "rgba(255,255,255,0.52)", fontWeight: "800", fontSize: 12 }}>
+  Local-first. No ads. No dark patterns.
+</Text>
+ </Pressable>
+  );
+}
+function chipStyle() {
+  return {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(0,0,0,0.22)",
+  };
+}
+
+function chipTextStyle(): TextStyle {
+  return {
+    color: "rgba(255,255,255,0.88)",
+    fontWeight: "900",
+    fontSize: 12,
+    letterSpacing: 0.2,
+  };
+}
+
+type ResultsLoadingPanelProps = {
+  photoUri?: string | null;
+  headline?: string;
+  stage?: "idle" | "vision" | "market" | "analysis" | "collector";
+  stageMeta?: string;
+  onCancel?: () => void;
+  onRetry?: () => void;
+  showRetry?: boolean;
+  retryReveal?: any;
+  retryScale?: any;
+  loadingDots?: string;
+};
+
+const ResultsLoadingPanel = React.memo(function ResultsLoadingPanel({
+  photoUri,
+  headline,
+  stage = "idle",
+  stageMeta = "",
+  onCancel,
+  onRetry,
+  showRetry,
+  retryReveal,
+  retryScale,
+  loadingDots = ".",
+}: ResultsLoadingPanelProps) {
+
+  const [differentOpen, setDifferentOpen] = useState(false);
+
+  const panelIn = useRef(new RNAnimated.Value(0)).current;
+  const panelY = useRef(new RNAnimated.Value(16)).current;
+  const differentAnim = useRef(new RNAnimated.Value(0)).current;
+  
+  const spinnerTurn = useRef(new RNAnimated.Value(0)).current;
+const spinnerGlow = useRef(new RNAnimated.Value(0)).current;
+
+useEffect(() => {
+  spinnerTurn.setValue(0);
+  spinnerGlow.setValue(0);
+
+  const spinLoop = RNAnimated.loop(
+    RNAnimated.timing(spinnerTurn, {
+      toValue: 1,
+      duration: 1050,
+      easing: Easing.linear,
+      useNativeDriver: true,
+    })
+  );
+
+  const glowLoop = RNAnimated.loop(
+    RNAnimated.sequence([
+      RNAnimated.timing(spinnerGlow, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.inOut(Easing.sin),
+        useNativeDriver: true,
+      }),
+      RNAnimated.timing(spinnerGlow, {
+        toValue: 0,
+        duration: 900,
+        easing: Easing.inOut(Easing.sin),
+        useNativeDriver: true,
+      }),
+    ])
+  );
+
+  spinLoop.start();
+  glowLoop.start();
+
+  return () => {
+    try { spinLoop.stop(); } catch {}
+    try { glowLoop.stop(); } catch {}
+  };
+}, [spinnerTurn, spinnerGlow]);
+
+const spinnerRotate = spinnerTurn.interpolate({
+  inputRange: [0, 1],
+  outputRange: ["0deg", "360deg"],
+});
+
+  useEffect(() => {
+    panelIn.setValue(0);
+    panelY.setValue(16);
+
+    RNAnimated.parallel([
+      RNAnimated.timing(panelIn, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      RNAnimated.spring(panelY, {
+        toValue: 0,
+        damping: 18,
+        stiffness: 170,
+        mass: 0.8,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [panelIn, panelY]);
+
+  const toggleDifferent = () => {
+    hapticSelect?.();
+    const next = !differentOpen;
+    setDifferentOpen(next);
+
+    RNAnimated.timing(differentAnim, {
+      toValue: next ? 1 : 0,
+      duration: 180,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  };
+
+  return (
+    <RNAnimated.View
+      style={{
+        opacity: panelIn,
+        transform: [
+          { translateY: panelY },
+          {
+            scale: panelIn.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.985, 1],
+            }),
+          },
+        ],
+      }}
+    >
+      <View
+        style={[
+          styles.resultsLoadingShell,
+          {
+            minHeight: 350,
+            borderRadius: 30,
+            overflow: "hidden",
+            backgroundColor: "rgba(255,255,255,0.06)",
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.10)",
+          },
+        ]}
+      >
+        {photoUri ? (
+          <Image
+            source={{ uri: photoUri }}
+            style={{
+              ...StyleSheet.absoluteFillObject,
+              opacity: 0.18,
+            }}
+            blurRadius={18}
+            resizeMode="cover"
+          />
+        ) : null}
+
+        <BlurView
+          intensity={30}
+          tint="dark"
+          style={StyleSheet.absoluteFillObject}
+        />
+
+        <View
+          style={{
+            paddingHorizontal: 20,
+            paddingTop: 22,
+            paddingBottom: 18,
+            alignItems: "center",
+          }}
+        >
+
+<RingSpinner size={90} />
+          <Text
+            style={{
+              color: "white",
+              fontWeight: "900",
+              fontSize: 19,
+              textAlign: "center",
+            }}
+          >
+            {headline || "Finding the cheapest match"}
+          </Text>
+
+
+          <Text
+            style={{
+              marginTop: 10,
+              color: "rgba(255,255,255,0.82)",
+              fontWeight: "900",
+              fontSize: 13,
+              textAlign: "center",
+              lineHeight: 18,
+            }}
+          >
+            {stage === "vision"
+              ? "🧠 Identifying item"
+              : stage === "market"
+              ? "🌐 Searching marketplaces"
+              : stage === "analysis"
+              ? "📊 Calculating deal quality"
+              : stage === "collector"
+              ? "🔥 Detecting hidden value"
+              : "Finding the cheapest result"}
+            {loadingDots}
+          </Text>
+
+          <Text
+            style={{
+              marginTop: 6,
+              color: "rgba(255,255,255,0.58)",
+              fontWeight: "800",
+              fontSize: 12,
+              textAlign: "center",
+            }}
+          >
+            {stageMeta || "Live market comparison in progress"}
+          </Text>
+
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 12,
+              marginTop: 22,
+              width: "100%",
+            }}
+          >
+            <Pressable
+              onPress={onCancel}
+              style={({ pressed }) => [
+                {
+                  flex: 1,
+                  minHeight: 54,
+                  borderRadius: 18,
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.14)",
+                  backgroundColor: "rgba(255,255,255,0.06)",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexDirection: "row",
+                  gap: 8,
+                },
+                pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+              ]}
+            >
+              <Ionicons name="close" size={20} color="white" />
+              <Text style={{ color: "white", fontWeight: "900", fontSize: 15 }}>
+                Cancel
+              </Text>
+            </Pressable>
+
+            <RNAnimated.View
+              style={{
+                flex: 1,
+                opacity: retryReveal || 1,
+                transform: [
+                  {
+                    scale:
+                      retryScale ||
+                      1,
+                  },
+                ],
+              }}
+            >
+              <Pressable
+                onPress={showRetry ? onRetry : undefined}
+                disabled={!showRetry}
+                style={({ pressed }) => [
+                  {
+                    minHeight: 54,
+                    borderRadius: 18,
+                    borderWidth: 1,
+                    borderColor: "rgba(255,255,255,0.12)",
+                    backgroundColor: "rgba(255,255,255,0.04)",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexDirection: "row",
+                    gap: 8,
+                    opacity: showRetry ? 1 : 0.45,
+                  },
+                  pressed && showRetry && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+                ]}
+              >
+                <Ionicons name="refresh" size={20} color="white" />
+                <Text style={{ color: "white", fontWeight: "900", fontSize: 15 }}>
+                  Retry
+                </Text>
+              </Pressable>
+            </RNAnimated.View>
+          </View>
+
+          {/* EXACTLY WHERE YOU CIRCLED */}
+          <Pressable
+            onPress={toggleDifferent}
+            style={({ pressed }) => [
+              {
+                marginTop: 16,
+                alignSelf: "stretch",
+                paddingVertical: 12,
+                paddingHorizontal: 14,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: "rgba(255,255,255,0.12)",
+                backgroundColor: "rgba(255,255,255,0.05)",
+              },
+              pressed && { opacity: 0.92, transform: [{ scale: 0.995 }] },
+            ]}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <Text style={{ color: "white", fontWeight: "900", fontSize: 14 }}>
+                What makes Evan AI different?
+              </Text>
+              <Ionicons
+                name={differentOpen ? "chevron-up" : "chevron-down"}
+                size={18}
+                color="rgba(255,255,255,0.82)"
+              />
+            </View>
+          </Pressable>
+
+
+<RNAnimated.View
+  style={{
+    alignSelf: "stretch",
+    overflow: "hidden",
+    opacity: differentAnim,
+    maxHeight: differentAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, 420],
+    }),
+    marginTop: differentOpen ? 10 : 0,
+  }}
+>
+  <ScrollView
+    nestedScrollEnabled
+    bounces
+    alwaysBounceVertical
+    showsVerticalScrollIndicator
+    style={{ maxHeight: 340 }}
+    contentContainerStyle={{ paddingBottom: 14 }}
+  >
+    <View
+      style={{
+        padding: 14,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.12)",
+        backgroundColor: "rgba(255,255,255,0.06)",
+      }}
+    >
+      <Text style={{ color: "white", fontWeight: "900", marginBottom: 10 }}>
+        Why Evan AI is better
+      </Text>
+
+      <Text
+        style={{
+          color: "rgba(255,255,255,0.80)",
+          fontWeight: "800",
+          lineHeight: 24,
+          marginBottom: 14,
+        }}
+      >
+        1. It identifies the actual item first — not just random visually similar listings — so your market search starts from a smarter query.
+      </Text>
+
+      <Text
+        style={{
+          color: "rgba(255,255,255,0.80)",
+          fontWeight: "800",
+          lineHeight: 24,
+          marginBottom: 14,
+        }}
+      >
+        2. It compares real marketplace results using the cheapest true match logic, including junk filtering and ranking — not fake “lowest price” noise.
+      </Text>
+
+      <Text
+        style={{
+          color: "rgba(255,255,255,0.80)",
+          fontWeight: "800",
+          lineHeight: 24,
+          marginBottom: 14,
+        }}
+      >
+        3. It turns a scan into a decision — confidence, savings, resale value, and profit signal — so users know whether to buy, wait, or flip.
+      </Text>
+
+      <Text
+        style={{
+          color: "rgba(255,255,255,0.60)",
+          fontWeight: "800",
+          fontSize: 12,
+        }}
+      >
+        Scroll for more
+      </Text>
+    </View>
+  </ScrollView>
+</RNAnimated.View>
+        </View>
+      </View>
+    </RNAnimated.View>
+  );
+});
+
+// ✅ Premium rotating ring spinner (STABILIZED)
+const RingSpinner = React.memo(function RingSpinner({
+  size = 90,
+}: {
+  size?: number;
+}) {
+  const spin = useRef(new RNAnimated.Value(0)).current;
+  const pulse = useRef(new RNAnimated.Value(0)).current;
+
+  useEffect(() => {
+    const spinLoop = RNAnimated.loop(
+      RNAnimated.timing(spin, {
+        toValue: 1,
+        duration: 1200,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+
+    const pulseLoop = RNAnimated.loop(
+      RNAnimated.sequence([
+        RNAnimated.timing(pulse, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        RNAnimated.timing(pulse, {
+          toValue: 0,
+          duration: 900,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    spinLoop.start();
+    pulseLoop.start();
+
+    return () => {
+      try { spinLoop.stop(); } catch {}
+      try { pulseLoop.stop(); } catch {}
+    };
+  }, [spin, pulse]);
+
+  const rotate = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
+  const pulseScale = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.96, 1.04],
+  });
+
+  const glowOpacity = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.16, 0.30],
+  });
+
+  const coreOpacity = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.55, 0.9],
+  });
+
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <RNAnimated.View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          borderWidth: 1.5,
+          borderColor: "rgba(255,255,255,0.10)",
+          opacity: glowOpacity,
+          transform: [{ scale: pulseScale }],
+        }}
+      />
+
+      <RNAnimated.View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          borderWidth: 3,
+          borderColor: "rgba(255,255,255,0.08)",
+          borderTopColor: "rgba(255,255,255,0.96)",
+          borderRightColor: "rgba(255,255,255,0.38)",
+          borderBottomColor: "rgba(255,255,255,0.12)",
+          borderLeftColor: "rgba(255,255,255,0.08)",
+          transform: [{ rotate }],
+        }}
+      />
+
+      <RNAnimated.View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          width: Math.round(size * 0.2),
+          height: Math.round(size * 0.2),
+          borderRadius: Math.round(size * 0.1),
+          backgroundColor: "rgba(255,255,255,0.78)",
+          opacity: coreOpacity,
+          shadowColor: "#fff",
+          shadowOpacity: 0.18,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 0 },
+        }}
+      />
+    </View>
+  );
+});
+
+// Liquid confidence bar
+// Liquid confidence bar (STABILIZED)
+const ConfidenceBar = React.memo(function ConfidenceBar({
+  value = 0,
+}: {
+  value?: number;
+}) {
+  const clamped = Math.max(0, Math.min(1, Number(value) || 0));
+  const pct = Math.round(clamped * 100);
+  const progress = useRef(new RNAnimated.Value(0)).current;
+  const sheen = useRef(new RNAnimated.Value(0)).current;
+  const bubble1 = useRef(new RNAnimated.Value(0)).current;
+  const bubble2 = useRef(new RNAnimated.Value(0)).current;
+  const bubble3 = useRef(new RNAnimated.Value(0)).current;
+  useEffect(() => {
+    RNAnimated.timing(progress, {
+      toValue: clamped,
+      duration: 560,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [clamped, progress]);
+  useEffect(() => {
+    sheen.setValue(0);
+    const loop = RNAnimated.loop(
+      RNAnimated.sequence([
+        RNAnimated.timing(sheen, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+        RNAnimated.timing(sheen, {
+          toValue: 0,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [sheen]);
+  useEffect(() => {
+    const mkBubble = (v, delay) =>
+      RNAnimated.loop(
+        RNAnimated.sequence([
+          RNAnimated.delay(delay),
+          RNAnimated.timing(v, {
+            toValue: -6,
+            duration: 820,
+            easing: Easing.inOut(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          RNAnimated.timing(v, {
+            toValue: 0,
+            duration: 820,
+            easing: Easing.inOut(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+    const l1 = mkBubble(bubble1, 0);
+    const l2 = mkBubble(bubble2, 140);
+    const l3 = mkBubble(bubble3, 260);
+    l1.start();
+    l2.start();
+    l3.start();
+    return () => {
+      l1.stop();
+      l2.stop();
+      l3.stop();
+    };
+  }, [bubble1, bubble2, bubble3]);
+  const fillW = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0%", "100%"],
+  });
+  const sheenX = sheen.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-80, 260],
+  });
+  return (
+    <View style={{ marginTop: 12 }}>
+      <Text style={styles.confLabel}>Confidence</Text>
+      <View style={styles.confOuter}>
+        <RNAnimated.View style={[styles.confFill, { width: fillW }]}>
+          <RNAnimated.View
+            pointerEvents="none"
+            style={[
+              styles.confSheen,
+              { transform: [{ translateX: sheenX }, { rotate: "18deg" }] },
+            ]}
+          />
+          <RNAnimated.View
+            pointerEvents="none"
+            style={[
+              styles.confBubble,
+              { left: 18, top: 7, transform: [{ translateY: bubble1 }] },
+            ]}
+          />
+          <RNAnimated.View
+            pointerEvents="none"
+            style={[
+              styles.confBubble,
+              { left: 44, top: 11, transform: [{ translateY: bubble2 }] },
+            ]}
+          />
+          <RNAnimated.View
+            pointerEvents="none"
+            style={[
+              styles.confBubble,
+              { left: 76, top: 6, transform: [{ translateY: bubble3 }] },
+            ]}
+          />
+        </RNAnimated.View>
+        <View pointerEvents="none" style={styles.confTextWrap}>
+          <Text style={styles.confText}>{pct}%</Text>
+        </View>
+      </View>
+    </View>
+  );
+});
+
+function useWatchlistMarketPolling({
+  enabled,
+  watchlist,
+  setWatchlist,
+}: {
+  enabled: boolean;
+  watchlist: any[];
+  setWatchlist: any;
+}) {
+  useEffect(() => {
+    if (!enabled) return;
+    if (!Array.isArray(watchlist) || !watchlist.length) return;
+    if (typeof setWatchlist !== "function") return;
+
+    let alive = true;
+
+    const pollOnce = async () => {
+      try {
+        const lastRaw = await AsyncStorage.getItem(WATCH_POLL_LAST_KEY);
+        const last = Number(lastRaw || 0);
+        if (Date.now() - last < 60_000) return;
+
+        await AsyncStorage.setItem(WATCH_POLL_LAST_KEY, String(Date.now()));
+
+        const res: any = await apiFetch("/watch/poll", {
+          method: "POST",
+          body: JSON.stringify({
+            items: (watchlist || []).map((w) => ({
+              id: w.id,
+              query: w.title || w.query,
+            })),
+          }),
+          timeoutMs: 9000,
+          retries: 0,
+        });
+
+        if (!alive) return;
+
+        const rawUpdates = Array.isArray(res?.items)
+          ? res.items
+          : Array.isArray(res?.updated)
+          ? res.updated
+          : [];
+
+        const updates = rawUpdates
+          .map((u: any) => ({
+            id: u?.id,
+            estValue: clampPrice(
+              u?.estValue ?? u?.bestPrice ?? u?.state?.lastBestPrice
+            ),
+            marketLow: clampPrice(
+              u?.marketLow ?? u?.consensus?.typicalLow
+            ),
+            marketHigh: clampPrice(
+              u?.marketHigh ?? u?.consensus?.typicalHigh
+            ),
+            dropAmount: clampPrice(
+              u?.dropAmount ?? u?.delta?.dropAmount
+            ),
+
+            dropCount: Number((u?.dropCount ?? u?.state?.dropCount) || 0),
+            priceDropped: Boolean(u?.priceDropped ?? u?.delta?.priceDropped),
+            lastChecked: Number((u?.lastChecked ?? u?.state?.lastCheckedAt) || Date.now()),
+          }))
+          .filter((u: any) => u?.id);
+
+
+        if (!updates.length) return;
+
+        setWatchlist((prev: any[]) =>
+          (prev || []).map((w) => {
+            const u = updates.find((x: any) => x.id === w.id);
+            if (!u) return w;
+
+            const nextEst = clampPrice(u.estValue);
+            const nextPrice = Number.isFinite(nextEst) ? nextEst : w.estValue;
+            const prevPrice = w.lastSeenPrice ?? nextPrice;
+            const rawDrop = Number(prevPrice) - Number(nextPrice);
+            const didDrop = rawDrop > 0;
+
+            return {
+              ...w,
+              estValue: nextPrice,
+              marketLow: clampPrice(u.marketLow) ?? w.marketLow,
+              marketHigh: clampPrice(u.marketHigh) ?? w.marketHigh,
+              lastSeenPrice: nextPrice,
+              dropAmount: didDrop
+                ? Math.round(Number.isFinite(Number(u.dropAmount)) ? Number(u.dropAmount) : rawDrop)
+                : null,
+              dropCount: Number.isFinite(Number(u.dropCount))
+                ? Number(u.dropCount)
+                : didDrop
+                ? (w.dropCount || 0) + 1
+                : (w.dropCount || 0),
+              priceDropped: Boolean(u.priceDropped ?? didDrop),
+              lastChecked: Number(u.lastChecked || Date.now()),
+            };
+          })
+        );
+      } catch {
+        // silent — never crash UI
+      }
+    };
+
+    pollOnce();
+    const id = setInterval(pollOnce, 90_000);
+
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [enabled, watchlist, setWatchlist]);
+}
+
+function useWatchlistRealtime(watchlist: any[] = [], setWatchlist: any, enabled = true) {
+  const appActive = useAppActive();
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (typeof setWatchlist !== "function") return;
+
+    if (!enabled || !appActive || !Array.isArray(watchlist) || !watchlist.length) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      return;
+    }
+
+    if (intervalRef.current) return;
+
+    intervalRef.current = setInterval(() => {
+      setWatchlist((prev: any[]) =>
+        (prev || []).map((item) => {
+          if (!item?.estValue) return item;
+
+          const base = Number(item.estValue) || 0;
+          const drift = Math.max(
+            -base * 0.01,
+            Math.min(base * 0.01, base * (Math.random() * 0.02 - 0.01))
+          );
+          const next = Math.max(1, Math.round(base + drift));
+          const prevPrice = item.lastSeenPrice ?? next;
+          const dropAmount = prevPrice - next;
+          const didDrop = dropAmount > 0;
+
+          return {
+            ...item,
+            estValue: next,
+            lastSeenPrice: next,
+            dropAmount: didDrop ? Math.round(dropAmount) : null,
+            dropCount: didDrop ? (item.dropCount || 0) + 1 : (item.dropCount || 0),
+            priceDropped: didDrop,
+            lastChecked: Date.now(),
+          };
+        })
+      );
+    }, 30000);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [enabled, appActive, setWatchlist, Array.isArray(watchlist) ? watchlist.length : 0]);
+}
+
+// -------------------------
+// WATCHLIST SCREEN (Apple-level)
+// -------------------------
+
+const WatchlistScreen = React.memo(function WatchlistScreen({
+  watchlist,
+  setWatchlist,
+  watchSearch,
+  setWatchSearch,
+  watchSort,
+  setWatchSort,
+  watchAddName,
+  setWatchAddName,
+  watchAddTarget,
+  setWatchAddTarget,
+  addManualWatch,
+  removeWatch,
+  money,
+  calcSavings,
+}: {
+  watchlist?: any[];
+  setWatchlist?: React.Dispatch<React.SetStateAction<any[]>>;
+  watchSearch?: string;
+  setWatchSearch?: React.Dispatch<React.SetStateAction<string>>;
+  watchSort?: string;
+  setWatchSort?: React.Dispatch<React.SetStateAction<string>>;
+  watchAddName?: string;
+  setWatchAddName?: React.Dispatch<React.SetStateAction<string>>;
+  watchAddTarget?: string;
+  setWatchAddTarget?: React.Dispatch<React.SetStateAction<string>>;
+  addManualWatch?: () => void;
+  removeWatch?: (id: string) => void;
+  money?: (n: number) => string;
+  calcSavings?: (item: any) => number;
+}) {
+
+const [selected, setSelected] = useState<any | null>(null);
+const [targetHitToast, setTargetHitToast] = useState<string | null>(null);
+
+useEffect(() => {
+  const hit = (watchlist || []).find(
+    (x) =>
+      x?.targetPrice &&
+      x?.estValue &&
+      Number(x.estValue) <= Number(x.targetPrice)
+  );
+
+  if (!hit) return;
+
+  setTargetHitToast("Target hit 🎯");
+  const id = setTimeout(() => setTargetHitToast(null), 2000);
+
+  return () => clearTimeout(id);
+}, [watchlist]);
+
+useWatchlistMarketPolling({
+  enabled: !!BILLION?.WATCH_POLLING,
+  watchlist: Array.isArray(watchlist) ? watchlist : [],
+  setWatchlist,
+});
+
+// Disable fake drift when real polling exists.
+useWatchlistRealtime(
+  Array.isArray(watchlist) ? watchlist : [],
+  setWatchlist,
+  false
+);
+
+  const filtered = (watchlist || []).filter((x) => {
+    const q = watchSearch.trim().toLowerCase();
+    if (!q) return true;
+    return String(x?.title || "")
+      .toLowerCase()
+      .includes(q);
+  });
+  const sorted = [...filtered].sort((a, b) => {
+    if (watchSort === "price") {
+      const pa = Number(a?.targetPrice);
+      const pb = Number(b?.targetPrice);
+      if (!isFinite(pa) && !isFinite(pb)) return 0;
+      if (!isFinite(pa)) return 1;
+      if (!isFinite(pb)) return -1;
+      return pa - pb;
+    }
+    if (watchSort === "savings") {
+      const sa = calcSavings(a);
+      const sb = calcSavings(b);
+      const va = isFinite(Number(sa)) ? Number(sa) : -1;
+      const vb = isFinite(Number(sb)) ? Number(sb) : -1;
+      return vb - va;
+    }
+    // recent
+    return Number(b?.createdAt || 0) - Number(a?.createdAt || 0);
+  });
+  const openDetails = (item) => setSelected(item);
+  const setTarget = (id, nextTarget) => {
+    const t = Number(nextTarget);
+    setWatchlist((prev) =>
+      prev.map((x) =>
+        x.id === id
+          ? { ...x, targetPrice: isFinite(t) ? t : null, updatedAt: Date.now() }
+          : x
+      )
+    );
+  };
+  return (
+    <View style={styles.watchPage}>
+{targetHitToast ? (
+  <View
+    style={{
+      position: "absolute",
+      top: 58,
+      left: 18,
+      right: 18,
+      zIndex: 10,
+      padding: 12,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.14)",
+      backgroundColor: "rgba(20,20,20,0.85)",
+    }}
+  >
+    <Text style={{ color: "white", fontWeight: "900", textAlign: "center" }}>
+      {targetHitToast}
+    </Text>
+  </View>
+) : null}
+ <ScrollView
+        contentContainerStyle={styles.watchInner}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.watchHeaderRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.watchTitle}>Watchlist</Text>
+            <Text style={styles.watchSub}>
+              Track targets. Buy only when the price makes sense.
+            </Text>
+          </View>
+          <View style={styles.watchBadge}>
+            <Ionicons name="bookmark" size={16} color="white" />
+            <Text style={styles.watchBadgeText}>
+              {String(watchlist?.length || 0)}
+            </Text>
+          </View>
+        </View>
+        {/* Add row */}
+        <View style={styles.watchAddCard}>
+          <Text style={styles.watchAddLabel}>Add a target</Text>
+          <View style={styles.watchAddRow}>
+            <View style={{ flex: 1 }}>
+              <TextInput
+                value={watchAddName}
+                onChangeText={setWatchAddName}
+                placeholder="Example: AirPods Pro 2"
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                style={styles.watchAddInput}
+                returnKeyType="done"
+              />
+            </View>
+            <View style={styles.watchTargetPill}>
+              <Text style={styles.watchTargetPrefix}>$</Text>
+              <TextInput
+                value={watchAddTarget}
+                onChangeText={setWatchAddTarget}
+                placeholder="Target"
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                style={styles.watchTargetInput}
+                keyboardType="numeric"
+              />
+            </View>
+            <Pressable
+              onPress={addManualWatch}
+              style={({ pressed }) => [
+                styles.watchAddBtn,
+                pressed && styles.watchAddBtnPressed,
+              ]}
+            >
+<Ionicons name="add" size={18} color={TOK.C.bg} />
+              <Text style={styles.watchAddBtnText}>Add</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.watchAddHint}>
+            Local-first. No ads. No dark patterns.
+          </Text>
+        </View>
+        {/* Search */}
+        <View style={styles.watchSearchCard}>
+          <Ionicons name="search" size={18} color="rgba(255,255,255,0.75)" />
+          <TextInput
+            value={watchSearch}
+            onChangeText={setWatchSearch}
+            placeholder="Search your watchlist"
+            placeholderTextColor="rgba(255,255,255,0.35)"
+            style={styles.watchSearchInput}
+          />
+          {!!watchSearch && (
+            <Pressable
+              onPress={() => setWatchSearch("")}
+              style={({ pressed }) => [
+                styles.watchClearBtn,
+                pressed && styles.watchClearBtnPressed,
+              ]}
+            >
+              <Ionicons name="close" size={16} color="white" />
+            </Pressable>
+          )}
+        </View>
+        {/* Sort chips */}
+        <View style={styles.watchChipRow}>
+          {[
+            { key: "recent", label: "Recent", icon: "time" },
+            { key: "savings", label: "Savings", icon: "trending-up" },
+            { key: "price", label: "Target", icon: "cash" },
+          ].map((c) => {
+            const active = watchSort === c.key;
+            return (
+              <Pressable
+                key={c.key}
+                onPress={() => setWatchSort(c.key)}
+                style={({ pressed }) => [
+                  styles.watchChip,
+                  active && styles.watchChipActive,
+                  pressed && styles.watchChipPressed,
+                ]}
+              >
+                <Ionicons
+                  name={c.icon as any}
+                  size={14}
+                  color={active ? "white" : "rgba(255,255,255,0.75)"}
+                />
+                <Text style={[styles.watchChipText, active && styles.watchChipTextActive]}>
+                  {c.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        {/* Empty */}
+        {sorted.length === 0 ? (
+          <View style={styles.watchEmptyCard}>
+            <Text style={styles.watchEmptyTitle}>Nothing here yet.</Text>
+            <Text style={styles.watchEmptyText}>
+              Add an item above, or save a result from your next scan.
+            </Text>
+          </View>
+        ) : (
+          <View style={{ marginTop: 6 }}>
+            {sorted.map((item) => {
+              const savings = calcSavings(item);
+              return (
+
+<Pressable
+  key={item.id}
+  onPress={() => openDetails(item)}
+  style={({ pressed }) => [
+    styles.watchRow,
+    item?.priceDropped && { borderColor: "rgba(76,255,136,0.45)" },
+    item?.targetHit && { borderColor: "rgba(255,200,0,0.55)", borderWidth: 1.5 },
+    pressed && styles.watchRowPressed,
+  ]}
+>
+                  {item.thumbUri ? (
+                    <Image source={{ uri: item.thumbUri }} style={styles.watchThumb} />
+                  ) : (
+                    <View style={styles.watchThumbFallback}>
+                      <Ionicons name="image" size={18} color="rgba(255,255,255,0.55)" />
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Text style={[styles.watchRowTitle, { flex: 1 }]} numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                      {item.targetHit ? (
+                        <View style={{ backgroundColor: "rgba(255,200,0,0.15)", borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: "rgba(255,200,0,0.4)" }}>
+                          <Text style={{ color: "#ffc800", fontSize: 10, fontWeight: "700" }}>🎯 HIT</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <View style={styles.watchMetaRow}>
+                      <Text style={styles.watchMetaText}>
+                        Target: <Text style={styles.watchMetaStrong}>{money(item.targetPrice)}</Text>
+                      </Text>
+                      <Text style={styles.watchMetaText}>
+                        Est: <Text style={styles.watchMetaStrong}>{money(item.estValue)}</Text>
+                      </Text>
+                    </View>
+                    <View style={styles.watchPillRow}>
+{item.dropAmount ? (
+<View style={{flexDirection:"row",gap:8}}>
+<Text style={{color:"#4cff88",fontWeight:"900"}}>
+↓ ${item.dropAmount}
+</Text>
+<Text style={{color:"white"}}>
+{item.dropCount||0} drops
+</Text>
+</View>
+):null}
+<View style={styles.watchMiniPill}>
+                        <Text style={styles.watchMiniLabel}>Market</Text>
+                        <Text style={styles.watchMiniValue}>
+                          {money(item.marketLow)}–{money(item.marketHigh)}
+                        </Text>
+                      </View>
+                      <View style={styles.watchMiniPill}>
+                        <Text style={styles.watchMiniLabel}>Potential</Text>
+                        <Text style={styles.watchMiniValue}>
+                          {savings == null ? "—" : money(savings)}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                  <Pressable
+                    onPress={() => removeWatch(item.id)}
+                    style={({ pressed }) => [
+                      styles.watchTrash,
+                      pressed && styles.watchTrashPressed,
+                    ]}
+                  >
+                    <Ionicons name="trash" size={18} color="rgba(255,255,255,0.85)" />
+                  </Pressable>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+        <View style={{ height: 110 }} />
+      </ScrollView>
+      {/* Details modal */}
+      <Modal visible={!!selected} transparent animationType="fade">
+        <Pressable style={styles.modalBackdrop} onPress={() => setSelected(null)}>
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Watch target</Text>
+              <Pressable style={styles.backPill} onPress={() => setSelected(null)}>
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.modalDesc} numberOfLines={2}>
+              {selected?.title || "Untitled"}
+            </Text>
+            <View style={styles.watchDetailGrid}>
+              <View style={styles.watchDetailCard}>
+                <Text style={styles.watchDetailLabel}>Target</Text>
+                <Text style={styles.watchDetailValue}>{money(selected?.targetPrice)}</Text>
+              </View>
+              <View style={styles.watchDetailCard}>
+                <Text style={styles.watchDetailLabel}>Estimated</Text>
+                <Text style={styles.watchDetailValue}>{money(selected?.estValue)}</Text>
+              </View>
+              <View style={styles.watchDetailCard}>
+                <Text style={styles.watchDetailLabel}>Market range</Text>
+                <Text style={styles.watchDetailValue}>
+                  {money(selected?.marketLow)}–{money(selected?.marketHigh)}
+                </Text>
+              </View>
+              <View style={styles.watchDetailCard}>
+                <Text style={styles.watchDetailLabel}>Potential</Text>
+                <Text style={styles.watchDetailValue}>
+                  {calcSavings(selected) == null ? "—" : money(calcSavings(selected))}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.confLabel}>Update target</Text>
+            <View style={styles.watchEditRow}>
+              <Text style={styles.watchTargetPrefix}>$</Text>
+              <TextInput
+                defaultValue={selected?.targetPrice ? String(selected.targetPrice) : ""}
+                placeholder="Enter target price"
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                keyboardType="numeric"
+                style={styles.watchEditInput}
+                onEndEditing={(e) => setTarget(selected.id, e.nativeEvent.text)}
+              />
+            </View>
+            <View style={styles.divider} />
+            <Pressable
+              onPress={() => {
+                removeWatch(selected.id);
+                setSelected(null);
+              }}
+              style={styles.modalSecondary}
+            >
+              <Text style={styles.modalSecondaryText}>Remove from Watchlist</Text>
+            </Pressable>
+            <Text style={styles.modalFoot}>
+              Tip: Save scans into Watchlist so you can buy only when the deal is real.
+            </Text>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </View>
+  );
+});
+// ===============================
+// BILLIONAIRE FEATURE FLAGS (v1)
+// local-first, production-safe
+// ===============================
+const BILLION = {
+  RANKING_V2: true,
+  WATCH_POLLING: true,
+  MARKETPLACE_EXPAND: true,
+  CLOUD_SYNC_V1: true, // export/import + optional API hook
+  SOCIAL_HOOKS: true,
+  REFERRALS_V1: true,
+  INVENTORY_V1: true,
+  SELLER_MODE_V1: true,
+  MULTI_SCAN_V1: true,
+  PRICE_PREDICT_V1: true,
+};
+const CLOUD_KEY = "EVAN_CLOUD_EXPORT_V1";
+const REF_KEY = "EVAN_REFERRAL_V1";
+const INV_KEY = "EVAN_INVENTORY_V1";
+const SELLER_KEY = "EVAN_SELLER_MODE_V1";
+const BATCH_KEY = "EVAN_BATCH_QUEUE_V1";
+const WATCH_POLL_LAST_KEY = "EVAN_WATCH_POLL_LAST_V1";
+// “Free rewards” hook for referral (keeps it local until RevenueCat
+const REF_REWARD_FREE_SCANS = 3;
+
+// ✅ unify scan-limit naming (prevents crashes)
+const FREE_SCAN_LIMIT_FALLBACK = 6;
+
+const REFERRAL_CODE_POOL = [
+  "EVAN7K3Q9M2A",
+  "EVAN4T8N1X6P",
+  "EVAN9J2R5C8D",
+  "EVAN1P6W7H4K",
+  "EVAN8D5L2V9Q",
+  "EVAN3M7A1Z8S",
+  "EVAN6X2F9B5R",
+  "EVAN5Q8K3N1T",
+  "EVAN2H9P6Y4J",
+  "EVAN0R7C2W8L",
+  "EVAN4V1S9D6X",
+  "EVAN8N3T5Q2M",
+  "EVAN1Z6J4R9P",
+  "EVAN7B2X8H5C",
+  "EVAN3K9M1V6Q",
+  "EVAN6P4D7N2R",
+  "EVAN9X1T3W8B",
+  "EVAN2Q5L9J7S",
+  "EVAN5H8C1P4X",
+  "EVAN8R3V6M2T",
+  "EVAN1N7Q4D9K",
+  "EVAN7S2B5X8J",
+  "EVAN3T9P1H6V",
+  "EVAN6M4R8Q2C",
+  "EVAN9D1K7N5W",
+  "EVAN2X8S3J6P",
+  "EVAN5V9T2C7H",
+  "EVAN8Q1M6R4D",
+  "EVAN1C7X9P2N",
+  "EVAN7J3H5V8Q",
+];
+// optional cloud hook (won’t break if not supported)
+const CLOUD_API_ENABLED = false; // flip true when your API supports it
+const INTEL_KEY = "EVAN_INTELLIGENCE_V2";
+// ===============================
+// EVAN AI INTELLIGENCE ENGINE (v2)
+// retention + compounding + realtime + sharing + branding
+// ===============================
+const DEFAULT_DAILY_GOAL = 5;
+type IntelVerdict = "buy" | "fair" | "overpriced";
+type IntelEventType = "scan" | "share" | "watch_add" | "watch_drop";
+type IntelEvent = {
+  id: string;
+  type: IntelEventType;
+  t: number;
+  // scan
+  confidence?: number;
+  savings?: number;
+  store?: string;
+  category?: string;
+  title?: string;
+  verdict?: IntelVerdict;
+  // share
+  shareKind?: "scan" | "app";
+};
+type IntelState = {
+  goal: number;
+  events: IntelEvent[];
+  streak: { lastDay: string | null; count: number };
+};
+const clamp01 = (n: any) => Math.max(0, Math.min(1, Number(n) || 0));
+const dayKey = (t: number) => {
+  const d = new Date(t);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+const makeId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+function emptyIntel(): IntelState {
+  return {
+    goal: DEFAULT_DAILY_GOAL,
+    events: [],
+    streak: { lastDay: null, count: 0 },
+  };
+}
+async function loadIntel(): Promise<IntelState> {
+  try {
+    const raw = await AsyncStorage.getItem(INTEL_KEY);
+    if (!raw) return emptyIntel();
+    const parsed = JSON.parse(raw);
+    // harden shape
+    return {
+      goal: Number(parsed?.goal) || DEFAULT_DAILY_GOAL,
+      events: Array.isArray(parsed?.events) ? parsed.events : [],
+      streak: {
+        lastDay: parsed?.streak?.lastDay ?? null,
+        count: Number(parsed?.streak?.count) || 0,
+      },
+    };
+  } catch {
+    return emptyIntel();
+  }
+}
+async function saveIntel(data: IntelState) {
+  try {
+    await AsyncStorage.setItem(INTEL_KEY, JSON.stringify(data));
+  } catch {}
+}
+function bumpStreak(intel: IntelState, now = Date.now()) {
+  const today = dayKey(now);
+  if (intel.streak.lastDay === today) return intel;
+  const y = new Date(now);
+  y.setDate(y.getDate() - 1);
+  const yesterday = dayKey(y.getTime());
+  const nextCount = intel.streak.lastDay === yesterday ? intel.streak.count + 1 : 1;
+  return {
+    ...intel,
+    streak: { lastDay: today, count: nextCount },
+  };
+}
+function verdictFromPrices(local: any, low: any, high: any): IntelVerdict {
+  const lp = safeNum(local);
+  const lo = safeNum(low);
+  const hi = safeNum(high);
+  if (lp == null || lo == null) return "fair";
+  if (lp <= lo * 1.02) return "buy";
+  if (hi != null && lp >= hi * 1.1) return "overpriced";
+  return "fair";
+}
+function intelLog(intel0: IntelState | null | undefined, ev: Omit<IntelEvent, "id" | "t"> & { t?: number }) {
+  const base = intel0 ? intel0 : emptyIntel();
+  const now = ev.t ?? Date.now();
+  const intel1 = bumpStreak(base, now);
+  const nextEvent: IntelEvent = {
+    id: makeId(),
+    t: now,
+    ...ev,
+  } as IntelEvent;
+  const events = [...(intel1.events || []), nextEvent].slice(-800); // cap
+  return { ...intel1, events };
+}
+function weeklyStats(events: IntelEvent[]) {
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const scans = (events || []).filter((e) => e.type === "scan" && e.t >= since);
+  const savings = scans.reduce((s, x) => s + (safeNum(x.savings) || 0), 0);
+  const avoided = scans.filter((s) => s.verdict === "overpriced").length;
+  return { weeklySavings: Math.round(savings), avoidedCount: avoided };
+}
+function computeIQ(events: IntelEvent[]) {
+  const scans = (events || []).filter((e) => e.type === "scan");
+  if (!scans.length) return 100;
+  const conf = scans.reduce((s, x) => s + clamp01(x.confidence), 0) / scans.length;
+  const saved = scans.reduce((s, x) => s + (safeNum(x.savings) || 0), 0);
+  return Math.round(120 + conf * 200 + Math.min(saved, 300) * 0.25);
+}
+function todayScanCount(intel: IntelState | null | undefined) {
+  const key = dayKey(Date.now());
+  const events = intel?.events || [];
+  return events.filter((e) => e.type === "scan" && dayKey(e.t) === key).length;
+}
+function countDropsFromWatchlist(watchlist: any[]) {
+  return (watchlist || []).reduce((s, x) => s + Math.min(99, Number(x?.dropCount || 0)), 0);
+}
+function computeIntelUIStats(intel: IntelState | null | undefined, watchlist: any[]) {
+  const goal = Number(intel?.goal) || DEFAULT_DAILY_GOAL;
+  const today = todayScanCount(intel);
+  const progress = Math.max(0, Math.min(1, goal ? today / goal : 0));
+  const tracked = Number(watchlist?.length || 0);
+  const drops = countDropsFromWatchlist(watchlist);
+  const iq = computeIQ(intel?.events || []);
+  const headline =
+    today >= goal
+      ? `Goal hit. ${today}/${goal} scans.`
+      : `${goal - today} scan${goal - today === 1 ? "" : "s"} from today’s goal.`;
+  return {
+    goal,
+    today,
+    progress,
+    scanStreak: intel?.streak?.count || 0,
+    tracked,
+    dropCount: drops,
+    iq,
+    headline,
+  };
+}
+function marketHeat(result) {
+  const pct = Number(result?.cheaperPct || 0);
+  if (pct > 35) return "🔥 HOT";
+  if (pct > 15) return "🟡 WARM";
+  return "❄️ COOL";
+}
+
+const matchQuality = (r: any) => {
+  const conf = Number(r?.visionConfidence || 0);
+  const matches = Number(r?.totalMatches || 0);
+
+  const density = Math.min(1, matches / 30);
+  const score = Math.max(0, Math.min(1, conf * 0.75 + density * 0.25));
+
+  if (score >= 0.82) return { label: "Match quality: Strong", tone: "good" };
+  if (score >= 0.62) return { label: "Match quality: Solid", tone: "mid" };
+  if (score >= 0.40) return { label: "Match quality: Weak", tone: "low" };
+  return { label: "Match quality: Unclear", tone: "low" };
+};
+
+function chooseComparableDisplayPool(
+  items: any[] = [],
+  scannedPrice: any = null,
+  limit = 12
+) {
+  const toFinite = (v: any) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : NaN;
+  };
+
+  const entered = toFinite(scannedPrice);
+
+  const normalized = (Array.isArray(items) ? items : [])
+    .filter(Boolean)
+    .map((it) => {
+      const total = toFinite(it?.totalPrice);
+      const price = toFinite(it?.price);
+      const shipping = toFinite(it?.shipping);
+      const rel = toFinite(it?.__relevance);
+
+      const displayTotal = Number.isFinite(total)
+        ? total
+        : Number.isFinite(price)
+        ? price + (Number.isFinite(shipping) ? shipping : 0)
+        : NaN;
+
+      return {
+        ...it,
+        __displayTotal: displayTotal,
+        __displayRelevance: Number.isFinite(rel) ? rel : 0,
+      };
+    })
+    .filter((it) => Number.isFinite(it.__displayTotal));
+
+  if (!normalized.length) return [];
+
+  const deduped: any[] = [];
+  const seen = new Set<string>();
+
+  for (const it of normalized) {
+    const key =
+      String(it?.buyLink || it?.link || "").trim() ||
+      `${String(it?.itemName || it?.title || "")
+        .toLowerCase()
+        .trim()}|${Math.round(it.__displayTotal * 100)}`;
+
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(it);
+  }
+
+  if (!deduped.length) return [];
+
+  const sortPool = (arr: any[]) => {
+    if (!Number.isFinite(entered)) {
+      return [...arr].sort((a, b) => {
+        const relDiff =
+          Number(b.__displayRelevance || 0) - Number(a.__displayRelevance || 0);
+        if (relDiff !== 0) return relDiff;
+        return Number(a.__displayTotal || Infinity) - Number(b.__displayTotal || Infinity);
+      });
+    }
+
+    return [...arr].sort((a, b) => {
+      const aCheaper = a.__displayTotal <= entered ? 0 : 1;
+      const bCheaper = b.__displayTotal <= entered ? 0 : 1;
+      if (aCheaper !== bCheaper) return aCheaper - bCheaper;
+
+      const aDelta = Math.abs(a.__displayTotal - entered);
+      const bDelta = Math.abs(b.__displayTotal - entered);
+      if (aDelta !== bDelta) return aDelta - bDelta;
+
+      const relDiff =
+        Number(b.__displayRelevance || 0) - Number(a.__displayRelevance || 0);
+      if (relDiff !== 0) return relDiff;
+
+      return Number(a.__displayTotal || Infinity) - Number(b.__displayTotal || Infinity);
+    });
+  };
+
+  const strong = deduped.filter((it) => Number(it.__displayRelevance || 0) >= 0.48);
+  const decent = deduped.filter((it) => Number(it.__displayRelevance || 0) >= 0.28);
+
+  const nearby =
+    Number.isFinite(entered)
+      ? decent.filter(
+          (it) =>
+            it.__displayTotal >= entered * 0.45 &&
+            it.__displayTotal <= entered * 1.85
+        )
+      : decent;
+
+  const chosen =
+    nearby.length >= 3
+      ? nearby
+      : strong.length >= 3
+      ? strong
+      : decent.length >= 1
+      ? decent
+      : deduped;
+
+  return sortPool(chosen).slice(0, limit);
+}
+
+// ===============================
+// RANKING “ML IMPROVEMENT” (HEURISTIC v1)
+// ===============================
+function safeLower(s: any) {
+  return String(s ?? "").toLowerCase();
+}
+// duplicate clamp removed — using existing clamp implementation
+// A fast “ML-ish” rank score: price + shipping + title similarity + confidence + rating + store trust
+function rankScoreV2({
+  queryTitle,
+  item,
+  confidence = 0,
+}: {
+  queryTitle: string;
+  item: any;
+  confidence?: number;
+}) {
+  const title = safeLower(item?.title || item?.itemName || "");
+  const q = normalizeTitle(queryTitle || "");
+  const sim = titleSimilarity(normalizeTitle(title), q); // 0..1
+  const price = clampPrice(item?.price);
+  const ship = clampPrice(item?.shipping);
+  const total = calcTotalCost({ price, shipping: ship });
+  // rating 0..5 -> 0..1
+  const rating = typeof item?.rating === "number" ? clamp(0, item.rating / 5, 1) : 0.4;
+  // trust weights by marketplace type
+  const src = safeLower(item?.source || item?.store || item?.__market || "");
+  const trust =
+    src.includes("ebay") ? 0.95 :
+    src.includes("etsy") ? 0.80 :
+    src.includes("google") ? 0.70 :
+    0.65;
+  // missing price gets punished heavily
+  const pricePenalty = Number.isFinite(total) ? 0 : 0.85;
+  // cheaper is better
+  const cheapness = Number.isFinite(total) ? 1 / Math.max(1, total) : 0;
+  // confidence 0..1
+  const conf = clamp(0, Number(confidence) || 0, 1);
+  // final weighted score (higher is better)
+  const score =
+    (cheapness * 1200) +        // price dominates
+    (sim * 1.8) +               // match quality
+    (conf * 1.4) +              // vision confidence
+    (rating * 0.7) +            // rating
+    (trust * 0.9) -             // source trust
+    (pricePenalty * 2.0);       // punish unknown price
+  return score;
+}
+function sortListingsV2(queryTitle: string, listings: any[], confidence: number) {
+  const arr = Array.isArray(listings) ? [...listings] : [];
+  arr.sort((a, b) => rankScoreV2({ queryTitle, item: b, confidence }) - rankScoreV2({ queryTitle, item: a, confidence }));
+  return arr;
+}
+// ===============================
+// PRICE PREDICTION (v1)
+// ===============================
+function predictNext7dPrice({
+  estValue,
+  marketLow,
+  marketHigh,
+  drops = 0,
+}: {
+  estValue: any;
+  marketLow: any;
+  marketHigh: any;
+  drops?: number;
+}) {
+  const est = safeNum(estValue) ?? safeNum(marketLow) ?? safeNum(marketHigh);
+  if (est == null) return null;
+  const lo = safeNum(marketLow);
+  const hi = safeNum(marketHigh);
+  // drop pressure: more drops -> slightly lower expected
+  const dropFactor = clamp(0.92, 1 - Math.min(0.08, (Number(drops || 0) / 50) * 0.08), 1.02);
+  // range mean reversion
+  let target = est * dropFactor;
+  if (lo != null && hi != null) {
+    const mid = (lo + hi) / 2;
+    target = (target * 0.55) + (mid * 0.45);
+  }
+  // keep within sane bounds
+  if (lo != null) target = Math.max(lo * 0.95, target);
+  if (hi != null) target = Math.min(hi * 1.05, target);
+  return Math.round(target * 100) / 100;
+}
+// ===============================
+// SOCIAL SHARING HOOKS (v1)
+// ===============================
+function buildShareLinkParams({ installId, refCode }: any) {
+  const rid = encodeURIComponent(String(refCode || ""));
+  const iid = encodeURIComponent(String(installId || ""));
+  return `?ref=${rid}&iid=${iid}`;
+}
+
+function buildReferralCode(installId: any) {
+  const src = String(installId || "").trim();
+  if (!src) return REFERRAL_CODE_POOL[0];
+
+  // simple stable hash -> index
+  let h = 0;
+  for (let i = 0; i < src.length; i++) {
+    h = (h * 31 + src.charCodeAt(i)) >>> 0;
+  }
+  const idx = h % REFERRAL_CODE_POOL.length;
+  return REFERRAL_CODE_POOL[idx];
+}
+
+// ===============================
+// CLOUD SYNC (v1) — export/import JSON + optional API hook
+// ===============================
+async function exportCloudSnapshot(payload: any) {
+  try {
+    const json = JSON.stringify(payload);
+    await AsyncStorage.setItem(CLOUD_KEY, json);
+    return json;
+  } catch {
+    return null;
+  }
+}
+async function importCloudSnapshot() {
+  try {
+    const raw = await AsyncStorage.getItem(CLOUD_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+// Optional: API cloud store (no break if off)
+async function cloudPushToApi(snapshot: any) {
+  if (!CLOUD_API_ENABLED) return false;
+  try {
+    await apiFetch("/cloud/push", {
+      method: "POST",
+      body: JSON.stringify(snapshot),
+      timeoutMs: 8000,
+      retries: 0,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function cloudPullFromApi() {
+  if (!CLOUD_API_ENABLED) return null;
+  try {
+    return await apiFetch("/cloud/pull", { method: "GET", timeoutMs: 8000, retries: 0 });
+  } catch {
+    return null;
+  }
+}
+// ===============================
+// INVENTORY (v1) — local-first
+// ===============================
+type InventoryItem = {
+  id: string;
+  title: string;
+  qty: number;
+  estResale?: number | null;
+  buyPrice?: number | null;
+  createdAt: number;
+  thumbUri?: string | null;
+  notes?: string | null;
+};
+async function loadInventory(): Promise<InventoryItem[]> {
+  try {
+    const raw = await AsyncStorage.getItem(INV_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+async function saveInventory(items: InventoryItem[]) {
+  try {
+    await AsyncStorage.setItem(INV_KEY, JSON.stringify(items || []));
+  } catch {}
+}
+// ===============================
+// MULTI-ITEM SCANNING (BATCH QUEUE v2)
+// ===============================
+type BatchJobStatus = "queued" | "scanning" | "done" | "error";
+type BatchJob = {
+  id: string;
+  uri: string;
+  createdAt: number;
+  note?: string;
+  // v2 result fields
+  status?: BatchJobStatus;
+  itemName?: string | null;
+  price?: number | null;
+  verdict?: string | null;
+  savedAmount?: number | null;
+  result?: any;           // full activeResult-shaped object
+  errorMsg?: string | null;
+};
+async function loadBatchQueue(): Promise<BatchJob[]> {
+  try {
+    const raw = await AsyncStorage.getItem(BATCH_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+async function saveBatchQueue(q: BatchJob[]) {
+  try {
+    await AsyncStorage.setItem(BATCH_KEY, JSON.stringify(q || []));
+  } catch {}
+}
+// ── Feature 2: processBatchItem — runs vision + market search for one job ────
+// Called from the auto-processor useEffect below.
+// Updates the queue item in-place with status + result fields.
+const batchProcessingRef = React.useRef(false);
+
+const processBatchItem = async (jobId: string) => {
+  if (!isMountedRef.current) return;
+  // Mark as scanning
+  setBatchQueue((prev) => {
+    const next = prev.map((j) =>
+      j.id === jobId ? { ...j, status: "scanning" as BatchJobStatus } : j
+    );
+    saveBatchQueue(next);
+    return next;
+  });
+
+  try {
+    // Snapshot the URI from the queue
+    const queue: BatchJob[] = await loadBatchQueue();
+    const job = queue.find((j) => j.id === jobId);
+    if (!job?.uri) throw new Error("job_not_found");
+
+    // Run vision analysis (lightweight — no scanned price, no hint)
+    const ctrl = new AbortController();
+    const visionData = await analyzePhotoToQuery(job.uri, ctrl.signal, null, null, null);
+
+    const query: string =
+      visionData?.query || visionData?.bestQuery || visionData?.title || "";
+    const visionConfidence: number = visionData?.confidence ?? 0.5;
+    const visionIdentity: any     = visionData?.identity   ?? null;
+    const category: string        = visionData?.category   ?? "";
+
+    if (!query) throw new Error("no_query");
+
+    // Run market search
+    const marketData = await searchMarket(
+      { query, variants: visionData?.variants || [], visionConfidence, visionIdentity, category },
+      ctrl.signal,
+    );
+
+    const best: any = marketData?.best || marketData?.items?.[0] || null;
+    const bestPrice: number | null = marketData?.bestPrice ?? best?.totalPrice ?? best?.price ?? null;
+
+    const result = {
+      itemName:         query,
+      store:            best?.store || best?.source || null,
+      price:            bestPrice,
+      buyLink:          best?.buyLink || best?.url || null,
+      image:            best?.image || best?.thumbnail || null,
+      buyVerdict:       marketData?.buyOrPass?.verdict || null,
+      buyScore:         marketData?.buyOrPass?.score   || null,
+      savedAmount:      null,
+      visionConfidence,
+    };
+
+    setBatchQueue((prev) => {
+      const next = prev.map((j) =>
+        j.id === jobId
+          ? {
+              ...j,
+              status:      "done" as BatchJobStatus,
+              itemName:    query,
+              price:       bestPrice,
+              verdict:     result.buyVerdict,
+              savedAmount: null,
+              result,
+            }
+          : j
+      );
+      saveBatchQueue(next);
+      return next;
+    });
+  } catch (err: any) {
+    if (err?.name === "AbortError") return;
+    setBatchQueue((prev) => {
+      const next = prev.map((j) =>
+        j.id === jobId
+          ? { ...j, status: "error" as BatchJobStatus, errorMsg: err?.message || "Scan failed" }
+          : j
+      );
+      saveBatchQueue(next);
+      return next;
+    });
+  }
+};
+// -------------------------------------
+// SHARE TEXT (single source of truth)
+// -------------------------------------
+function buildShareText(result: any) {
+  if (!result) return "Evan AI found a better price. Deal-check your next buy.";
+  const savings = result?.savedAmount ?? result?.savings;
+  const conf = Math.round((result?.confidence || 0) * 100);
+  const domain = result?.store || "marketplace";
+  const sPart = savings ? ` saving me $${String(savings)}` : "";
+  return `Evan AI found this ${domain} deal${sPart} with ${conf}% confidence.`;
+}
+async function shareScanResult(result: any, setIntelState: any) {
+  const msg = buildShareText(result);
+  try {
+    await Share.share({ message: msg });
+    setIntelState((prev: IntelState) => {
+      const next = intelLog(prev, { type: "share", shareKind: "scan" });
+      saveIntel(next);
+      return next;
+    });
+  } catch {}
+}
+async function shareAppInvite(setIntelState: any) {
+  const msg =
+    "Download Evan AI — camera-first deal intelligence. Scan it. Verify it. Buy smart. 🚀";
+  try {
+    await Share.share({ message: msg });
+    setIntelState((prev: IntelState) => {
+      const next = intelLog(prev, { type: "share", shareKind: "app" });
+      saveIntel(next);
+      return next;
+    });
+  } catch {}
+}
+async function copyShareText(result: any) {
+  try {
+    const msg = buildShareText(result);
+    await Clipboard.setStringAsync(msg);
+    Haptics.selectionAsync();
+  } catch {}
+}
+// ===============================
+// API WRAPPER (PRODUCTION SAFE)
+// ===============================
+
+const API_URL =
+  process.env.EXPO_PUBLIC_API_URL ||
+  (Platform.OS === "ios"
+    ? "http://192.168.1.227:3001"
+    : "http://10.0.2.2:3001");
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function apiFetch<T>(
+  path: string,
+  opts: RequestInit & { timeoutMs?: number; retries?: number } = {}
+): Promise<T> {
+  const timeoutMs = opts.timeoutMs ?? 12000;
+  const retries = opts.retries ?? 1;
+  let lastErr: any = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const rawPath = String(path || "").trim();
+
+      const finalUrl =
+        rawPath.startsWith("http://") || rawPath.startsWith("https://")
+          ? rawPath
+          : `${API_URL.replace(/\/+$/, "")}/${rawPath.replace(/^\/+/, "")}`;
+
+      console.log("API FETCH →", finalUrl);
+
+      const res: any = await fetch(finalUrl, {
+        ...opts,
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(opts.headers || {}),
+        },
+      });
+
+      const rawText = await res.text();
+
+      let data: any = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = rawText;
+      }
+
+      if (!res.ok) {
+        throw new Error(
+          (data && typeof data === "object" && data.message) ||
+            `Request failed (${res.status})`
+        );
+      }
+
+      return data as T;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < retries) {
+        await sleep(300 * (attempt + 1));
+        continue;
+      }
+      throw lastErr;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  throw lastErr;
+}
+
+// ===============================
+// NEURAL EDGE DETECTION ENGINE (PHASE 11)
+// (SHIP-SAFE STUB — no late imports)
+// ===============================
+const EDGE_ENGINE_ENABLED = false as const;
+function detectEdges(_frame: any) {
+  return null;
+}
+// -------------------------
+// STYLES
+// -------------------------
+const styles = StyleSheet.create({
+   container: { flex: 1, backgroundColor: TOK.C.bg },
+   full: { ...StyleSheet.absoluteFillObject },
+   black: { flex: 1, backgroundColor: TOK.C.bg },
+   center: { alignItems: "center", justifyContent: "center" },
+camera: { flex: 1, backgroundColor: TOK.C.bg },
+  permissionText: {
+    color: "white",
+    fontSize: 16,
+    marginBottom: 12,
+    fontWeight: "600",
+  },
+  
+sideBtn: {
+  width: 52,
+  height: 52,
+  borderRadius: 26,
+  alignItems: "center",
+  justifyContent: "center",
+  backgroundColor: "rgba(0,0,0,0.35)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+},
+
+sideBtnPressed: {
+  opacity: 0.92,
+  transform: [{ scale: 0.98 }],
+},
+
+resultsSubtitleBig: {
+  color: "rgba(255,255,255,0.70)",
+  fontWeight: "800",
+  fontSize: 15,
+  lineHeight: 22,
+},
+
+muted: {
+  color: "rgba(255,255,255,0.60)",
+  fontWeight: "700",
+  fontSize: 14,
+},
+
+  permissionBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+  },
+  permissionBtnText: { color: "white", fontWeight: "700" },
+  demoPill: {
+    position: "absolute",
+    top: 50,
+    left: 20,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 18,
+    zIndex: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  demoText: { color: "white", fontWeight: "700" },
+  torchBtn: {
+    position: "absolute",
+    top: 50,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.55)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+modeRow: {
+  position: "absolute",
+  top: 110,
+  left: 18,
+  right: 18,
+  flexDirection: "row",
+  gap: 8,
+  flexWrap: "wrap",
+},
+modePill: {
+  paddingHorizontal: 12,
+  paddingVertical: 8,
+  borderRadius: 999,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+  backgroundColor: "rgba(0,0,0,0.35)",
+},
+modePillActive: {
+  backgroundColor: "rgba(255,255,255,0.14)",
+  borderColor: "rgba(255,255,255,0.28)",
+},
+modeText: {
+  color: "white",
+  fontWeight: "900",
+  fontSize: 12,
+},
+propBox: {
+  position: "absolute",
+  top: 148,
+  left: 18,
+  right: 18,
+  padding: 12,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.10)",
+  backgroundColor: "rgba(0,0,0,0.40)",
+},
+propLabel: { color: "rgba(255,255,255,0.75)", fontWeight: "800", marginBottom: 8 },
+propInput: {
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.18)",
+  borderRadius: 14,
+  padding: 10,
+  color: "white",
+},
+  
+frame: {
+  position: "absolute",
+  top: "22%",        // slightly higher
+  alignSelf: "center",
+  width: "86%",
+  height: "40%",     // ✅ shorter = no overlap with mode pills
+  borderRadius: TOK.R.lg,
+  borderWidth: TOK.B.hair,
+  borderColor: TOK.C.b3,
+  backgroundColor: "rgba(255,255,255,0.02)",
+},
+
+instruction: {
+  position: "absolute",
+  bottom: 235,
+  alignSelf: "center",
+  color: TOK.C.text,
+  fontSize: 17,
+  fontWeight: "800",
+  letterSpacing: 0.10,
+  zIndex: 5,
+},
+  zoomHudPill: {
+    backgroundColor: "rgba(18,18,18,0.52)",
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: TOK.R.pill,
+    borderWidth: TOK.B.hair,
+    borderColor: TOK.C.b2,
+  },
+  zoomHudText: { color: TOK.C.text, fontWeight: "800", fontSize: 15, letterSpacing: 0.08 },
+zoomRow: { position:"absolute", top: 260, alignSelf:"center", flexDirection:"row", gap: 14, zIndex: 6 },
+  zoomBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: TOK.R.pill,
+    backgroundColor: TOK.C.s2,
+    borderWidth: TOK.B.hair,
+    borderColor: TOK.C.b2,
+  },
+  zoomBtnText: { color: TOK.C.text, fontWeight: "800", letterSpacing: 0.08 },
+  
+captureRow: {
+  position: "absolute",
+  bottom: 140,
+  width: "100%",
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 26,
+  zIndex: 999,
+  elevation: 50,
+},
+
+  iconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: TOK.C.s2,
+    borderWidth: TOK.B.hair,
+    borderColor: TOK.C.b1,
+  },
+  iconBtnPressed: {
+    backgroundColor: TOK.C.s3,
+    borderColor: TOK.C.b3,
+  },
+  snapStack: {
+    width: 92,
+    height: 92,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  snapOuterRing: {
+    position: "absolute",
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.40)",
+  },
+  snapBurstRing: {
+    position: "absolute",
+    width: 98,
+    height: 98,
+    borderRadius: 49,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.65)",
+  },
+  snapPressable: {
+    width: 82,
+    height: 82,
+    borderRadius: 41,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+snapButton: {
+  width: 82,
+  height: 82,
+  borderRadius: 41,
+  backgroundColor: "rgba(255,255,255,0.98)",
+  shadowColor: "#000",
+  shadowOpacity: IOS ? 0.30 : 0.22,
+  shadowRadius: 18,
+  shadowOffset: { width: 0, height: 12 },
+  elevation: 10,
+},
+  previewOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: TOK.C.bg },
+  previewImage: { width: "100%", height: "100%", resizeMode: "cover" },
+  previewBtnsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  inlineRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  transparentBtn: { paddingVertical: 12, paddingHorizontal: 18 },
+  transparentBtnText: {
+    color: TOK.C.text,
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 0.08,
+  },
+  primaryBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: TOK.R.lg,
+    borderWidth: TOK.B.hair,
+    borderColor: TOK.C.b2,
+    backgroundColor: TOK.C.s2,
+  },
+  primaryBtnText: {
+    color: TOK.C.text,
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 0.08,
+  },
+  illuminate: { opacity: 0.95, transform: [{ scale: 0.995 }] },
+  illuminatePrimary: {
+    backgroundColor: TOK.C.s3,
+    borderColor: TOK.C.b3,
+    transform: [{ scale: 0.995 }],
+  },
+  mutedStrong: { color: "rgba(255,255,255,0.75)", fontWeight: "800" },
+  priceLabel: { color: "white", fontWeight: "900", marginBottom: 8, fontSize: 13 },
+  priceInput: {
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+    borderRadius: 14,
+    padding: 12,
+    color: "white",
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+  previewHint: {
+    color: "rgba(255,255,255,0.6)",
+    marginTop: 8,
+    fontWeight: "600",
+  },
+  pageTitle: {
+    color: TOK.C.text,
+    fontSize: 22,
+    fontWeight: "800",
+    marginBottom: 6,
+    letterSpacing: 0.10,
+  },
+resultsHeaderRow: {
+  marginBottom: 6,
+},
+  resultsSubcopy: {
+    color: "rgba(255,255,255,0.70)",
+    fontWeight: "700",
+    marginBottom: 12,
+  },
+trustRow: {
+  flexDirection: "row",
+  alignItems: "flex-start",
+  gap: 6,
+  marginBottom: 6,
+},
+trustDot: {
+  color: "rgba(255,255,255,0.70)",
+  fontWeight: "900",
+  marginTop: 1,
+},
+  // Loading stage w/ background image
+  loadingStage: {
+    height: 320,
+    borderRadius: 22,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    marginBottom: 12,
+  },
+loadingWrap: {
+  alignItems: "center",
+  justifyContent: "center",
+  paddingVertical: 40,
+},
+loadingRing: {
+  width: 44,
+  height: 44,
+  borderRadius: 22,
+  borderWidth: 3,
+  borderColor: "rgba(255,255,255,0.18)",
+  borderTopColor: "rgba(255,255,255,0.95)",
+  marginBottom: 12,
+},
+retryBtn: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 8,
+  paddingVertical: 10,
+  paddingHorizontal: 16,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.22)",
+  backgroundColor: "rgba(255,255,255,0.10)",
+},
+retryText: { color: "white", fontWeight: "900" },
+loadingCard: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+  },
+  loadingTitle: {
+    color: "white",
+    fontWeight: "900",
+    marginTop: 12,
+    textAlign: "center",
+  },
+  loadingHint: {
+    color: "rgba(255,255,255,0.65)",
+    fontWeight: "700",
+    marginTop: 8,
+    textAlign: "center",
+  },
+  loadingSlow: {
+    color: "rgba(255,255,255,0.70)",
+    fontWeight: "800",
+    marginTop: 10,
+    textAlign: "center",
+  },
+  loadingBtnsRow: { flexDirection: "row", gap: 12, marginTop: 14 },
+  primaryActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  primaryActionText: { color: "white", fontWeight: "900" },
+  secondaryActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  secondaryActionText: { color: "white", fontWeight: "900" },
+verdictRow: { marginBottom: 10 },
+verdictChip: {
+  alignSelf: "flex-start",
+  paddingVertical: 8,
+  paddingHorizontal: 14,
+  borderRadius: 999,
+  fontWeight: "900",
+  color: "white",
+  borderWidth: 1,
+  letterSpacing: 0.4,
+},
+verdict_green: { backgroundColor: "rgba(0,200,120,0.18)", borderColor: "rgba(0,200,120,0.35)" },
+verdict_yellow: { backgroundColor: "rgba(255,200,0,0.16)", borderColor: "rgba(255,200,0,0.30)" },
+verdict_red: { backgroundColor: "rgba(255,70,70,0.16)", borderColor: "rgba(255,70,70,0.30)" },
+confidenceBreakdown: { marginTop: 10 },
+confidenceLine: { color: "rgba(255,255,255,0.72)", fontWeight: "700", marginTop: 4 },
+marketSpread: {
+  marginTop: 12,
+  padding: 12,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.10)",
+  backgroundColor: "rgba(255,255,255,0.05)",
+},
+marketSpreadText: { color: "white", fontWeight: "900" },
+marketSpreadSub: { color: "rgba(255,255,255,0.65)", fontWeight: "700", marginTop: 6, fontSize: 12 },
+emptyResults: {
+  padding: 16,
+  borderRadius: 18,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(255,255,255,0.05)",
+  marginTop: 10,
+},
+emptyResultsTitle: { color: "white", fontWeight: "900", fontSize: 16, marginBottom: 6 },
+emptyResultsText: { color: "rgba(255,255,255,0.70)", fontWeight: "700" },
+resultCard: {
+  padding: 16,
+  borderRadius: TOK.R.lg,
+  borderWidth: TOK.B.hair,
+  borderColor: TOK.C.b2,
+  backgroundColor: TOK.C.s1,
+},
+  heroImg: {
+    width: "100%",
+    height: 170,
+    borderRadius: 16,
+    marginBottom: 12,
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+resultTitle: {
+  color: "white",
+  fontWeight: "900",
+  fontSize: 18,
+  lineHeight: 24,
+  flexShrink: 1,
+},
+
+resultMeta: {
+  color: "rgba(255,255,255,0.72)",
+  fontWeight: "800",
+  fontSize: 13,
+  lineHeight: 18,
+},
+
+  savedBig: { color: "white", fontWeight: "900" },
+  savedSmall: {
+    color: "rgba(255,255,255,0.75)",
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  marketBox: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.10)",
+  },
+  marketTitle: {
+    color: "rgba(255,255,255,0.9)",
+    fontWeight: "900",
+    marginBottom: 8,
+  },
+  marketLine: {
+    color: "rgba(255,255,255,0.75)",
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  tapHint: {
+    color: "rgba(255,255,255,0.55)",
+    marginTop: 12,
+    fontWeight: "800",
+  },
+  sectionTitle: {
+    color: "rgba(255,255,255,0.82)",
+    fontWeight: "900",
+    marginBottom: 10,
+    marginTop: 2,
+  },
+  miniImg: { width: 54, height: 54, borderRadius: 10, backgroundColor: "#111" },
+  miniImgFallback: {
+    width: 54,
+    height: 54,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  miniTitle: { color: "white", fontWeight: "900" },
+  miniMeta: { color: "rgba(255,255,255,0.70)", fontWeight: "800", fontSize: 12 },
+  emptyCard: {
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  emptyTitle: { color: "white", fontWeight: "900", fontSize: 16 },
+  emptyBody: { color: "rgba(255,255,255,0.70)", fontWeight: "700", marginTop: 8 },
+miniCard: {
+  padding: 14,
+  borderRadius: TOK.R.md,
+  borderWidth: TOK.B.hair,
+  borderColor: TOK.C.b1,
+  backgroundColor: TOK.C.s1,
+  marginBottom: 10,
+},
+historyRow: {
+  flexDirection: "row",
+  gap: 12,
+  alignItems: "center",
+  padding: 14,
+  borderRadius: TOK.R.lg,
+  borderWidth: TOK.B.hair,
+  borderColor: TOK.C.b2,
+  backgroundColor: TOK.C.s1,
+  marginBottom: 12,
+},
+  historyThumb: { width: 54, height: 54, borderRadius: 10, backgroundColor: "#111" },
+  historyTitle: { color: "white", fontWeight: "900" },
+  historyTime: { color: "rgba(255,255,255,0.65)", marginTop: 2, fontSize: 12 },
+  savingsBox: {
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginBottom: 12,
+  },
+  savingsTitle: { color: "white", fontWeight: "900", fontSize: 16 },
+  savingsSub: { color: "rgba(255,255,255,0.65)", marginTop: 4, fontWeight: "600" },
+  savingsSubStrong: { color: "rgba(255,255,255,0.75)", marginTop: 8, fontWeight: "800" },
+  profileHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  subStatus: { color: "rgba(255,255,255,0.70)", fontWeight: "700" },
+
+
+signInBtn: {
+  flexDirection: "row",
+  gap: 8,
+  alignItems: "center",
+  paddingVertical: 10,
+  paddingHorizontal: 12,
+  borderRadius: 16,
+  backgroundColor: "rgba(255,255,255,0.08)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.10)",
+  marginRight: 6,
+  marginTop: 2,
+},
+
+  signInText: { color: "white", fontWeight: "900" },
+  // ✅ Results "New scan" button style
+  newScanBtn: {
+    marginTop: 14,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  profileBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginBottom: 12,
+  },
+  profileBtnText: { color: "white", fontWeight: "900", letterSpacing: 0.2 },
+  
+helpBackdrop: {
+  ...StyleSheet.absoluteFillObject,
+  backgroundColor: "rgba(0,0,0,0.55)", // ✅ real fade, not see-through
+  alignItems: "center",
+  justifyContent: "center",
+  paddingHorizontal: 18,
+},
+
+helpBox: {
+  width: "100%",
+  borderRadius: 22,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.16)",
+  backgroundColor: "rgba(20,20,20,0.94)", // ✅ premium solid card
+  padding: 18,
+  shadowColor: "#000",
+  shadowOpacity: 0.45,
+  shadowRadius: 22,
+  shadowOffset: { width: 0, height: 14 },
+  elevation: 22,
+},
+
+  helpTitle: { color: "white", fontWeight: "900", fontSize: 16, marginBottom: 10 },
+  helpItem: { color: "rgba(255,255,255,0.85)", marginBottom: 8, fontWeight: "600" },
+  helpHint: { color: "rgba(255,255,255,0.55)", marginTop: 6, fontSize: 12 },
+tabBar: {
+  position: "absolute",
+  bottom: 18,
+  left: 18,
+  right: 18,
+  height: 62,
+  borderRadius: TOK.R.xl,
+  borderWidth: TOK.B.hair,
+  borderColor: TOK.C.b2,
+  overflow: "hidden",
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  paddingHorizontal: 10,
+  backgroundColor: "rgba(18,18,18,0.88)",
+  ...TOK.S.tab,
+},
+tabBtn: {
+    width: 54,
+    height: 44,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tabActive: {
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.28)",
+  },
+  tabPressed: { backgroundColor: "rgba(255,255,255,0.12)" },
+
+modalCard: {
+  width: "100%",
+  maxWidth: 520,
+  borderRadius: 26,
+  padding: 18,
+  backgroundColor: "rgba(16,16,16,0.96)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+  shadowColor: "#000",
+  shadowOpacity: 0.45,
+  shadowRadius: 22,
+  shadowOffset: { width: 0, height: 14 },
+  elevation: 22,
+},
+
+modalBackdrop: {
+  flex: 1,
+  backgroundColor: "transparent", // ✅ no grey wash
+  justifyContent: "center",
+  alignItems: "center",
+  padding: 18,
+},
+
+  modalTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  modalTitle: { color: "white", fontWeight: "900", fontSize: 16 },
+  modalDesc: { color: "rgba(255,255,255,0.75)", fontWeight: "600", marginBottom: 14 },
+  backPill: {
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  backText: { color: "white", fontWeight: "900" },
+  payPill: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  payPillText: { color: "white", fontWeight: "900" },
+  payRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    marginBottom: 16,
+  },
+  priceBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    marginBottom: 14,
+  },
+  priceBig: { color: "white", fontWeight: "900", fontSize: 34, lineHeight: 38 },
+  priceSmall: { color: "rgba(255,255,255,0.75)", fontWeight: "800", textAlign: "center" },
+  divider: { height: 1, backgroundColor: "rgba(255,255,255,0.10)", marginVertical: 12 },
+  modalPrimary: {
+    paddingVertical: 12,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.22)",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  modalPrimaryText: { color: "white", fontWeight: "900" },
+  modalSecondary: {
+    paddingVertical: 12,
+    borderRadius: 18,
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    alignItems: "center",
+  },
+  modalSecondaryText: { color: "rgba(255,255,255,0.85)", fontWeight: "900" },
+  modalFoot: {
+    color: "rgba(255,255,255,0.55)",
+    marginTop: 10,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  modalBody: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "600",
+  },
+  modalCloseBtn: {
+    marginTop: 14,
+    height: 44,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  modalCloseText: {
+    color: "#fff",
+    fontWeight: "900",
+  },
+  paywallBox: {
+    padding: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginBottom: 12,
+  },
+  paywallTitle: { color: "white", fontWeight: "900" },
+  paywallSub: { color: "rgba(255,255,255,0.70)", fontWeight: "700", marginTop: 6 },
+  authInput: {
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+    borderRadius: 14,
+    padding: 12,
+    color: "white",
+    marginBottom: 14,
+  },
+  confLabel: { color: "rgba(255,255,255,0.70)", fontWeight: "900", marginBottom: 8 },
+  confOuter: {
+    height: 22,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    overflow: "hidden",
+  },
+  confFill: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  confSheen: {
+    position: "absolute",
+    top: -18,
+    width: 60,
+    height: 80,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    opacity: 0.65,
+  },
+  confBubble: {
+    position: "absolute",
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.22)",
+    opacity: 0.6,
+  },
+  confTextWrap: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
+  confText: { color: "white", fontWeight: "900", letterSpacing: 0.3 },
+  // ✅ logos + actions
+  logoRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 10,
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  logoChip: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  logoImg: { width: 18, height: 18 },
+  logoText: { color: "rgba(255,255,255,0.85)", fontWeight: "900", fontSize: 12 },
+  resultActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  smallActionBtn: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,255,255,0.07)",
+  },
+  smallActionText: { color: "white", fontWeight: "900" },
+
+listingRow: {
+  flexDirection: "row",
+  gap: 12,
+  alignItems: "flex-start",
+  padding: 14,
+  borderRadius: 18,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(255,255,255,0.05)",
+  marginBottom: 10,
+},
+
+listingTitle: {
+  color: "white",
+  fontWeight: "900",
+  fontSize: 14,
+  lineHeight: 19,
+  flexShrink: 1,
+},
+
+listingMeta: {
+  color: "rgba(255,255,255,0.70)",
+  fontWeight: "800",
+  marginTop: 4,
+  fontSize: 12,
+  lineHeight: 16,
+},
+
+  haggleRow: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  haggleText: {
+    flex: 1,
+    color: "rgba(255,255,255,0.88)",
+    fontWeight: "800",
+    marginRight: 10,
+  },
+// -------------------------
+// ✅ REQUIRED STYLES (STEP 7)
+// -------------------------
+controlColumn: {
+  ...StyleSheet.absoluteFillObject,
+  zIndex: 6,
+},
+historyThumbWrap: {
+  width: 54,
+  height: 54,
+  borderRadius: 10,
+  overflow: "hidden",
+},
+historyThumbFallback: {
+  width: 54,
+  height: 54,
+  borderRadius: 10,
+  backgroundColor: "rgba(255,255,255,0.06)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.10)",
+},
+miniPrice: {
+  color: "rgba(255,255,255,0.85)",
+  fontWeight: "900",
+},
+// -------------------------
+// ✅ RESULTS (PREMIUM UI)
+// -------------------------
+page: {
+  flex: 1,
+  paddingTop: 72,
+  paddingHorizontal: 18,
+  paddingBottom: 120,
+  backgroundColor: TOK.C.bg,
+},
+
+resultsTopBar: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  marginBottom: 18,
+},
+
+resultsBackRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 6,
+  paddingVertical: 10,
+  paddingHorizontal: 10,
+  borderRadius: 18,
+  backgroundColor: "rgba(255,255,255,0.06)", // glass
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+},
+resultsBackText: {
+  color: "rgba(255,255,255,0.85)",
+  fontWeight: "800",
+},
+resultsNewScanPill: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 10,
+  paddingVertical: 12,
+  paddingHorizontal: 16,
+  borderRadius: 18,
+  backgroundColor: "rgba(255,255,255,0.08)", // glass
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+},
+resultsNewScanText: {
+  color: "white",
+  fontWeight: "900",
+  letterSpacing: 0.2,
+},
+resultsTitleBig: {
+  color: TOK.C.text,
+  fontSize: 34,
+  fontWeight: "800",
+  letterSpacing: 0.15,
+  marginTop: 18,
+},
+
+resultsLoadingShell: {
+  minHeight: 260,
+  borderRadius: 26,
+  overflow: "hidden",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(255,255,255,0.05)",
+},
+
+resultsLoadingCard: {
+  flex: 1,
+  margin: 18,
+  borderRadius: 24,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.16)",
+  backgroundColor: "rgba(20,20,20,0.58)",
+  alignItems: "center",
+  justifyContent: "center",
+  paddingHorizontal: 18,
+  paddingVertical: 20,
+},
+resultsLoadingHeadline: {
+  color: "white",
+  fontWeight: "900",
+  fontSize: 16,
+  textAlign: "center",
+  marginTop: 4,
+},
+resultsLoadingSub: {
+  marginTop: 10,
+  color: "rgba(255,255,255,0.70)",
+  fontWeight: "700",
+  textAlign: "center",
+},
+resultsLoadingFoot: {
+  marginTop: 12,
+  color: "rgba(255,255,255,0.70)",
+  fontWeight: "800",
+  textAlign: "center",
+},
+resultsLoadingBtnRow: {
+  flexDirection: "row",
+  gap: 12,
+  marginTop: 16,
+},
+resultsLoadingBtn: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 8,
+  paddingVertical: 10,
+  paddingHorizontal: 16,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.20)",
+  backgroundColor: "rgba(255,255,255,0.06)",
+},
+resultsLoadingBtnPrimary: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 8,
+  paddingVertical: 10,
+  paddingHorizontal: 18,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.25)",
+  backgroundColor: "rgba(255,255,255,0.12)",
+},
+resultsLoadingBtnText: {
+  color: "white",
+  fontWeight: "900",
+},
+resultsHistoryPill: {
+  marginTop: 14,
+  borderRadius: 18,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.10)",
+  backgroundColor: "rgba(255,255,255,0.06)",
+  paddingVertical: 14,
+  paddingHorizontal: 16,
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 10,
+},
+resultsHistoryText: {
+  color: "white",
+  fontWeight: "900",
+  letterSpacing: 0.2,
+},
+resultsEmpty: {
+  marginTop: 10,
+  padding: 16,
+  borderRadius: 22,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(255,255,255,0.05)",
+},
+resultsEmptyTitle: {
+  color: "white",
+  fontWeight: "900",
+  fontSize: 18,
+},
+resultsEmptyText: {
+  marginTop: 8,
+  color: "rgba(255,255,255,0.70)",
+  fontWeight: "700",
+  lineHeight: 20,
+},
+resultsEmptyCTA: {
+  marginTop: 14,
+  alignSelf: "flex-start",
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 8,
+  paddingVertical: 12,
+  paddingHorizontal: 14,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+  backgroundColor: "rgba(255,255,255,0.08)",
+},
+resultsEmptyCTAText: {
+  color: "white",
+  fontWeight: "900",
+},
+
+resultsHeroCard: {
+  marginTop: 12,
+  padding: 16,
+  borderRadius: 24,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(255,255,255,0.06)",
+  overflow: "hidden",
+  shadowColor: "#000",
+  shadowOpacity: 0.28,
+  shadowRadius: 18,
+  shadowOffset: { width: 0, height: 10 },
+  elevation: 14,
+},
+
+resultsHeroTitle: {
+  color: TOK.C.text,
+  fontWeight: "900",
+  fontSize: 18,
+  lineHeight: 24,
+  letterSpacing: 0.04,
+  flexShrink: 1,
+},
+
+resultsHeroMeta: {
+  marginTop: 6,
+  color: TOK.C.text2,
+  fontWeight: "700",
+},
+resultsHeroSplit: {
+  marginTop: 12,
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+},
+resultsHeroSaved: {
+  color: "white",
+  fontWeight: "900",
+},
+resultsHeroPct: {
+  color: "rgba(255,255,255,0.75)",
+  fontWeight: "900",
+},
+
+resultsHeroActions: {
+  marginTop: 16,
+  flexDirection: "row",
+  gap: 10,
+  flexWrap: "wrap",
+  alignItems: "stretch",
+},
+
+resultsHeroBtn: {
+  minWidth: 140,
+  flexGrow: 1,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  paddingVertical: 12,
+  paddingHorizontal: 14,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.22)",
+  backgroundColor: "rgba(255,255,255,0.14)",
+},
+
+resultsHeroBtnGhost: {
+  minWidth: 140,
+  flexGrow: 1,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  paddingVertical: 12,
+  paddingHorizontal: 14,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.16)",
+  backgroundColor: "rgba(255,255,255,0.07)",
+},
+
+resultsHeroBtnText: {
+  color: "white",
+  fontWeight: "900",
+},
+historyHint: {
+  color: "rgba(255,255,255,0.55)",
+  fontSize: 13,
+  marginBottom: 12,
+},
+// -------------------------
+// ✅ SPLASH INFO MODAL
+// -------------------------
+splashInfoBackdrop: {
+  ...StyleSheet.absoluteFillObject,
+  backgroundColor: "transparent",
+  alignItems: "center",
+  justifyContent: "center",
+  paddingHorizontal: 18,
+},
+splashInfoCard: {
+  width: "100%",
+  borderRadius: 22,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(20,20,20,0.95)",
+  padding: 18,
+},
+splashInfoTitle: {
+  color: "white",
+  fontSize: 18,
+  fontWeight: "900",
+  marginBottom: 10,
+},
+splashInfoText: {
+  color: "rgba(255,255,255,0.75)",
+  fontWeight: "700",
+  lineHeight: 20,
+  marginBottom: 12,
+},
+// -------------------------
+// ✅ UNVERIFIED LINK MODAL
+// -------------------------
+unverifiedBackdrop: {
+  ...StyleSheet.absoluteFillObject,
+  backgroundColor: "transparent",
+  alignItems: "center",
+  justifyContent: "center",
+  paddingHorizontal: 18,
+},
+unverifiedCard: {
+  width: "100%",
+  borderRadius: 22,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(20,20,20,0.95)",
+  padding: 18,
+},
+unverifiedTitle: {
+  color: "white",
+  fontSize: 16,
+  fontWeight: "900",
+  marginBottom: 8,
+},
+unverifiedBody: {
+  color: "rgba(255,255,255,0.75)",
+  fontWeight: "700",
+  lineHeight: 20,
+  marginBottom: 14,
+},
+planYearlyText: {
+  marginTop: 8,
+  fontSize: 14,
+  color: "white",
+  fontWeight: "900",
+  textAlign: "center",
+  letterSpacing: 0.4,
+},
+// -------------------------
+// ✅ WATCHLIST (APPLE-LEVEL)
+// -------------------------
+watchPage: {
+  flex: 1,
+  backgroundColor: TOK.C.bg,
+  paddingTop: 54,
+},
+watchInner: {
+  paddingHorizontal: 18,
+  paddingTop: 10,
+},
+watchHeaderRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12,
+  marginBottom: 14,
+},
+watchTitle: {
+  color: TOK.C.text,
+  fontSize: 34,
+  fontWeight: "800",
+  letterSpacing: 0.15,
+},
+watchSub: {
+  marginTop: 6,
+  color: TOK.C.text2,
+  fontWeight: "700",
+  fontSize: 14,
+  lineHeight: 19,
+},
+watchBadge: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 8,
+  paddingVertical: 10,
+  paddingHorizontal: 12,
+  borderRadius: 18,
+  backgroundColor: "rgba(255,255,255,0.08)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+},
+watchBadgeText: {
+  color: "white",
+  fontWeight: "900",
+},
+watchAddCard: {
+  borderRadius: TOK.R.lg,
+  borderWidth: TOK.B.hair,
+  borderColor: TOK.C.b2,
+  backgroundColor: TOK.C.s1,
+  padding: 14,
+  marginBottom: 12,
+},
+watchAddLabel: {
+  color: "rgba(255,255,255,0.82)",
+  fontWeight: "900",
+  marginBottom: 10,
+},
+watchAddRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 10,
+},
+watchAddInput: {
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+  borderRadius: 16,
+  paddingVertical: 10,
+  paddingHorizontal: 12,
+  color: "white",
+  backgroundColor: "rgba(0,0,0,0.18)",
+  fontWeight: "800",
+},
+watchTargetPill: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 6,
+  paddingHorizontal: 10,
+  height: 44,
+  borderRadius: 16,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+  backgroundColor: "rgba(0,0,0,0.18)",
+},
+watchTargetPrefix: {
+  color: "rgba(255,255,255,0.75)",
+  fontWeight: "900",
+},
+watchTargetInput: {
+  width: 72,
+  color: "white",
+  fontWeight: "900",
+},
+watchAddBtn: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 6,
+  paddingHorizontal: 12,
+  height: 44,
+  borderRadius: 16,
+  backgroundColor: "white",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.35)",
+},
+watchAddBtnPressed: { transform: [{ scale: 0.98 }], opacity: 0.92 },
+watchAddBtnText: {
+  color: TOK.C.bg,
+  fontWeight: "900",
+},
+watchAddHint: {
+  marginTop: 10,
+  color: "rgba(255,255,255,0.55)",
+  fontWeight: "700",
+  fontSize: 12,
+},
+watchSearchCard: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 10,
+  paddingHorizontal: 12,
+  height: 46,
+  borderRadius: TOK.R.md,
+  borderWidth: TOK.B.hair,
+  borderColor: TOK.C.b2,
+  backgroundColor: TOK.C.s1,
+  marginBottom: 12,
+},
+watchSearchInput: {
+  flex: 1,
+  color: "white",
+  fontWeight: "800",
+},
+watchClearBtn: {
+  width: 34,
+  height: 34,
+  borderRadius: 12,
+  alignItems: "center",
+  justifyContent: "center",
+  backgroundColor: "rgba(255,255,255,0.08)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+},
+watchClearBtnPressed: { backgroundColor: "rgba(255,255,255,0.14)" },
+watchChipRow: {
+  flexDirection: "row",
+  gap: 10,
+  flexWrap: "wrap",
+  marginBottom: 10,
+},
+watchChip: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 8,
+  paddingVertical: 10,
+  paddingHorizontal: 12,
+  borderRadius: 999,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(0,0,0,0.25)",
+},
+watchChipActive: {
+  backgroundColor: "rgba(255,255,255,0.12)",
+  borderColor: "rgba(255,255,255,0.22)",
+},
+watchChipPressed: { opacity: 0.9 },
+watchChipText: {
+  color: "rgba(255,255,255,0.75)",
+  fontWeight: "900",
+  fontSize: 12,
+  letterSpacing: 0.2,
+},
+watchChipTextActive: { color: "white" },
+watchEmptyCard: {
+  marginTop: 8,
+  padding: 16,
+  borderRadius: 22,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(255,255,255,0.05)",
+},
+watchEmptyTitle: {
+  color: "white",
+  fontWeight: "900",
+  fontSize: 18,
+},
+watchEmptyText: {
+  marginTop: 8,
+  color: "rgba(255,255,255,0.70)",
+  fontWeight: "700",
+  lineHeight: 20,
+},
+
+tabFull: {
+  ...StyleSheet.absoluteFillObject,
+  backgroundColor: TOK.C.bg,
+},
+
+watchRow: {
+  flexDirection: "row",
+  gap: 12,
+  alignItems: "flex-start",
+  padding: 10,
+  borderRadius: TOK.R.md,
+  borderWidth: TOK.B.hair,
+  borderColor: TOK.C.b2,
+  backgroundColor: TOK.C.s1,
+  marginBottom: 10,
+},
+watchRowPressed: { backgroundColor: TOK.C.s2 },
+watchThumb: {
+  width: 54,
+  height: 54,
+  borderRadius: 12,
+  backgroundColor: "rgba(255,255,255,0.06)",
+},
+watchThumbFallback: {
+  width: 54,
+  height: 54,
+  borderRadius: 12,
+  backgroundColor: "rgba(255,255,255,0.06)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.10)",
+  alignItems: "center",
+  justifyContent: "center",
+},
+watchRowTitle: {
+  color: "white",
+  fontWeight: "900",
+  fontSize: 14,
+},
+watchMetaRow: {
+  marginTop: 4,
+  flexDirection: "row",
+  gap: 12,
+  flexWrap: "wrap",
+},
+watchMetaText: {
+  color: "rgba(255,255,255,0.65)",
+  fontWeight: "800",
+  fontSize: 12,
+},
+watchMetaStrong: {
+  color: "rgba(255,255,255,0.90)",
+  fontWeight: "900",
+},
+watchPillRow: {
+  marginTop: 10,
+  flexDirection: "row",
+  gap: 10,
+  flexWrap: "wrap",
+},
+watchMiniPill: {
+  paddingVertical: 8,
+  paddingHorizontal: 10,
+  borderRadius: 14,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(0,0,0,0.22)",
+},
+watchMiniLabel: {
+  color: "rgba(255,255,255,0.55)",
+  fontWeight: "900",
+  fontSize: 11,
+},
+watchMiniValue: {
+  marginTop: 2,
+  color: "white",
+  fontWeight: "900",
+  fontSize: 12,
+},
+watchTrash: {
+  width: 40,
+  height: 40,
+  borderRadius: 14,
+  alignItems: "center",
+  justifyContent: "center",
+  backgroundColor: "rgba(255,255,255,0.06)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.10)",
+},
+watchTrashPressed: { backgroundColor: "rgba(255,255,255,0.12)" },
+watchDetailGrid: {
+  flexDirection: "row",
+  flexWrap: "wrap",
+  gap: 10,
+  marginBottom: 14,
+},
+watchDetailCard: {
+  width: "48%",
+  borderRadius: 18,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(255,255,255,0.06)",
+  padding: 12,
+},
+watchDetailLabel: {
+  color: "rgba(255,255,255,0.65)",
+  fontWeight: "900",
+  fontSize: 12,
+},
+watchDetailValue: {
+  marginTop: 6,
+  color: "white",
+  fontWeight: "900",
+  fontSize: 14,
+},
+watchEditRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 10,
+  paddingHorizontal: 12,
+  height: 46,
+  borderRadius: 18,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  backgroundColor: "rgba(255,255,255,0.06)",
+  marginBottom: 6,
+},
+watchEditInput: {
+  flex: 1,
+  color: "white",
+  fontWeight: "900",
+},
+glassCard: {
+  backgroundColor: "rgba(255,255,255,0.06)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+  shadowColor: "#000",
+  shadowOpacity: 0.35,
+  shadowRadius: 18,
+  shadowOffset: { width: 0, height: 10 },
+  elevation: 18,
+},
+
+resultsActionRow: {
+  flexDirection: "row",
+  gap: 10,
+  marginTop: 12,
+  flexWrap: "wrap",
+},
+resultsActionRowTight: {
+  flexDirection: "row",
+  gap: 10,
+  marginTop: 10,
+  flexWrap: "wrap",
+},
+
+resultsPrimaryAction: {
+  minWidth: 150,
+  flexGrow: 1,
+  flexDirection: "row",
+  gap: 8,
+  alignItems: "center",
+  justifyContent: "center",
+  paddingVertical: 14,
+  paddingHorizontal: 14,
+  borderRadius: 18,
+  backgroundColor: "rgba(255,255,255,0.16)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.18)",
+},
+
+resultsPrimaryActionText: {
+  color: "white",
+  fontWeight: "900",
+  letterSpacing: 0.2,
+},
+
+resultsSecondaryAction: {
+  minWidth: 120,
+  flexGrow: 1,
+  flexDirection: "row",
+  gap: 8,
+  alignItems: "center",
+  justifyContent: "center",
+  paddingVertical: 14,
+  paddingHorizontal: 14,
+  borderRadius: 18,
+  backgroundColor: "rgba(255,255,255,0.08)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+},
+
+resultsSecondaryActionText: {
+  color: "rgba(255,255,255,0.92)",
+  fontWeight: "900",
+},
+resultsMiniAction: {
+  flexDirection: "row",
+  gap: 8,
+  alignItems: "center",
+  justifyContent: "center",
+  paddingVertical: 11,
+  paddingHorizontal: 12,
+  borderRadius: 16,
+  backgroundColor: "rgba(255,255,255,0.08)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+},
+resultsMiniActionGhost: {
+  flexDirection: "row",
+  gap: 8,
+  alignItems: "center",
+  justifyContent: "center",
+  paddingVertical: 11,
+  paddingHorizontal: 14,
+  borderRadius: 16,
+  backgroundColor: "rgba(0,0,0,0.22)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.12)",
+},
+
+resultsMiniActionText: {
+  color: "white",
+  fontWeight: "900",
+  fontSize: 13,
+},
+
+aiStageCard: {
+  marginTop: 18,
+  padding: 18,
+  borderRadius: TOK.R.xl,
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+  backgroundColor: "rgba(20,20,20,0.58)",
+  overflow: "hidden",
+  alignItems: "center",
+  justifyContent: "center",
+  ...TOK.S.soft,
+},
+aiStageTitle: {
+  color: "white",
+  fontWeight: "900",
+  fontSize: 18,
+  letterSpacing: 0.3,
+},
+aiStageLine: {
+  marginTop: 10,
+  color: "rgba(255,255,255,0.74)",
+  fontWeight: "800",
+},
+
+// ✅ matches usage: styles.resultActionsRowTight
+resultActionsRowTight: {
+  flexDirection: "row",
+  gap: 10,
+  marginTop: 10,
+  flexWrap: "wrap",
+},
+
+cameraControlsRow: {
+  position: "absolute",
+  left: 0,
+  right: 0,
+  flexDirection: "row",
+  justifyContent: "space-around",
+  alignItems: "center",
+  zIndex: 20,
+  paddingHorizontal: 22,
+},
+
+cameraSideBtn: {
+  width: 52,
+  height: 52,
+  borderRadius: 18,
+  alignItems: "center",
+  justifyContent: "center",
+  backgroundColor: "rgba(0,0,0,0.28)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.14)",
+},
+
+cameraSideBtnPressed: {
+  opacity: 0.92,
+  transform: [{ scale: 0.98 }],
+},
+
+shutterPressable: {
+  alignItems: "center",
+  justifyContent: "center",
+},
+
+shutterOuter: {
+  width: 96,
+  height: 96,
+  borderRadius: 48,
+  backgroundColor: "rgba(255,255,255,0.10)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.18)",
+  alignItems: "center",
+  justifyContent: "center",
+  shadowColor: "#000",
+  shadowOpacity: IOS ? 0.35 : 0.25,
+  shadowRadius: 18,
+  shadowOffset: { width: 0, height: 12 },
+  elevation: 12,
+},
+
+shutterInner: {
+  width: 78,
+  height: 78,
+  borderRadius: 39,
+  backgroundColor: "rgba(255,255,255,0.98)",
+  borderWidth: 2,
+  borderColor: "rgba(0,0,0,0.10)",
+},
+
+shutterBurstRing: {
+  position: "absolute",
+  width: 110,
+  height: 110,
+  borderRadius: 55,
+  borderWidth: 2,
+  borderColor: "rgba(255,255,255,0.65)",
+},
+
+barcodeOverlay: {
+  position: "absolute",
+  left: 0,
+  right: 0,
+  top: "34%",
+  alignItems: "center",
+  zIndex: 15,
+},
+
+barcodeFrame: {
+  width: "78%",
+  height: 140,
+  borderRadius: 18,
+  borderWidth: 2,
+  borderColor: "rgba(255,255,255,0.22)",
+  backgroundColor: "rgba(0,0,0,0.12)",
+  overflow: "hidden",
+},
+
+barcodeFrameGlow: {
+  ...StyleSheet.absoluteFillObject,
+  borderWidth: 2,
+  borderColor: "rgba(255,255,255,0.55)",
+  borderRadius: 18,
+},
+
+barcodeScanLine: {
+  position: "absolute",
+  left: 10,
+  right: 10,
+  height: 2,
+  borderRadius: 2,
+  backgroundColor: "rgba(255,255,255,0.65)",
+  top: "50%",
+  opacity: 0.9,
+},
+
+barcodeHint: {
+  marginTop: 12,
+  color: "rgba(255,255,255,0.72)",
+  fontWeight: "900",
+},
+
+});
