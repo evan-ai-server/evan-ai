@@ -1616,6 +1616,32 @@ const [thriftStores, setThriftStores] = useState<Array<{ name: string; emoji: st
 const thriftHeatOp = useRef(new RNAnimated.Value(0)).current;
 const thriftHeatY = useRef(new RNAnimated.Value(60)).current;
 
+// Feature 6: Lowball Script Generator
+const [lowballScripts, setLowballScripts] = useState<Array<{ platform: string; tone: string; message: string }>>([]);
+const [lowballOpen, setLowballOpen] = useState(false);
+const lowballOp = useRef(new RNAnimated.Value(0)).current;
+const lowballY = useRef(new RNAnimated.Value(60)).current;
+
+// Feature 7: Flip Personality Type
+const [flipPersonality, setFlipPersonality] = useState<{ type: string; description: string; avgHoldDays: number; totalScans: number; totalBought: number } | null>(null);
+
+// Feature 8: Condition Drift Alert
+const [conditionDrift, setConditionDrift] = useState<{ itemName: string; oldCondition: string; newCondition: string } | null>(null);
+
+// Feature 9: Ghost Listing Detector
+const [ghostRisk, setGhostRisk] = useState<{ riskScore: number; level: string; signals: string[]; warning: string | null } | null>(null);
+
+// Feature 10: The One That Got Away (uses existing regretItems from feature 4)
+const [gotAwayOpen, setGotAwayOpen] = useState(false);
+const gotAwayOp = useRef(new RNAnimated.Value(0)).current;
+const gotAwayY = useRef(new RNAnimated.Value(60)).current;
+
+// Feature 11: Scan Graveyard
+const [graveyardItems, setGraveyardItems] = useState<Array<{ itemName: string; originalPrice: number; currentEstimate: number; dropPct: number; ageDays: number; message: string }>>([]);
+const [graveyardOpen, setGraveyardOpen] = useState(false);
+const graveyardOp = useRef(new RNAnimated.Value(0)).current;
+const graveyardY = useRef(new RNAnimated.Value(60)).current;
+
 const [showSplash, setShowSplash] = useState(true);
 // ✅ Keep splash visible minimum time
 const splashStartRef = useRef(Date.now());
@@ -1882,6 +1908,154 @@ const openThriftHeat = useCallback(async () => {
     RNAnimated.spring(thriftHeatY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
   ]).start();
 }, [thriftHeatOp, thriftHeatY]);
+
+// Feature 6: open lowball sheet
+const openLowball = useCallback(async () => {
+  if (!activeResult) return;
+  try {
+    const res = await apiFetch("/intel/lowball-script", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        itemName: activeResult.itemName,
+        price: activeResult.price,
+        platform: activeResult.store || "eBay",
+        condition: activeResult.conditionLabel || activeResult.visionIdentity?.condition,
+        daysListed: null,
+        avgMarket: activeResult.avgMarket,
+      }),
+    }) as any;
+    if (res?.scripts?.length) setLowballScripts(res.scripts);
+  } catch {}
+  setLowballOpen(true);
+  lowballOp.setValue(0);
+  lowballY.setValue(60);
+  RNAnimated.parallel([
+    RNAnimated.timing(lowballOp, { toValue: 1, duration: 280, useNativeDriver: true }),
+    RNAnimated.spring(lowballY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
+  ]).start();
+}, [activeResult, lowballOp, lowballY]);
+
+const closeLowball = useCallback(() => {
+  RNAnimated.timing(lowballOp, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+    setLowballOpen(false);
+    setLowballScripts([]);
+  });
+}, [lowballOp]);
+
+// Feature 7: compute flip personality
+const computeFlipPersonality = useCallback(async () => {
+  try {
+    const raw = await AsyncStorage.getItem("EVAN_FATIGUE_SCANS_V1");
+    const scans: Array<{ category: string; ts: number }> = raw ? JSON.parse(raw) : [];
+    const total = scans.length;
+    const bought = 0; // we track scans, not purchases — bought is always 0 for now
+    const now = Date.now();
+    const recentDays = scans.filter(s => now - s.ts < 30 * 86400000);
+    const catCounts: Record<string, number> = {};
+    recentDays.forEach(s => { catCounts[s.category] = (catCounts[s.category] || 0) + 1; });
+    const topCat = Object.entries(catCounts).sort((a, b) => b[1] - a[1])[0];
+
+    let type = "Ghost Flipper";
+    let description = "You scan everything, buy nothing. The market is your museum.";
+    if (total > 50 && bought === 0) {
+      type = "Ghost Flipper";
+      description = "You scan everything, buy nothing. The market is your museum.";
+    } else if (topCat && topCat[1] > total * 0.6) {
+      type = "Category Specialist";
+      description = `You live and breathe ${topCat[0]}. Deep focus, high conviction.`;
+    } else if (total > 100) {
+      type = "Volume Trader";
+      description = "High volume, wide net. You win on quantity.";
+    } else {
+      type = "Patience Flipper";
+      description = "You hold too long waiting for the perfect deal. Trust your first instinct.";
+    }
+    setFlipPersonality({ type, description, avgHoldDays: 0, totalScans: total, totalBought: bought });
+  } catch {}
+}, []);
+
+// Feature 8: check condition drift on watchlist
+const checkConditionDrift = useCallback((itemName: string, storedCondition: string, currentCondition: string) => {
+  if (!storedCondition || !currentCondition) return;
+  const downgrade = ["like new", "excellent", "very good", "good", "fair", "poor", "for parts"];
+  const storedIdx = downgrade.findIndex(c => storedCondition.toLowerCase().includes(c));
+  const currentIdx = downgrade.findIndex(c => currentCondition.toLowerCase().includes(c));
+  if (storedIdx >= 0 && currentIdx > storedIdx) {
+    setConditionDrift({ itemName, oldCondition: storedCondition, newCondition: currentCondition });
+  }
+}, []);
+
+// Feature 9: run ghost check after scan
+const runGhostCheck = useCallback(async (result: any) => {
+  try {
+    const res = await apiFetch("/intel/ghost-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sellerFeedback: result?.sellerFeedback ?? null,
+        price: result?.price,
+        avgMarket: result?.avgMarket,
+        store: result?.store,
+        itemName: result?.itemName,
+      }),
+    }) as any;
+    if (res?.level === "high" || res?.level === "medium") {
+      setGhostRisk(res);
+    } else {
+      setGhostRisk(null);
+    }
+  } catch {}
+}, []);
+
+// Feature 10: open "Got Away" sheet
+const openGotAway = useCallback(() => {
+  setGotAwayOpen(true);
+  gotAwayOp.setValue(0);
+  gotAwayY.setValue(60);
+  RNAnimated.parallel([
+    RNAnimated.timing(gotAwayOp, { toValue: 1, duration: 280, useNativeDriver: true }),
+    RNAnimated.spring(gotAwayY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
+  ]).start();
+}, [gotAwayOp, gotAwayY]);
+
+const closeGotAway = useCallback(() => {
+  RNAnimated.timing(gotAwayOp, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setGotAwayOpen(false));
+}, [gotAwayOp]);
+
+// Feature 11: open scan graveyard
+const openGraveyard = useCallback(async () => {
+  try {
+    const raw = await AsyncStorage.getItem("EVAN_REGRET_V1");
+    const passed: Array<{ itemName: string; passedPrice: number; category: string; passedAt: number }> = raw ? JSON.parse(raw) : [];
+    if (passed.length > 0) {
+      const res = await apiFetch("/intel/scan-graveyard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: passed.map(p => ({
+            itemName: p.itemName,
+            originalPrice: p.passedPrice,
+            category: p.category,
+            scannedAt: p.passedAt,
+          })),
+        }),
+      }) as any;
+      if (res?.items?.length) setGraveyardItems(res.items);
+    }
+  } catch {}
+  setGraveyardOpen(true);
+  graveyardOp.setValue(0);
+  graveyardY.setValue(60);
+  RNAnimated.parallel([
+    RNAnimated.timing(graveyardOp, { toValue: 1, duration: 280, useNativeDriver: true }),
+    RNAnimated.spring(graveyardY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
+  ]).start();
+}, [graveyardOp, graveyardY]);
+
+const closeGraveyard = useCallback(() => {
+  RNAnimated.timing(graveyardOp, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setGraveyardOpen(false));
+}, [graveyardOp]);
 
 const skipOnboard = async () => {
   try { await AsyncStorage.setItem("EVAN_ONBOARD_V1", "1"); } catch {}
@@ -7499,6 +7673,9 @@ if (card?.price && (card as any)?.daysListed) {
   setDeadStockData(null);
 }
 setRivalryCount(0); // reset until rivalry API responds
+
+// Feature 9: ghost check
+if (card) runGhostCheck(card);
 
 // Feature 11 + 12: Lazy deep-auth + condition-assess using the scan photo
 // Reset previous scan results first, then fire after a short delay
