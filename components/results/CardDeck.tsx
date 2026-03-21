@@ -9,11 +9,13 @@
  *  - Heart + share overlay actions on each card
  *  - Long-swipe right (>55% card width) → add to watchlist
  */
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import {
   View,
   Text,
   StyleSheet,
+  Animated as RNAnimated,
+  Easing,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Reanimated, {
@@ -101,16 +103,20 @@ function AnimCard({
       Extrapolation.CLAMP,
     );
 
-    // Entrance: spring up from below
+    // Entrance: staggered spring per card (each card 80ms after previous)
+    // We bake the stagger into the entrance value by shifting the input range
+    const staggerOffset = index * 0.15; // fraction of the shared value range
+    const entranceStart = Math.min(staggerOffset, 0.9);
+    const entranceEnd   = Math.min(entranceStart + 0.6, 1.0);
     const entranceY = interpolate(
       deckEntrance.value,
-      [0, 1],
+      [entranceStart, entranceEnd],
       [40 + index * 10, 0],
       Extrapolation.CLAMP,
     );
     const entranceOp = interpolate(
       deckEntrance.value,
-      [0, 0.6],
+      [entranceStart, Math.min(entranceStart + 0.5, 1.0)],
       [0, 1],
       Extrapolation.CLAMP,
     );
@@ -235,11 +241,30 @@ export function CardDeck({
   const deckEntrance = useSharedValue(0);
   const [snappedIndex, setSnappedIndex] = useState(0);
 
+  // Swipe hint fade-in: appears after 600ms
+  const swipeHintOpacity = useRef(new RNAnimated.Value(0)).current;
+
   useEffect(() => {
     activeIndex.value  = 0;
     setSnappedIndex(0);
     deckEntrance.value = 0;
-    deckEntrance.value = withSpring(1, MO.spring.entrance);
+    // Use a longer, softer spring so per-card stagger plays out naturally
+    deckEntrance.value = withSpring(1, { mass: 1.0, damping: 22, stiffness: 120 });
+
+    // Swipe hint fades in after 600ms
+    swipeHintOpacity.setValue(0);
+    const hint = RNAnimated.sequence([
+      RNAnimated.delay(600),
+      RNAnimated.spring(swipeHintOpacity, {
+        toValue: 1,
+        damping: 22,
+        stiffness: 160,
+        mass: 0.9,
+        useNativeDriver: true,
+      }),
+    ]);
+    hint.start();
+    return () => { try { hint.stop(); } catch {} };
   }, [activeResult]);
 
   const handleSnap = useCallback((idx: number) => {
@@ -345,7 +370,9 @@ export function CardDeck({
       <DotIndicator count={cardCount} activeIndex={activeIndex} />
 
       {cardCount > 1 ? (
-        <Text style={styles.swipeHint}>swipe to compare · swipe right to save</Text>
+        <RNAnimated.Text style={[styles.swipeHint, { opacity: swipeHintOpacity }]}>
+          swipe to compare · swipe right to save
+        </RNAnimated.Text>
       ) : null}
     </View>
   );
@@ -368,7 +395,7 @@ const styles = StyleSheet.create({
   counterText: {
     ...TY.cap,
     color: C.text3,
-    letterSpacing: 1.0,
+    letterSpacing: 1.2,
     textTransform: "uppercase",
   },
   counterDivider: {
