@@ -188,6 +188,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     paddingTop: SP.md,
     paddingHorizontal: SP.lg,
+    marginTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: C.borderMid,
     overflow: "hidden",
@@ -233,7 +234,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: SP.sm,
     borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.55)",
+    borderTopColor: "rgba(255,255,255,0.4)",
   },
   openText: {
     ...TY.bodyBold,
