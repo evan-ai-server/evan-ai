@@ -9209,7 +9209,7 @@ style={[
 ]}
   pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
 >
-<SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+<SafeAreaView style={{ flex: 1 }} edges={["top", "bottom"]}>
 <ScrollView
   style={[styles.page, { flex: 1 }]}
   contentContainerStyle={{ flexGrow: 1, paddingTop: 12, paddingBottom: 100, backgroundColor: "transparent" }}
@@ -9476,7 +9476,7 @@ pointerEvents={tab === "history" && tabInteractable ? "auto" : "none"}
 <RNAnimated.ScrollView
   ref={historyScrollRef}
   style={{ marginTop: 8 }}
-  contentContainerStyle={{ paddingBottom: 260, flexGrow: 1, minHeight: "120%" }}
+  contentContainerStyle={{ paddingBottom: TAB_BAR_H + TAB_BAR_MARGIN + BOTTOM + 40, flexGrow: 1 }}
   showsVerticalScrollIndicator={false}
   bounces={true}
   alwaysBounceVertical={true}
@@ -9635,10 +9635,9 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
   scrollEventThrottle={16}
   contentInsetAdjustmentBehavior="automatic"
   contentContainerStyle={{
-  paddingBottom: 220,
+  paddingBottom: TAB_BAR_H + TAB_BAR_MARGIN + BOTTOM + 40,
   paddingTop: 6,
   flexGrow: 1,
-  minHeight: "100%",
 }}
 >
 
@@ -9771,7 +9770,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
 <ScrollView
   ref={profileScrollRef}
   style={{ flex: 1 }}
-  contentContainerStyle={{ paddingBottom: 280, flexGrow: 1, minHeight: "120%" }}
+  contentContainerStyle={{ paddingBottom: TAB_BAR_H + TAB_BAR_MARGIN + BOTTOM + 40, flexGrow: 1 }}
   showsVerticalScrollIndicator={false}
   bounces={true}
   alwaysBounceVertical={true}
@@ -12114,8 +12113,8 @@ style={[
   styles.tabBar,
   {
     position: "absolute",
-    left: 16,
-    right: 16,
+    left: 18,
+    right: 18,
     bottom: TAB_BAR_BOTTOM,
     zIndex: 99999,
     elevation: 99999,
@@ -15952,7 +15951,7 @@ page: {
   flex: 1,
   paddingTop: 72,
   paddingHorizontal: 18,
-  paddingBottom: 120,
+  paddingBottom: 0,
   backgroundColor: TOK.C.bg,
 },
 
