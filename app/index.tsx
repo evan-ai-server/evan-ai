@@ -2057,6 +2057,8 @@ const closeGraveyard = useCallback(() => {
   RNAnimated.timing(graveyardOp, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setGraveyardOpen(false));
 }, [graveyardOp]);
 
+useEffect(() => { computeFlipPersonality(); }, []);
+
 const skipOnboard = async () => {
   try { await AsyncStorage.setItem("EVAN_ONBOARD_V1", "1"); } catch {}
   try { onboardGlowLoopRef.current?.stop?.(); } catch {}
@@ -9480,6 +9482,142 @@ transform: [
   </View>
 ) : null}
 
+{/* Feature 6: Lowball Script Sheet */}
+{lowballOpen ? (
+  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 990 }}>
+    <Pressable
+      style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" }}
+      onPress={closeLowball}
+    />
+    <RNAnimated.View style={{
+      backgroundColor: "#0f0f0f", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+      borderTopWidth: 1, borderColor: "rgba(255,255,255,0.08)",
+      padding: 24, paddingBottom: 40,
+      transform: [{ translateY: lowballY }], opacity: lowballOp,
+    }}>
+      <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>NEGOTIATION SCRIPTS</Text>
+      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 20 }}>🧠 Lowball Generator</Text>
+      {lowballScripts.length === 0 ? (
+        <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 14, textAlign: "center", paddingVertical: 20 }}>Generating scripts…</Text>
+      ) : lowballScripts.map((s, i) => (
+        <View key={i} style={{
+          backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 14,
+          borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
+          padding: 16, marginBottom: 12,
+        }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+            <Text style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.1, textTransform: "uppercase" }}>{s.platform}</Text>
+            <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, textTransform: "uppercase" }}>{s.tone}</Text>
+          </View>
+          <Text style={{ color: "rgba(255,255,255,0.82)", fontSize: 14, lineHeight: 20 }}>{s.message}</Text>
+        </View>
+      ))}
+      <Pressable onPress={closeLowball} style={{
+        marginTop: 8, paddingVertical: 14, borderRadius: 14,
+        backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center",
+      }}>
+        <Text style={{ color: "rgba(255,255,255,0.5)", fontWeight: "700" }}>Close</Text>
+      </Pressable>
+    </RNAnimated.View>
+  </View>
+) : null}
+
+{/* Feature 10: The One That Got Away Sheet */}
+{gotAwayOpen ? (
+  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 990 }}>
+    <Pressable
+      style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" }}
+      onPress={closeGotAway}
+    />
+    <RNAnimated.View style={{
+      backgroundColor: "#0f0f0f", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+      borderTopWidth: 1, borderColor: "rgba(255,60,60,0.15)",
+      padding: 24, paddingBottom: 40, maxHeight: "75%",
+      transform: [{ translateY: gotAwayY }], opacity: gotAwayOp,
+    }}>
+      <Text style={{ color: "rgba(255,100,100,0.5)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>MISSED OPPORTUNITIES</Text>
+      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 6 }}>💔 The One That Got Away</Text>
+      <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, marginBottom: 20 }}>Items you passed on. Prices they sold for. Pure pain.</Text>
+      {regretItems.length === 0 ? (
+        <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 14, textAlign: "center", paddingVertical: 30 }}>No regrets yet. Keep scanning.</Text>
+      ) : regretItems.slice(0, 5).map((item, i) => (
+        <View key={i} style={{
+          backgroundColor: "rgba(255,60,60,0.06)", borderRadius: 14,
+          borderWidth: 1, borderColor: "rgba(255,60,60,0.12)",
+          padding: 16, marginBottom: 10,
+          flexDirection: "row", alignItems: "center", gap: 12,
+        }}>
+          <Text style={{ fontSize: 24 }}>💸</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: "rgba(255,255,255,0.85)", fontWeight: "700", fontSize: 14 }} numberOfLines={1}>{item.itemName}</Text>
+            <Text style={{ color: "rgba(255,100,100,0.8)", fontSize: 12, marginTop: 3 }}>
+              You passed at <Text style={{ fontWeight: "800" }}>${item.passedPrice}</Text>
+              {item.currentPrice ? <Text> · Sold for <Text style={{ color: "#ff4444", fontWeight: "900" }}>${item.currentPrice}</Text></Text> : null}
+            </Text>
+          </View>
+          <Text style={{ color: "rgba(255,60,60,0.6)", fontSize: 22, fontWeight: "900" }}>
+            {item.currentPrice && item.currentPrice > item.passedPrice ? `+$${item.currentPrice - item.passedPrice}` : ""}
+          </Text>
+        </View>
+      ))}
+      <Pressable onPress={closeGotAway} style={{
+        marginTop: 8, paddingVertical: 14, borderRadius: 14,
+        backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center",
+      }}>
+        <Text style={{ color: "rgba(255,255,255,0.5)", fontWeight: "700" }}>Close</Text>
+      </Pressable>
+    </RNAnimated.View>
+  </View>
+) : null}
+
+{/* Feature 11: Scan Graveyard Sheet */}
+{graveyardOpen ? (
+  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 990 }}>
+    <Pressable
+      style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" }}
+      onPress={closeGraveyard}
+    />
+    <RNAnimated.View style={{
+      backgroundColor: "#0f0f0f", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+      borderTopWidth: 1, borderColor: "rgba(80,255,150,0.15)",
+      padding: 24, paddingBottom: 40, maxHeight: "75%",
+      transform: [{ translateY: graveyardY }], opacity: graveyardOp,
+    }}>
+      <Text style={{ color: "rgba(80,255,150,0.5)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>PRICE DROP ALERTS</Text>
+      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 6 }}>⚰️ Scan Graveyard</Text>
+      <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, marginBottom: 20 }}>Items you passed on that finally dropped in price.</Text>
+      {graveyardItems.length === 0 ? (
+        <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 14, textAlign: "center", paddingVertical: 30 }}>
+          No price drops yet. Check back after 2+ weeks.
+        </Text>
+      ) : graveyardItems.map((item, i) => (
+        <View key={i} style={{
+          backgroundColor: "rgba(80,255,150,0.06)", borderRadius: 14,
+          borderWidth: 1, borderColor: "rgba(80,255,150,0.12)",
+          padding: 16, marginBottom: 10,
+          flexDirection: "row", alignItems: "center", gap: 12,
+        }}>
+          <Text style={{ fontSize: 24 }}>📉</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: "rgba(255,255,255,0.85)", fontWeight: "700", fontSize: 14 }} numberOfLines={1}>{item.itemName}</Text>
+            <Text style={{ color: "rgba(80,255,150,0.8)", fontSize: 12, marginTop: 3 }}>
+              Was <Text style={{ color: "rgba(255,255,255,0.5)" }}>${item.originalPrice}</Text> · Now ~<Text style={{ fontWeight: "800", color: "#50ff96" }}>${item.currentEstimate}</Text>
+            </Text>
+            <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, marginTop: 2 }}>{item.ageDays}d ago · {item.message}</Text>
+          </View>
+          <Text style={{ color: "#50ff96", fontWeight: "900", fontSize: 16 }}>-{item.dropPct}%</Text>
+        </View>
+      ))}
+      <Pressable onPress={closeGraveyard} style={{
+        marginTop: 8, paddingVertical: 14, borderRadius: 14,
+        backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center",
+      }}>
+        <Text style={{ color: "rgba(255,255,255,0.5)", fontWeight: "700" }}>Close</Text>
+      </Pressable>
+    </RNAnimated.View>
+  </View>
+) : null}
+
 {/* ── INTERACTIVE CINEMATIC TUTORIAL ───────────────────────────────────── */}
 {showITutorial ? (() => {
   const step = I_STEPS[Math.min(iTutStep, I_STEPS.length - 1)];
@@ -10821,6 +10959,78 @@ style={[
   </View>
 ) : null}
 
+{/* Feature 9: Ghost Listing Badge */}
+{ghostRisk && tab === "results" ? (
+  <View style={{
+    marginHorizontal: 16, marginBottom: 10,
+    backgroundColor: "rgba(255,60,60,0.12)",
+    borderRadius: 14, borderWidth: 1,
+    borderColor: "rgba(255,60,60,0.28)",
+    padding: 14, flexDirection: "row", alignItems: "flex-start", gap: 10,
+  }}>
+    <Text style={{ fontSize: 18 }}>👻</Text>
+    <View style={{ flex: 1 }}>
+      <Text style={{ color: "#ff6b6b", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>
+        {ghostRisk.level === "high" ? "GHOST LISTING DETECTED" : "SUSPICIOUS LISTING"}
+      </Text>
+      <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{ghostRisk.warning}</Text>
+      {ghostRisk.signals.slice(0, 2).map((s, i) => (
+        <Text key={i} style={{ color: "rgba(255,120,120,0.7)", fontSize: 11, marginTop: 3 }}>· {s}</Text>
+      ))}
+    </View>
+  </View>
+) : null}
+
+{/* Feature 8: Condition Drift Alert */}
+{conditionDrift ? (
+  <View style={{
+    marginHorizontal: 16, marginBottom: 10,
+    backgroundColor: "rgba(255,160,0,0.12)",
+    borderRadius: 14, borderWidth: 1,
+    borderColor: "rgba(255,160,0,0.28)",
+    padding: 14, flexDirection: "row", alignItems: "center", gap: 10,
+  }}>
+    <Text style={{ fontSize: 18 }}>⚠️</Text>
+    <View style={{ flex: 1 }}>
+      <Text style={{ color: "#ffb347", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 3 }}>
+        CONDITION DOWNGRADED
+      </Text>
+      <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>
+        {conditionDrift.itemName}: <Text style={{ color: "#ff8c42" }}>{conditionDrift.oldCondition}</Text> → <Text style={{ color: "#ff4444" }}>{conditionDrift.newCondition}</Text>
+      </Text>
+      <Text style={{ color: "rgba(255,179,71,0.6)", fontSize: 11, marginTop: 3 }}>Seller quietly changed the condition listing.</Text>
+    </View>
+    <Pressable onPress={() => setConditionDrift(null)}>
+      <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 18 }}>×</Text>
+    </Pressable>
+  </View>
+) : null}
+
+{/* Feature 6: Lowball Script Button */}
+{activeResult && tab === "results" ? (
+  <Pressable
+    onPress={openLowball}
+    style={{
+      marginHorizontal: 16, marginBottom: 10,
+      backgroundColor: "rgba(130,200,255,0.10)",
+      borderRadius: 14, borderWidth: 1,
+      borderColor: "rgba(130,200,255,0.22)",
+      padding: 14, flexDirection: "row", alignItems: "center", gap: 10,
+    }}
+  >
+    <Text style={{ fontSize: 16 }}>🧠</Text>
+    <View style={{ flex: 1 }}>
+      <Text style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 2 }}>
+        LOWBALL SCRIPT
+      </Text>
+      <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12 }}>
+        Tap to generate a platform-tuned offer message
+      </Text>
+    </View>
+    <Text style={{ color: "rgba(130,200,255,0.5)", fontSize: 16 }}>→</Text>
+  </Pressable>
+) : null}
+
 </ScrollView>
 </SafeAreaView>
 </RNAnimated.View>
@@ -11505,6 +11715,55 @@ setSavedToast("Checking…");
   </View>
 </Pressable>
 <View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)", marginHorizontal: 16 }} />
+
+{/* Feature 7: Flip Personality */}
+{flipPersonality ? (
+  <View style={{
+    backgroundColor: "rgba(255,255,255,0.04)", borderRadius: 14,
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.07)",
+    padding: 16, marginBottom: 10,
+  }}>
+    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 4 }}>FLIP PERSONALITY</Text>
+    <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>{flipPersonality.type}</Text>
+    <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, marginTop: 4 }}>{flipPersonality.description}</Text>
+    <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 11, marginTop: 6 }}>{flipPersonality.totalScans} total scans</Text>
+  </View>
+) : null}
+
+{/* Feature 10: Got Away button */}
+<Pressable
+  onPress={openGotAway}
+  style={{
+    backgroundColor: "rgba(255,60,60,0.08)", borderRadius: 14,
+    borderWidth: 1, borderColor: "rgba(255,60,60,0.15)",
+    padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 12,
+  }}
+>
+  <Text style={{ fontSize: 18 }}>💔</Text>
+  <View style={{ flex: 1 }}>
+    <Text style={{ color: "#ff6b6b", fontWeight: "800", fontSize: 13 }}>The One That Got Away</Text>
+    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>{regretItems.length} missed flip{regretItems.length !== 1 ? "s" : ""} in 30 days</Text>
+  </View>
+  <Text style={{ color: "rgba(255,100,100,0.4)", fontSize: 16 }}>→</Text>
+</Pressable>
+
+{/* Feature 11: Scan Graveyard button */}
+<Pressable
+  onPress={openGraveyard}
+  style={{
+    backgroundColor: "rgba(80,255,150,0.06)", borderRadius: 14,
+    borderWidth: 1, borderColor: "rgba(80,255,150,0.12)",
+    padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 12,
+  }}
+>
+  <Text style={{ fontSize: 18 }}>⚰️</Text>
+  <View style={{ flex: 1 }}>
+    <Text style={{ color: "#50ff96", fontWeight: "800", fontSize: 13 }}>Scan Graveyard</Text>
+    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>Items you passed that finally dropped</Text>
+  </View>
+  <Text style={{ color: "rgba(80,255,150,0.4)", fontSize: 16 }}>→</Text>
+</Pressable>
+
 <Pressable
   style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
   onPress={async () => {
