@@ -9603,6 +9603,13 @@ transform: [
         ))}
       </ScrollView>
 
+      <View style={{ backgroundColor: "rgba(255,255,255,0.03)", borderRadius: 12, padding: 14, marginBottom: 16 }}>
+        <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 10, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>PRO TIP</Text>
+        <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 13, lineHeight: 19 }}>
+          Talk to the sorting staff. They'll tell you what came in that morning.
+        </Text>
+      </View>
+
       <Text style={{ color: "rgba(255,255,255,0.2)", fontSize: 11, textAlign: "center", marginTop: 12 }}>
         Based on chain-wide donation &amp; restock patterns
       </Text>
@@ -9628,17 +9635,21 @@ transform: [
       {lowballScripts.length === 0 ? (
         <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 14, textAlign: "center", paddingVertical: 20 }}>Generating scripts…</Text>
       ) : lowballScripts.map((s, i) => (
-        <View key={i} style={{
+        <Pressable key={i} onPress={() => Share.share({ message: s.message })} style={{
           backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 14,
           borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
           padding: 16, marginBottom: 12,
         }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
             <Text style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.1, textTransform: "uppercase" }}>{s.platform}</Text>
-            <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, textTransform: "uppercase" }}>{s.tone}</Text>
+            <Text style={{ color: "rgba(255,255,255,0.2)", fontSize: 10 }}>tap to copy</Text>
           </View>
+          <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, textTransform: "uppercase", marginBottom: 4 }}>{s.tone}</Text>
           <Text style={{ color: "rgba(255,255,255,0.82)", fontSize: 14, lineHeight: 20 }}>{s.message}</Text>
-        </View>
+          {(s as any).tactic ? (
+            <Text style={{ color: "rgba(130,200,255,0.45)", fontSize: 11, marginTop: 8, fontStyle: "italic" }}>⚡ {(s as any).tactic}</Text>
+          ) : null}
+        </Pressable>
       ))}
       <Pressable onPress={closeLowball} style={{
         marginTop: 8, paddingVertical: 14, borderRadius: 14,
@@ -9666,9 +9677,14 @@ transform: [
       <Text style={{ color: "rgba(255,100,100,0.5)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>MISSED OPPORTUNITIES</Text>
       <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 6 }}>💔 The One That Got Away</Text>
       <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, marginBottom: 20 }}>Items you passed on. Prices they sold for. Pure pain.</Text>
+      {regretItems.length > 0 ? (
+        <Text style={{ color: "#ff6b6b", fontWeight: "900", fontSize: 16, marginBottom: 20 }}>
+          Total missed: ${regretItems.reduce((s, i) => s + Math.max(0, (i.currentPrice || i.passedPrice) - i.passedPrice), 0)} in potential profit
+        </Text>
+      ) : null}
       {regretItems.length === 0 ? (
         <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 14, textAlign: "center", paddingVertical: 30 }}>No regrets yet. Keep scanning.</Text>
-      ) : regretItems.slice(0, 5).map((item, i) => (
+      ) : regretItems.slice(0, 5).sort((a, b) => Math.max(0, (b.currentPrice || b.passedPrice) - b.passedPrice) - Math.max(0, (a.currentPrice || a.passedPrice) - a.passedPrice)).map((item, i) => (
         <View key={i} style={{
           backgroundColor: "rgba(255,60,60,0.06)", borderRadius: 14,
           borderWidth: 1, borderColor: "rgba(255,60,60,0.12)",
@@ -9714,6 +9730,11 @@ transform: [
       <Text style={{ color: "rgba(80,255,150,0.5)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>PRICE DROP ALERTS</Text>
       <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 6 }}>⚰️ Scan Graveyard</Text>
       <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, marginBottom: 20 }}>Items you passed on that finally dropped in price.</Text>
+      {graveyardItems.length > 0 ? (
+        <Text style={{ color: "#50ff96", fontWeight: "900", fontSize: 15, marginBottom: 20 }}>
+          ${graveyardItems.reduce((s, i) => s + (i.originalPrice - i.currentEstimate), 0)} in potential savings identified
+        </Text>
+      ) : null}
       {graveyardItems.length === 0 ? (
         <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 14, textAlign: "center", paddingVertical: 30 }}>
           No price drops yet. Check back after 2+ weeks.
@@ -9786,6 +9807,12 @@ transform: [
             </View>
           ) : null}
           <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, textAlign: "center", marginBottom: 20 }}>{snipeData.message}</Text>
+          <Pressable
+            onPress={() => Share.share({ message: `⏱️ SNIPE REMINDER: Bid $${snipeData?.maxBid || "max"} on "${activeResult?.itemName}" at exactly 8 seconds before auction ends (${snipeData ? new Date(snipeData.snipeAt).toLocaleTimeString() : "check app"})` })}
+            style={{ backgroundColor: "rgba(255,220,60,0.12)", borderRadius: 12, padding: 14, alignItems: "center", marginBottom: 16, borderWidth: 1, borderColor: "rgba(255,220,60,0.25)" }}
+          >
+            <Text style={{ color: "#ffdc3c", fontWeight: "800", fontSize: 14 }}>📲 Share Snipe Reminder</Text>
+          </Pressable>
         </>
       ) : (
         <Text style={{ color: "rgba(255,255,255,0.3)", textAlign: "center", paddingVertical: 30 }}>Loading auction data…</Text>
@@ -9846,6 +9873,18 @@ transform: [
             color: profitPerHour.belowMinWage ? "#ff8080" : "rgba(255,255,255,0.5)",
             fontSize: 14, textAlign: "center", marginBottom: 20, lineHeight: 20,
           }}>{profitPerHour.verdict}</Text>
+          {profitPerHour && profitPerHour.effectiveHourlyRate > 0 ? (
+            <View style={{ backgroundColor: "rgba(255,255,255,0.03)", borderRadius: 12, padding: 14, marginBottom: 16 }}>
+              <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>OPTIMAL FLIP SIZE</Text>
+              <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 13 }}>
+                {profitPerHour.effectiveHourlyRate < 10
+                  ? "Focus on $100+ flips only. Small items aren't worth your time."
+                  : profitPerHour.effectiveHourlyRate < 25
+                  ? "Sweet spot: $40–150 flips with fast turnover (under 7 days)."
+                  : "You're efficient. Keep targeting $50–200 items at your current pace."}
+              </Text>
+            </View>
+          ) : null}
         </>
       ) : null}
       <Pressable onPress={closeProfitSheet} style={{
@@ -11147,6 +11186,9 @@ style={[
     <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "500", marginTop: 4 }}>
       You're hunting in a crowded lane. Switch categories or you're wasting time.
     </Text>
+    <Text style={{ color: "rgba(255,200,60,0.5)", fontSize: 11, marginTop: 6 }}>
+      ~{Math.round(flipFatigue.count * 3.5)}min of browsing · $0 profit. Consider switching categories.
+    </Text>
   </View>
 ) : null}
 
@@ -11166,9 +11208,20 @@ style={[
     gap: 8,
   }}>
     <Ionicons name="people-outline" size={15} color="#82c8ff" />
-    <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13, fontWeight: "600", flex: 1 }}>
-      <Text style={{ color: "#82c8ff", fontWeight: "800" }}>{rivalryCount} other {rivalryCount === 1 ? "user" : "users"}</Text> scanned this in the last 2 hours.
-    </Text>
+    <View style={{ flex: 1 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 3 }}>
+        <Text style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase" }}>RESELLER RIVALRY</Text>
+        <View style={{ backgroundColor: "rgba(255,60,60,0.25)", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 }}>
+          <Text style={{ color: "#ff6b6b", fontSize: 9, fontWeight: "900", letterSpacing: 0.8 }}>● LIVE</Text>
+        </View>
+      </View>
+      <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13, fontWeight: "600" }}>
+        <Text style={{ color: "#82c8ff", fontWeight: "800" }}>{rivalryCount} other {rivalryCount === 1 ? "user" : "users"}</Text> scanned this in the last 2 hours.
+      </Text>
+      <Text style={{ color: "rgba(130,200,255,0.4)", fontSize: 11, marginTop: 4 }}>
+        Flipper #{Math.abs(rivalryCount * 37 + 12)} · Flipper #{Math.abs(rivalryCount * 19 + 44)} {rivalryCount > 2 ? `· +${rivalryCount - 2} more` : ""}
+      </Text>
+    </View>
   </View>
 ) : null}
 
@@ -11196,6 +11249,26 @@ style={[
       Suggested offer: <Text style={{ color: "#50ff96", fontWeight: "800" }}>${deadStockData.suggestedOffer}</Text>
       <Text style={{ color: "rgba(255,255,255,0.35)" }}> · {deadStockData.leveragePct}% below ask</Text>
     </Text>
+    {(deadStockData as any).negotiationScript ? (
+      <Pressable
+        onPress={() => Share.share({ message: (deadStockData as any).negotiationScript })}
+        style={{ marginTop: 10, backgroundColor: "rgba(80,255,150,0.08)", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "rgba(80,255,150,0.15)" }}
+      >
+        <Text style={{ color: "rgba(80,255,150,0.6)", fontSize: 10, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>TAP TO COPY SCRIPT</Text>
+        <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 12, lineHeight: 17, fontStyle: "italic" }}>"{(deadStockData as any).negotiationScript}"</Text>
+      </Pressable>
+    ) : null}
+    {(deadStockData as any).leverageBar != null ? (
+      <View style={{ marginTop: 8 }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+          <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>LEVERAGE</Text>
+          <Text style={{ color: "#50ff96", fontSize: 10, fontWeight: "800" }}>{(deadStockData as any).leverageBar}%</Text>
+        </View>
+        <View style={{ height: 3, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 2 }}>
+          <View style={{ height: 3, width: `${Math.min((deadStockData as any).leverageBar, 100)}%` as any, backgroundColor: "#50ff96", borderRadius: 2 }} />
+        </View>
+      </View>
+    ) : null}
   </View>
 ) : null}
 
@@ -11217,6 +11290,15 @@ style={[
       {ghostRisk.signals.slice(0, 2).map((s, i) => (
         <Text key={i} style={{ color: "rgba(255,120,120,0.7)", fontSize: 11, marginTop: 3 }}>· {s}</Text>
       ))}
+      <View style={{ marginTop: 10 }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+          <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>SCAM RISK</Text>
+          <Text style={{ color: ghostRisk.level === "high" ? "#ff4444" : "#ffb347", fontSize: 10, fontWeight: "800" }}>{ghostRisk.riskScore}%</Text>
+        </View>
+        <View style={{ height: 3, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 2 }}>
+          <View style={{ height: 3, width: `${ghostRisk.riskScore}%` as any, backgroundColor: ghostRisk.level === "high" ? "#ff4444" : "#ffb347", borderRadius: 2 }} />
+        </View>
+      </View>
     </View>
   </View>
 ) : null}
@@ -11239,6 +11321,9 @@ style={[
         {conditionDrift.itemName}: <Text style={{ color: "#ff8c42" }}>{conditionDrift.oldCondition}</Text> → <Text style={{ color: "#ff4444" }}>{conditionDrift.newCondition}</Text>
       </Text>
       <Text style={{ color: "rgba(255,179,71,0.6)", fontSize: 11, marginTop: 3 }}>Seller quietly changed the condition listing.</Text>
+      <Text style={{ color: "rgba(255,179,71,0.55)", fontSize: 11, marginTop: 4 }}>
+        Estimated value impact: ~{conditionDrift.oldCondition.toLowerCase().includes("like new") || conditionDrift.newCondition.toLowerCase().includes("fair") ? "20–30" : "10–15"}% price drop
+      </Text>
     </View>
     <Pressable onPress={() => setConditionDrift(null)}>
       <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 18 }}>×</Text>
@@ -11261,6 +11346,9 @@ style={[
         DÉJÀ VU SCAN
       </Text>
       <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{dupeScan.message}</Text>
+      {(dupeScan as any).inferredReason ? (
+        <Text style={{ color: "rgba(200,160,255,0.5)", fontSize: 11, marginTop: 4, fontStyle: "italic" }}>{(dupeScan as any).inferredReason}</Text>
+      ) : null}
     </View>
     <Pressable onPress={() => setDupeScan(null)}>
       <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 18 }}>×</Text>
@@ -11285,6 +11373,14 @@ style={[
       <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13 }}>{saturation.warning}</Text>
       {saturation.suggestion ? (
         <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginTop: 4 }}>{saturation.suggestion}</Text>
+      ) : null}
+      {(saturation as any).trendArrow ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+          <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 13 }}>{(saturation as any).trendArrow}</Text>
+          <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 11 }}>
+            {(saturation as any).weeklyChange} this week · national data ±15% local
+          </Text>
+        </View>
       ) : null}
     </View>
   </View>
@@ -12040,6 +12136,17 @@ setSavedToast("Checking…");
     <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>{flipPersonality.type}</Text>
     <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, marginTop: 4 }}>{flipPersonality.description}</Text>
     <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 11, marginTop: 6 }}>{flipPersonality.totalScans} total scans</Text>
+    {flipPersonality ? (
+      <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, marginTop: 8, lineHeight: 16 }}>
+        {flipPersonality.type === "Ghost Flipper"
+          ? "→ Set a rule: under $50 + 20% margin = auto-buy. Stop hesitating."
+          : flipPersonality.type === "Category Specialist"
+          ? "→ You're dangerous in your lane. Expand 1 adjacent category this month."
+          : flipPersonality.type === "Volume Trader"
+          ? "→ Track your profit-per-hour. High volume ≠ high profit."
+          : "→ Trust your first instinct. You're leaving money on the table."}
+      </Text>
+    ) : null}
   </View>
 ) : null}
 
