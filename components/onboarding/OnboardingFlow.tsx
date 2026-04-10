@@ -27,7 +27,8 @@ import Animated, {
 } from "react-native-reanimated";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
-import { CameraView } from "expo-camera";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { Linking } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C, R, SP, TY, MO, SH } from "../design/DS";
 
@@ -36,13 +37,23 @@ const { width: PAGE_W } = Dimensions.get("window");
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+// All fields required on completion — "not_specified" fills any gap from Skip.
 export interface SurveyAnswers {
-  motivation?: string;
-  intent?: string;
-  experience?: string;
-  riskLevel?: string;
-  goal?: string;
+  motivation: string;
+  intent: string;
+  experience: string;
+  riskLevel: string;
+  goal: string;
 }
+
+// Safe defaults — ensures downstream agents never receive undefined/null.
+const SAFE_DEFAULTS: SurveyAnswers = {
+  motivation: "not_specified",
+  intent:     "not_specified",
+  experience: "not_specified",
+  riskLevel:  "not_specified",
+  goal:       "not_specified",
+};
 
 interface OptionDef {
   id: string;
@@ -226,16 +237,21 @@ function OptionCard({ label, selected, onPress }: OptionCardProps) {
 }
 
 // ─── Progress bar ─────────────────────────────────────────────────────────────
+// Uses pixel width (not %) — safe for Reanimated UI-thread worklets.
+
+const PROGRESS_TRACK_W = 72; // matches s.progressTrack width
 
 function ProgressBar({ step, total }: { step: number; total: number }) {
-  const pct = useSharedValue(0);
+  const targetFrac = Math.max(0, Math.min(1, step / total));
+  // Initialize to current value so first render is already correct — no 0→n flicker.
+  const pct = useSharedValue(targetFrac);
 
   useEffect(() => {
-    pct.value = withSpring(Math.max(0, Math.min(1, (step) / total)), MO.spring.gentle);
+    pct.value = withSpring(Math.max(0, Math.min(1, step / total)), MO.spring.gentle);
   }, [step, total]);
 
   const fillStyle = useAnimatedStyle(() => ({
-    width: `${pct.value * 100}%`,
+    width: pct.value * PROGRESS_TRACK_W,
   }));
 
   return (
@@ -343,7 +359,7 @@ function EntryScreen({ onContinue }: { onContinue: () => void }) {
 
 interface QuestionScreenProps {
   question: QuestionDef;
-  answers: SurveyAnswers;
+  answers: Partial<SurveyAnswers>;
   onAnswer: (question: QuestionDef, optionId: string) => void;
 }
 
@@ -376,9 +392,11 @@ function QuestionScreen({ question, answers, onAnswer }: QuestionScreenProps) {
 interface FinalScreenProps {
   onStartScanning: () => void;
   onExploreTutorial: () => void;
+  cameraGranted: boolean;
+  onRequestCamera: () => void;
 }
 
-function FinalScreen({ onStartScanning, onExploreTutorial }: FinalScreenProps) {
+function FinalScreen({ onStartScanning, onExploreTutorial, cameraGranted, onRequestCamera }: FinalScreenProps) {
   return (
     <View style={s.finalWrap}>
       {/* Glow orb */}
@@ -406,6 +424,13 @@ function FinalScreen({ onStartScanning, onExploreTutorial }: FinalScreenProps) {
           <Text style={s.recommendLabel}>HIGHLY RECOMMENDED</Text>
           <GhostBtn label="Explore Evan AI  →" onPress={onExploreTutorial} />
         </View>
+
+        {/* Camera permission re-entry — only shown when denied + can still ask */}
+        {!cameraGranted && (
+          <Pressable onPress={onRequestCamera} style={s.cameraPromptRow}>
+            <Text style={s.cameraPromptText}>📷  Enable Camera for Full Experience</Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );
@@ -416,9 +441,14 @@ function FinalScreen({ onStartScanning, onExploreTutorial }: FinalScreenProps) {
 export function OnboardingFlow({ cameraPermissionGranted, onComplete }: OnboardingFlowProps) {
   const insets = useSafeAreaInsets();
 
+  // Camera permission — owned here so FinalScreen can re-request without prop drilling
+  const [camPermission, requestCamPermission] = useCameraPermissions();
+  const camGranted = camPermission?.granted ?? cameraPermissionGranted;
+  const canAskCam  = camPermission?.canAskAgain !== false;
+
   // ── State ──────────────────────────────────────────────────────────────────
   const [screenIndex, setScreenIndex] = useState(0);
-  const [answers, setAnswers] = useState<SurveyAnswers>({});
+  const [answers, setAnswers] = useState<Partial<SurveyAnswers>>({});
   const isTransitioning = useRef(false);
 
   // ── Transition animations (RNAnimated for reliability) ────────────────────
@@ -515,14 +545,27 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
   const handleComplete = useCallback((goTutorial: boolean) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 
+    // Merge partial answers with safe defaults — downstream agents never see undefined.
+    const safeAnswers: SurveyAnswers = { ...SAFE_DEFAULTS, ...answers };
+
     RNAnimated.timing(flowOpacity, {
       toValue: 0, duration: 380,
       easing: Easing.inOut(Easing.ease),
       useNativeDriver: true,
     }).start(() => {
-      onComplete(answers, goTutorial);
+      onComplete(safeAnswers, goTutorial);
     });
   }, [answers, flowOpacity, onComplete]);
+
+  // ── Camera re-request (Final screen) ───────────────────────────────────────
+  const handleRequestCamera = useCallback(async () => {
+    if (canAskCam) {
+      await requestCamPermission().catch(() => {});
+    } else {
+      // Permanently denied — send user to Settings
+      Linking.openSettings().catch(() => {});
+    }
+  }, [canAskCam, requestCamPermission]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const currentQuestion = (screenIndex >= 1 && screenIndex <= 5)
@@ -537,7 +580,7 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
     <RNAnimated.View style={[s.root, { opacity: flowOpacity }]}>
 
       {/* ── Background ────────────────────────────────────────────────────── */}
-      {cameraPermissionGranted ? (
+      {camGranted ? (
         <>
           <CameraView style={StyleSheet.absoluteFillObject} facing="back" />
           <BlurView intensity={90} style={StyleSheet.absoluteFillObject} />
@@ -607,6 +650,8 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
           <FinalScreen
             onStartScanning={() => handleComplete(false)}
             onExploreTutorial={() => handleComplete(true)}
+            cameraGranted={camGranted}
+            onRequestCamera={handleRequestCamera}
           />
         )}
       </RNAnimated.View>
@@ -617,9 +662,10 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
+  // zIndex is set by the parent wrapper in index.tsx — keeping it here would
+  // create a stacking context that blocks tutorial gestures during the fade-out.
   root: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 250000,
   },
 
   // Backgrounds
@@ -900,5 +946,18 @@ const s = StyleSheet.create({
     letterSpacing: 2.0,
     textTransform: "uppercase",
     textAlign: "center",
+  },
+
+  // Camera permission re-entry prompt (Final screen)
+  cameraPromptRow: {
+    alignSelf: "center",
+    paddingVertical: SP.sm,
+    paddingHorizontal: SP.lg,
+  },
+  cameraPromptText: {
+    ...TY.label,
+    color: C.text4,
+    textAlign: "center",
+    letterSpacing: 0.2,
   },
 });

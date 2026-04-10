@@ -2271,12 +2271,12 @@ const skipOnboard = async () => {
   }).start(() => { setShowOnboard(false); setTutorialStep(0); });
 };
 
-// Survey complete — persist answers, optionally launch tutorial
+// Survey complete — persist answers (all fields guaranteed non-undefined), optionally launch tutorial
 const handleSurveyComplete = useCallback(async (ans: SurveyAnswers, goTutorial: boolean) => {
   try { await AsyncStorage.setItem("EVAN_SURVEY_V1", JSON.stringify(ans)); } catch {}
   setShowSurvey(false);
   if (goTutorial) {
-    // Brief pause lets the survey fade-out finish before tutorial mounts
+    // 380ms: matches survey fade-out duration — tutorial mounts on a clean frame.
     setTimeout(() => openTutorial(), 380);
   }
 }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -10789,11 +10789,19 @@ transform: [
 })() : null}
 
 {/* ── ONBOARDING SURVEY (pre-tutorial, first-launch only) ─────────────── */}
+{/* pointerEvents="box-none" on the wrapper: the container itself never captures
+    touches, so as flowOpacity fades to 0 the tutorial layer beneath receives
+    events immediately — zero "dead-touch" frames between survey and tutorial. */}
 {showSurvey ? (
-  <OnboardingFlow
-    cameraPermissionGranted={permission?.granted ?? false}
-    onComplete={handleSurveyComplete}
-  />
+  <View
+    pointerEvents="box-none"
+    style={[StyleSheet.absoluteFillObject, { zIndex: 250000 }]}
+  >
+    <OnboardingFlow
+      cameraPermissionGranted={permission?.granted ?? false}
+      onComplete={handleSurveyComplete}
+    />
+  </View>
 ) : null}
 
 {/* ── WELCOME TO EVAN AI SCREEN ────────────────────────────────────────── */}
