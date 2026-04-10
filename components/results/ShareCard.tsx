@@ -12,7 +12,6 @@ import {
   Pressable,
   StyleSheet,
   Share,
-  Platform,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
@@ -23,7 +22,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
-import { C, SP, R, TY } from "../design/DS";
+import { SP, R, C, TY } from "../design/DS";
 
 export interface ShareCardData {
   itemName?: string | null;
@@ -32,6 +31,9 @@ export interface ShareCardData {
   scannedPrice?: number | null;
   savedAmount?: number | null;
   cheaperPct?: number | null;
+  // Tweak 3 — Evidence pack (identification basis)
+  visionQuery?: string | null;
+  evidenceSignals?: string[] | null;
 }
 
 interface ShareCardProps {
@@ -46,6 +48,65 @@ function fmtMoney(n: number | null | undefined): string {
   if (!Number.isFinite(n)) return "—";
   return `$${n!.toFixed(0)}`;
 }
+
+// ─── Evidence Carousel (Tweak 3) ─────────────────────────────────────────────
+function EvidenceCarousel({
+  signals,
+  query,
+}: {
+  signals: string[];
+  query?: string | null;
+}) {
+  const hasContent = query || signals.length > 0;
+  if (!hasContent) return null;
+  return (
+    <View style={evidenceStyles.container}>
+      <Text style={evidenceStyles.header}>IDENTIFICATION BASIS</Text>
+      {query ? (
+        <View style={evidenceStyles.row}>
+          <Ionicons name="search-outline" size={11} color="rgba(100,180,255,0.75)" />
+          <Text style={evidenceStyles.signal} numberOfLines={1}>{query}</Text>
+        </View>
+      ) : null}
+      {signals.slice(0, 3).map((sig, i) => (
+        <View key={i} style={evidenceStyles.row}>
+          <Ionicons name="checkmark-circle-outline" size={11} color="rgba(120,255,180,0.75)" />
+          <Text style={evidenceStyles.signal} numberOfLines={2}>{sig}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const evidenceStyles = StyleSheet.create({
+  container: {
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: R.md,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    padding: SP.md,
+    marginBottom: SP.md,
+  },
+  header: {
+    ...TY.cap,
+    color: "rgba(255,255,255,0.28)",
+    letterSpacing: 1.5,
+    marginBottom: 6,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginBottom: 4,
+  },
+  signal: {
+    flex: 1,
+    color: "rgba(255,255,255,0.52)",
+    fontSize: 12,
+    fontWeight: "600",
+    lineHeight: 16,
+  },
+});
 
 export function ShareCard({ visible, data, onClose }: ShareCardProps) {
   const translateY = useSharedValue(500);
@@ -64,6 +125,7 @@ export function ShareCard({ visible, data, onClose }: ShareCardProps) {
       opacity.value    = withTiming(0, { duration: 180 });
       translateY.value = withSpring(400, { mass: 0.7, damping: 22, stiffness: 280 });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   const handleShare = useCallback(async () => {
@@ -80,6 +142,10 @@ export function ShareCard({ visible, data, onClose }: ShareCardProps) {
     lines.push(`🔍 Found ${item}${store ? ` on ${store}` : ""} for ${fmtMoney(price)}`);
     if (orig && orig > (price ?? 0)) {
       lines.push(`🏷️ It was listed for ${fmtMoney(orig)} — I saved ${fmtMoney(saved)}${pct ? ` (${Math.round(pct)}% cheaper)` : ""}`);
+    }
+    // Tweak 3: include identification basis (Carfax-style verification line)
+    if (data.visionQuery) {
+      lines.push(`🔬 Identified via: "${data.visionQuery}"`);
     }
     lines.push("");
     lines.push("Scanned with Evan AI — the smartest resale price checker 📱");
@@ -150,6 +216,12 @@ export function ShareCard({ visible, data, onClose }: ShareCardProps) {
             {data.itemName || "Price Check"}
           </Text>
 
+          {/* Tweak 3: Evidence Carousel — identification basis */}
+          <EvidenceCarousel
+            signals={data.evidenceSignals ?? []}
+            query={data.visionQuery}
+          />
+
           {/* Price comparison */}
           <View style={styles.priceRow}>
             {data.scannedPrice ? (
@@ -182,7 +254,7 @@ export function ShareCard({ visible, data, onClose }: ShareCardProps) {
 
           {savingsBig ? (
             <Text style={styles.heroMessage}>
-              That's a real deal. 🎯
+              That&apos;s a real deal. 🎯
             </Text>
           ) : null}
 

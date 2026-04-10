@@ -46,6 +46,8 @@ import {
   Animated as RNAnimated,
   useWindowDimensions,
   PanResponder,
+  Dimensions,
+  PixelRatio,
 } from "react-native";
 
 import {
@@ -9216,8 +9218,33 @@ const toNum = (n: any) => {
   return Number.isFinite(v) ? v : 0;
 };
 const clampInt = (n: any, a = 0, b = 9999) => Math.max(a, Math.min(b, Math.floor(toNum(n))));
-const mkInstallId = () =>
-  `${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-6)}`.toUpperCase();
+// ── Tweak 2: Hardware-level fingerprinting ────────────────────────────────────
+// Combines OS, version, screen resolution, and pixel density into a stable
+// djb2 hash that survives cookie clears, VPNs, and app reinstalls.
+function _djb2Hash(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  }
+  return h;
+}
+
+async function buildHardwareFingerprint(): Promise<string> {
+  const screen = Dimensions.get("screen");
+  const signals = [
+    Platform.OS,
+    String(Platform.Version),
+    `${Math.round(screen.width)}x${Math.round(screen.height)}`,
+    PixelRatio.get().toFixed(2),
+  ].join("|");
+  return _djb2Hash(signals).toString(36).toUpperCase();
+}
+
+const mkInstallId = async (): Promise<string> => {
+  const hw   = await buildHardwareFingerprint();
+  const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
+  return `EV${hw}_${rand}`;
+};
 
 const K = {
   installId: "EVAN_INSTALL_ID_V1",
@@ -9410,7 +9437,7 @@ useEffect(() => {
   (async () => {
     try {
       // install id (share growth)
-      const iid = (await AsyncStorage.getItem(K.installId)) || mkInstallId();
+      const iid = (await AsyncStorage.getItem(K.installId)) || await mkInstallId();
       await AsyncStorage.setItem(K.installId, iid);
       setInstallId(iid);
       if (!_clientId) _clientId = iid;
@@ -15187,12 +15214,21 @@ const pick = await ImagePicker.launchImageLibraryAsync({
 <ShareCard
   visible={shareCardOpen}
   data={{
-    itemName:    activeResult?.itemName ?? null,
-    store:       activeResult?.store ?? null,
-    price:       activeResult?.price ?? null,
+    itemName:     activeResult?.itemName ?? null,
+    store:        activeResult?.store ?? null,
+    price:        activeResult?.price ?? null,
     scannedPrice: activeResult?.scannedPrice ?? null,
-    savedAmount: activeResult?.savedAmount ?? null,
-    cheaperPct:  activeResult?.cheaperPct ?? null,
+    savedAmount:  activeResult?.savedAmount ?? null,
+    cheaperPct:   activeResult?.cheaperPct ?? null,
+    // Tweak 3: Evidence pack — identification basis for the "Carfax" share line
+    visionQuery:  activeResult?.visionQuery ?? null,
+    evidenceSignals: (() => {
+      const sigs: string[] = [];
+      if (activeResult?.authenticityIntel?.topSignal) sigs.push(activeResult.authenticityIntel.topSignal);
+      if (activeResult?.trendIntel?.buyAdvice) sigs.push(activeResult.trendIntel.buyAdvice);
+      if (activeResult?.seasonalFlip?.topSignal) sigs.push(activeResult.seasonalFlip.topSignal);
+      return sigs.length ? sigs : null;
+    })(),
   }}
   onClose={() => setShareCardOpen(false)}
 />

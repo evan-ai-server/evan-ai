@@ -25,7 +25,6 @@ import Reanimated, {
   useAnimatedStyle,
   withSequence,
   withSpring,
-  withTiming,
   interpolate,
   interpolateColor,
   Extrapolation,
@@ -37,7 +36,7 @@ import {
   C, SP, R, TY, SH,
   CARD, IOS,
   verdictStyle, confidenceLabel,
-  fmtMoney, fmtPct,
+  fmtMoney,
 } from "../design/DS";
 import { PriceHistoryChart, PriceChartPoint } from "./PriceHistoryChart";
 import { CommunityCompsPanel } from "./CommunityCompsPanel";
@@ -86,6 +85,14 @@ export interface CardData {
   } | null;
   // Feature 5: local / hyperlocal comps
   localComps?: { low: number; median: number; high: number; count: number; location: string } | null;
+
+  // Tweak 1 — computed from priceChartPoints; no new server field needed
+  // (velocitySignal derived at render time via computeVelocitySignal)
+
+  // Tweak 3 — identification evidence pack
+  visionQuery?: string | null;
+  scanWhy?: string[] | null;
+  rankWhy?: string[] | null;
 }
 
 interface ResultCardProps {
@@ -106,7 +113,7 @@ interface ResultCardProps {
 
 // ─── Image area height ────────────────────────────────────────────────────────
 const IMAGE_H = Math.round(CARD.height * 0.60);
-const PANEL_H  = CARD.height - IMAGE_H;
+const _PANEL_H  = CARD.height - IMAGE_H;
 
 // ─── Heart shutter animation ──────────────────────────────────────────────────
 function HeartButton({
@@ -122,6 +129,7 @@ function HeartButton({
   // Sync fill when external state changes (e.g. removed from watchlist elsewhere)
   useEffect(() => {
     fill.value = withSpring(isWatchlisted ? 1 : 0, { damping: 16, stiffness: 260 });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isWatchlisted]);
 
   const fireHaptic = () => {
@@ -251,6 +259,48 @@ const velocityStyles = StyleSheet.create({
   },
 });
 
+// ─── Signal Velocity — 14-day price change (Tweak 1) ─────────────────────────
+export interface VelocitySignal {
+  delta14d: number;       // % change over last 14 days
+  isVolatile: boolean;    // true when |delta| > 15%
+  direction: "up" | "down" | "flat";
+}
+
+export function computeVelocitySignal(points: PriceChartPoint[]): VelocitySignal | null {
+  if (!points || points.length < 2) return null;
+  const cutoff14d = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  const sorted = [...points].sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+  const latest = sorted[sorted.length - 1];
+  const priceNow = latest.median ?? latest.low ?? null;
+  // Best point at or before the 14-day boundary; fall back to oldest
+  const old = sorted.filter(p => (p.ts ?? 0) <= cutoff14d).pop() ?? sorted[0];
+  const price14dAgo = old.median ?? old.low ?? null;
+  if (priceNow == null || price14dAgo == null || price14dAgo === 0) return null;
+  const delta14d = ((priceNow - price14dAgo) / price14dAgo) * 100;
+  return {
+    delta14d,
+    isVolatile: Math.abs(delta14d) > 15,
+    direction: delta14d > 1 ? "up" : delta14d < -1 ? "down" : "flat",
+  };
+}
+
+function VolatileAssetBadge({ signal }: { signal: VelocitySignal }) {
+  const rising = signal.direction === "up";
+  const color  = rising ? C.warn    : C.good;
+  const bg     = rising ? C.warnBg  : C.goodBg;
+  const border = rising ? C.warnBorder : C.goodBorder;
+  const icon   = (rising ? "trending-up" : "trending-down") as any;
+  const arrow  = rising ? "↑" : "↓";
+  return (
+    <View style={[velocityStyles.badge, { backgroundColor: bg, borderColor: border, marginTop: 2 }]}>
+      <Ionicons name={icon} size={11} color={color} />
+      <Text style={[velocityStyles.text, { color }]}>
+        {`VOLATILE  ${arrow}${Math.abs(Math.round(signal.delta14d))}% / 14d`}
+      </Text>
+    </View>
+  );
+}
+
 // ─── Card label helper ────────────────────────────────────────────────────────
 function cardLabel(
   isHero: boolean,
@@ -319,6 +369,11 @@ export function ResultCard({
   // Delta vs hero (alt cards)
   const delta = (!isHero && heroPrice != null && price != null) ? price - heroPrice : null;
   const label = cardLabel(isHero, price, heroPrice ?? null, data.buyVerdict ?? undefined);
+
+  // Tweak 1: Signal Velocity — compute once at render
+  const velocitySignal = (isHero && data.priceChartPoints?.length)
+    ? computeVelocitySignal(data.priceChartPoints)
+    : null;
 
   return (
     <View style={[styles.card, isHero ? SH.cardActive : SH.card]}>
@@ -502,6 +557,11 @@ export function ResultCard({
           {/* Feature 3: Sold Velocity Badge */}
           {isHero && data.ebaySoldComps?.count ? (
             <VelocityBadge comps={data.ebaySoldComps} />
+          ) : null}
+
+          {/* Tweak 1: Volatile Asset Badge — fires when 14d price delta > 15% */}
+          {velocitySignal?.isVolatile ? (
+            <VolatileAssetBadge signal={velocitySignal} />
           ) : null}
 
           {/* Feature 5: Local / hyperlocal comps */}
