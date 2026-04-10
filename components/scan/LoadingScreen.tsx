@@ -1,23 +1,41 @@
 /**
- * LoadingScreen — cinematic Apple-keynote-style AI intelligence loading experience.
- * Replaces the old ResultsLoadingPanel with a dramatically more polished visual.
- *
- * Drop-in compatible: accepts the same props as ResultsLoadingPanel.
+ * LoadingScreen — GPU-rendered cinematic loading experience via Skia.
+ * All rings, arcs, glow, and orbit dots are drawn on a Skia Canvas for
+ * pixel-perfect anti-aliasing with no pixelation artifacts.
  */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   Animated as RNAnimated,
-  Easing,
-  Image,
+  Easing as RNEasing,
   Pressable,
+  useWindowDimensions,
 } from "react-native";
-import { BlurView } from "expo-blur";
+import {
+  Canvas,
+  Circle,
+  Path,
+  Skia,
+  BlurMask,
+  Group,
+  vec,
+} from "@shopify/react-native-skia";
+import {
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  withSequence,
+  useDerivedValue,
+  Easing,
+  interpolate,
+} from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
-import { C, SP, R, TY, MO } from "../design/DS";
+import { C, SP, R, TY } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
+
+// ── Types ────────────────────────────────────────────────────────────────────
 
 export type LoadingStage = "idle" | "vision" | "market" | "analysis" | "collector";
 
@@ -31,32 +49,29 @@ interface LoadingScreenProps {
   retryReveal?: RNAnimated.Value;
   retryScale?: RNAnimated.Value;
   loadingDots?: string;
-  /** kept for backwards compat with old ResultsLoadingPanel */
   headline?: string;
+  /** True when scan has been running >10s with no result — shows Connection Weak state */
+  slowNetwork?: boolean;
 }
 
 const STAGE_COPY: Record<LoadingStage, { primary: string; sub: string }> = {
-  idle:      { primary: "Initializing",       sub: "Preparing analysis pipeline" },
-  vision:    { primary: "Analyzing item",      sub: "Building visual identity" },
-  market:    { primary: "Searching market",    sub: "Scanning listings in real time" },
-  analysis:  { primary: "Ranking best deals",  sub: "Calculating resale intelligence" },
-  collector: { primary: "Detecting value",     sub: "Searching for hidden gems" },
+  idle:      { primary: "Initializing",      sub: "Preparing analysis pipeline" },
+  vision:    { primary: "Analyzing item",    sub: "Building visual identity" },
+  market:    { primary: "Searching market",  sub: "Scanning listings in real time" },
+  analysis:  { primary: "Ranking best deals", sub: "Calculating resale intelligence" },
+  collector: { primary: "Detecting value",   sub: "Searching for hidden gems" },
 };
-
-// 5 concentric pulse rings
-const RINGS = [
-  { size: 90,  delay: 0   },
-  { size: 130, delay: 220 },
-  { size: 174, delay: 440 },
-  { size: 222, delay: 660 },
-  { size: 274, delay: 880 },
-];
 
 const STAGE_ORDER: LoadingStage[] = ["idle", "vision", "market", "analysis", "collector"];
 const PILL_STAGES: LoadingStage[] = ["vision", "market", "analysis"];
 
+// Pre-compute static orbit dot positions (angles only, radius applied at render)
+const OUTER_DOT_ANGLES = Array.from({ length: 8 }, (_, i) => (i / 8) * Math.PI * 2);
+const INNER_DOT_ANGLES = Array.from({ length: 5 }, (_, i) => (i / 5) * Math.PI * 2);
+
+// ── Component ────────────────────────────────────────────────────────────────
+
 export function LoadingScreen({
-  photoUri,
   stage = "idle",
   stageMeta,
   onCancel,
@@ -66,58 +81,67 @@ export function LoadingScreen({
   retryScale,
   loadingDots = "",
   headline,
+  slowNetwork,
 }: LoadingScreenProps) {
-  // ── entrance
-  const panelOpacity = useRef(new RNAnimated.Value(0)).current;
-  const panelY       = useRef(new RNAnimated.Value(20)).current;
+  const { width: screenW } = useWindowDimensions();
+
+  // Orb center within the canvas
+  const CANVAS_H = 300;
+  const cx = screenW / 2;
+  const cy = 148;
+
+  // ── Reanimated shared values ─────────────────────────────────────────────
+  const outerRot   = useSharedValue(0);   // 0 → 2π, clockwise
+  const innerRot   = useSharedValue(0);   // 2π → 0, counter-clockwise
+  const corePulse  = useSharedValue(0);   // 0 ↔ 1, breathing
+  const ringPulse  = useSharedValue(0);   // 0 ↔ 1, slow pulse for outer ring
+
+  // RN Animated values (for text cross-fade and pills — these use native driver)
+  const textOpacity = useRef(new RNAnimated.Value(1)).current;
   const progressAnim = useRef(new RNAnimated.Value(0)).current;
-
-  // ── core orb glow
-  const coreGlow = useRef(new RNAnimated.Value(0)).current;
-
-  // ── outer orbit rotation
-  const orbitRot  = useRef(new RNAnimated.Value(0)).current;
-  // ── inner counter-orbit
-  const orbit2Rot = useRef(new RNAnimated.Value(0)).current;
-
-  // ── scanning ring rotation (for photo frame)
-  const scanRingRot = useRef(new RNAnimated.Value(0)).current;
-
-  // ── 5 staggered pulse rings
-  const pulseAnims = useRef(RINGS.map(() => new RNAnimated.Value(0))).current;
-
-  // ── stage text cross-fade
-  const textOpacityIn  = useRef(new RNAnimated.Value(1)).current;
-  const textOpacityOut = useRef(new RNAnimated.Value(1)).current;
-
-  // ── stage pill entrances (staggered)
   const pillAnims = useRef(PILL_STAGES.map(() => new RNAnimated.Value(0))).current;
-  // ── active pill glow pulse
   const pillGlow = useRef(new RNAnimated.Value(0)).current;
 
-  // ── stage progress dots animate
   const [renderStage, setRenderStage] = useState(stage);
 
-  // Entrance
+  // ── Start animation loops ─────────────────────────────────────────────────
   useEffect(() => {
-    RNAnimated.parallel([
-      RNAnimated.timing(panelOpacity, {
-        toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true,
-      }),
-      RNAnimated.spring(panelY, {
-        toValue: 0, damping: 22, stiffness: 200, mass: 0.9, useNativeDriver: true,
-      }),
-    ]).start();
+    // Outer ring rotates clockwise: 0 → 2π in 3.4s
+    outerRot.value = withRepeat(
+      withTiming(Math.PI * 2, { duration: 3400, easing: Easing.linear }),
+      -1, false
+    );
+    // Inner arc rotates counter-clockwise (negative): 0 → -2π in 5.2s
+    innerRot.value = withRepeat(
+      withTiming(-Math.PI * 2, { duration: 5200, easing: Easing.linear }),
+      -1, false
+    );
+    // Core glow breathes
+    corePulse.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 1600, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0, { duration: 1600, easing: Easing.inOut(Easing.sin) }),
+      ),
+      -1, false
+    );
+    // Outer ring slow pulse
+    ringPulse.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 2800, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0, { duration: 2800, easing: Easing.inOut(Easing.sin) }),
+      ),
+      -1, false
+    );
 
-    // Scan progress bar
+    // Scan progress bar (RN Animated, width can't use native driver)
     RNAnimated.timing(progressAnim, {
       toValue: 1,
       duration: 28000,
-      easing: Easing.out(Easing.quad),
+      easing: RNEasing.out(RNEasing.quad),
       useNativeDriver: false,
     }).start();
 
-    // Staggered pill entrances
+    // Stage pill entrances
     PILL_STAGES.forEach((_, idx) => {
       RNAnimated.sequence([
         RNAnimated.delay(idx * 140),
@@ -126,260 +150,189 @@ export function LoadingScreen({
         }),
       ]).start();
     });
-  }, []);
 
-  // Continuous loops
-  useEffect(() => {
-    // core glow
-    const glowLoop = RNAnimated.loop(RNAnimated.sequence([
-      RNAnimated.timing(coreGlow, { toValue: 1, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      RNAnimated.timing(coreGlow, { toValue: 0, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-    ]));
-    glowLoop.start();
-
-    // outer orbit
-    const orbitLoop = RNAnimated.loop(
-      RNAnimated.timing(orbitRot, { toValue: 1, duration: 3400, easing: Easing.linear, useNativeDriver: true })
-    );
-    orbitLoop.start();
-
-    // inner counter-orbit (slower, opposite)
-    const orbit2Loop = RNAnimated.loop(
-      RNAnimated.timing(orbit2Rot, { toValue: 1, duration: 5200, easing: Easing.linear, useNativeDriver: true })
-    );
-    orbit2Loop.start();
-
-    // scanning ring (faster, for photo frame)
-    const scanRingLoop = RNAnimated.loop(
-      RNAnimated.timing(scanRingRot, { toValue: 1, duration: 2200, easing: Easing.linear, useNativeDriver: true })
-    );
-    scanRingLoop.start();
-
-    // staggered pulse rings
-    const pulseLoops = RINGS.map(({ delay }, idx) => {
-      const loop = RNAnimated.loop(RNAnimated.sequence([
-        RNAnimated.delay(delay),
-        RNAnimated.timing(pulseAnims[idx], {
-          toValue: 1, duration: 1700 + idx * 80, easing: Easing.out(Easing.quad), useNativeDriver: true,
-        }),
-        RNAnimated.timing(pulseAnims[idx], {
-          toValue: 0, duration: 0, useNativeDriver: true,
-        }),
-      ]));
-      loop.start();
-      return loop;
-    });
-
-    // active pill glow pulse
+    // Pill glow loop
     const pillGlowLoop = RNAnimated.loop(RNAnimated.sequence([
-      RNAnimated.timing(pillGlow, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      RNAnimated.timing(pillGlow, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      RNAnimated.timing(pillGlow, { toValue: 1, duration: 900, easing: RNEasing.inOut(RNEasing.sin), useNativeDriver: true }),
+      RNAnimated.timing(pillGlow, { toValue: 0, duration: 900, easing: RNEasing.inOut(RNEasing.sin), useNativeDriver: true }),
     ]));
     pillGlowLoop.start();
 
     return () => {
-      try { glowLoop.stop(); } catch {}
-      try { orbitLoop.stop(); } catch {}
-      try { orbit2Loop.stop(); } catch {}
-      try { scanRingLoop.stop(); } catch {}
-      try { pillGlowLoop.stop(); } catch {}
-      pulseLoops.forEach((l) => { try { l.stop(); } catch {} });
+      pillGlowLoop.stop();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Stage cross-fade
   useEffect(() => {
-    RNAnimated.timing(textOpacityIn, {
-      toValue: 0, duration: 120, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+    RNAnimated.timing(textOpacity, {
+      toValue: 0, duration: 120, easing: RNEasing.out(RNEasing.cubic), useNativeDriver: true,
     }).start(() => {
       setRenderStage(stage);
-      RNAnimated.timing(textOpacityIn, {
-        toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      RNAnimated.timing(textOpacity, {
+        toValue: 1, duration: 260, easing: RNEasing.out(RNEasing.cubic), useNativeDriver: true,
       }).start();
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage]);
 
-  const orbitDeg   = orbitRot.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
-  const orbit2Deg  = orbit2Rot.interpolate({ inputRange: [0, 1], outputRange: ["360deg", "0deg"] });
-  const scanRingDeg = scanRingRot.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+  // ── Skia derived values — read directly in Canvas render ─────────────────
+
+  // Outer arc transform (rotate around orb center)
+  const outerTransform = useDerivedValue(() => [{ rotate: outerRot.value }]);
+  // Inner arc transform (counter-rotate)
+  const innerTransform = useDerivedValue(() => [{ rotate: innerRot.value }]);
+  // Core glow opacity and radius
+  const coreGlowOpacity = useDerivedValue(() =>
+    interpolate(corePulse.value, [0, 1], [0.08, 0.22])
+  );
+  const coreGlowR = useDerivedValue(() =>
+    interpolate(corePulse.value, [0, 1], [52, 62])
+  );
+  const coreInnerR = useDerivedValue(() =>
+    interpolate(corePulse.value, [0, 1], [20, 23])
+  );
+  // Outer ring pulse
+  const outerRingOpacity = useDerivedValue(() =>
+    interpolate(ringPulse.value, [0, 1], [0.05, 0.11])
+  );
+
+  // ── Static Skia paths (memoized) ──────────────────────────────────────────
+
+  // Outer rotating arc: 300° sweep starting at 0° (3 o'clock)
+  const outerArcPath = useMemo(() => {
+    const r = 108;
+    const p = Skia.Path.Make();
+    p.addArc({ x: cx - r, y: cy - r, width: r * 2, height: r * 2 }, 0, 300);
+    return p;
+  }, [cx, cy]);
+
+  // Inner counter-rotating arc: 200° sweep
+  const innerArcPath = useMemo(() => {
+    const r = 70;
+    const p = Skia.Path.Make();
+    p.addArc({ x: cx - r, y: cy - r, width: r * 2, height: r * 2 }, 40, 200);
+    return p;
+  }, [cx, cy]);
+
+  // Static ring paths
+  const ring1Path = useMemo(() => {
+    const r = 120;
+    const p = Skia.Path.Make();
+    p.addCircle(cx, cy, r);
+    return p;
+  }, [cx, cy]);
+
+  const ring2Path = useMemo(() => {
+    const r = 88;
+    const p = Skia.Path.Make();
+    p.addCircle(cx, cy, r);
+    return p;
+  }, [cx, cy]);
+
+  const ring3Path = useMemo(() => {
+    const r = 56;
+    const p = Skia.Path.Make();
+    p.addCircle(cx, cy, r);
+    return p;
+  }, [cx, cy]);
+
+  // ── Render helpers ────────────────────────────────────────────────────────
 
   const stageCopy = STAGE_COPY[renderStage];
   const stageIdx  = STAGE_ORDER.indexOf(renderStage);
 
   return (
-    <RNAnimated.View
-      style={[
-        styles.container,
-        { opacity: panelOpacity, transform: [{ translateY: panelY }] },
-      ]}
-    >
-      {/* Subtle center glow */}
-      <View style={styles.bgGlow} pointerEvents="none" />
+    <View style={styles.container}>
 
-      {/* Background: blurred photo */}
-      {photoUri ? (
-        <Image
-          source={{ uri: photoUri }}
-          style={StyleSheet.absoluteFillObject}
-          blurRadius={24}
-          resizeMode="cover"
-        />
-      ) : null}
+      {/* ── SKIA CANVAS — crisp GPU-rendered orb ── */}
+      <Canvas style={{ width: screenW, height: CANVAS_H }}>
 
-      {/* Glass blur */}
-      <BlurView intensity={44} tint="dark" style={StyleSheet.absoluteFillObject} />
+        {/* 1. Background ambient glow */}
+        <Circle cx={cx} cy={cy} r={155} color="rgba(255,255,255,0.03)">
+          <BlurMask blur={60} style="normal" />
+        </Circle>
 
-      {/* Dark overlay */}
-      <View style={styles.overlay} />
+        {/* 2. Static concentric rings */}
+        <Path path={ring1Path} color="rgba(255,255,255,0.055)" style="stroke" strokeWidth={1} opacity={outerRingOpacity} />
+        <Path path={ring2Path} color="rgba(255,255,255,0.07)"  style="stroke" strokeWidth={1} />
+        <Path path={ring3Path} color="rgba(255,255,255,0.05)"  style="stroke" strokeWidth={1} />
 
-      {/* ── PHOTO PREVIEW or ORBS ─────────────────────────── */}
-      {photoUri ? (
-        <View style={styles.photoFrame}>
-          {/* Rotating scanning ring */}
-          <RNAnimated.View
-            pointerEvents="none"
-            style={[styles.scanRing, { transform: [{ rotate: scanRingDeg }] }]}
+        {/* 3. Outer rotating arc + orbit dots */}
+        <Group transform={outerTransform} origin={vec(cx, cy)}>
+          <Path
+            path={outerArcPath}
+            color="rgba(255,255,255,0.70)"
+            style="stroke"
+            strokeWidth={1.5}
+            strokeCap="round"
           />
-          {/* Slower counter-rotating ring */}
-          <RNAnimated.View
-            pointerEvents="none"
-            style={[styles.scanRingInner, { transform: [{ rotate: orbit2Deg }] }]}
-          />
-          {/* Circular photo */}
-          <View style={styles.photoCircle}>
-            <Image
-              source={{ uri: photoUri }}
-              style={styles.photoCircleImg}
-              resizeMode="cover"
-            />
-          </View>
-        </View>
-      ) : (
-        <View style={styles.orbContainer}>
-          {/* Pulse rings */}
-          {RINGS.map(({ size }, idx) => (
-            <RNAnimated.View
-              key={idx}
-              pointerEvents="none"
-              style={[
-                styles.ring,
-                {
-                  width: size,
-                  height: size,
-                  borderRadius: size / 2,
-                  opacity: pulseAnims[idx].interpolate({
-                    inputRange: [0, 0.25, 1],
-                    outputRange: [0.55, 0.18, 0],
-                  }),
-                  transform: [
-                    {
-                      scale: pulseAnims[idx].interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0.80, 1.45],
-                      }),
-                    },
-                  ],
-                },
-              ]}
+          {/* 8 outer orbit dots */}
+          {OUTER_DOT_ANGLES.map((angle, i) => (
+            <Circle
+              key={i}
+              cx={cx + Math.cos(angle) * 108}
+              cy={cy + Math.sin(angle) * 108}
+              r={i % 2 === 0 ? 2.8 : 1.8}
+              color={`rgba(255,255,255,${i % 2 === 0 ? 0.55 : 0.28})`}
             />
           ))}
+        </Group>
 
-          {/* Outer orbit: 8 dots */}
-          <RNAnimated.View
-            pointerEvents="none"
-            style={[styles.orbitRing, { transform: [{ rotate: orbitDeg }] }]}
-          >
-            {Array.from({ length: 8 }).map((_, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.orbitDot,
-                  {
-                    transform: [
-                      { rotate: `${i * 45}deg` },
-                      { translateY: -52 },
-                    ],
-                    opacity: i % 2 === 0 ? 0.55 : 0.30,
-                    width: i % 2 === 0 ? 5 : 3,
-                    height: i % 2 === 0 ? 5 : 3,
-                    borderRadius: 3,
-                  },
-                ]}
-              />
-            ))}
-          </RNAnimated.View>
-
-          {/* Inner counter-orbit: 5 dots */}
-          <RNAnimated.View
-            pointerEvents="none"
-            style={[styles.orbitRing, { transform: [{ rotate: orbit2Deg }] }]}
-          >
-            {Array.from({ length: 5 }).map((_, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.orbitDot,
-                  {
-                    transform: [
-                      { rotate: `${i * 72}deg` },
-                      { translateY: -30 },
-                    ],
-                    opacity: 0.40,
-                    width: 3,
-                    height: 3,
-                    borderRadius: 2,
-                  },
-                ]}
-              />
-            ))}
-          </RNAnimated.View>
-
-          {/* Core */}
-          <RNAnimated.View
-            style={[
-              styles.core,
-              {
-                shadowOpacity: coreGlow.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0.25, 0.85],
-                }) as any,
-              },
-            ]}
-          >
-            <RNAnimated.View
-              style={[
-                styles.coreInner,
-                {
-                  opacity: coreGlow.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.75, 1],
-                  }),
-                  transform: [
-                    {
-                      scale: coreGlow.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0.92, 1.06],
-                      }),
-                    },
-                  ],
-                },
-              ]}
+        {/* 4. Inner counter-rotating arc + inner orbit dots */}
+        <Group transform={innerTransform} origin={vec(cx, cy)}>
+          <Path
+            path={innerArcPath}
+            color="rgba(255,255,255,0.38)"
+            style="stroke"
+            strokeWidth={1}
+            strokeCap="round"
+          />
+          {/* 5 inner orbit dots */}
+          {INNER_DOT_ANGLES.map((angle, i) => (
+            <Circle
+              key={i}
+              cx={cx + Math.cos(angle) * 70}
+              cy={cy + Math.sin(angle) * 70}
+              r={1.8}
+              color="rgba(255,255,255,0.35)"
             />
-          </RNAnimated.View>
-        </View>
-      )}
+          ))}
+        </Group>
 
-      {/* ── STAGE TEXT ────────────────────── */}
-      <RNAnimated.View style={[styles.textBlock, { opacity: textOpacityIn }]}>
+        {/* 5. Core outer glow (blurred, breathing) */}
+        <Circle cx={cx} cy={cy} r={coreGlowR} color="rgba(255,255,255,1)" opacity={coreGlowOpacity}>
+          <BlurMask blur={24} style="normal" />
+        </Circle>
+
+        {/* 6. Core inner glow */}
+        <Circle cx={cx} cy={cy} r={28} color="rgba(255,255,255,0.18)">
+          <BlurMask blur={10} style="normal" />
+        </Circle>
+
+        {/* 7. Core ball — crisp, solid */}
+        <Circle cx={cx} cy={cy} r={coreInnerR} color="rgba(255,255,255,0.96)" />
+
+      </Canvas>
+
+      {/* ── STAGE TEXT ── */}
+      <RNAnimated.View style={[styles.textBlock, { opacity: textOpacity }]}>
         <Text style={styles.primaryText}>
           {headline ?? (stageCopy.primary + loadingDots)}
         </Text>
         <Text style={styles.subText}>
           {stageMeta ?? stageCopy.sub}
         </Text>
+        {slowNetwork ? (
+          <View style={styles.weakSignalRow}>
+            <Ionicons name="wifi-outline" size={11} color="rgba(255,165,50,0.70)" />
+            <Text style={styles.weakSignalText}>Connection weak — still searching…</Text>
+          </View>
+        ) : null}
       </RNAnimated.View>
 
-      {/* ── STAGE PROGRESS PILLS ─────────── */}
+      {/* ── STAGE PROGRESS PILLS ── */}
       <View style={styles.stagePills}>
         {PILL_STAGES.map((s, pillIdx) => {
           const isCompleted = stageIdx > STAGE_ORDER.indexOf(s);
@@ -408,16 +361,8 @@ export function LoadingScreen({
                 <RNAnimated.View style={[
                   styles.pillGlowDot,
                   {
-                    opacity: pillGlow.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.4, 1.0],
-                    }),
-                    transform: [{
-                      scale: pillGlow.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0.8, 1.2],
-                      }),
-                    }],
+                    opacity: pillGlow.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1.0] }),
+                    transform: [{ scale: pillGlow.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.2] }) }],
                   },
                 ]} />
               ) : null}
@@ -426,7 +371,7 @@ export function LoadingScreen({
         })}
       </View>
 
-      {/* ── SCAN PROGRESS BAR ────────────── */}
+      {/* ── SCAN PROGRESS BAR ── */}
       <View style={styles.progressTrack}>
         <RNAnimated.View style={[
           styles.progressFill,
@@ -434,17 +379,14 @@ export function LoadingScreen({
         ]} />
       </View>
 
-      {/* ── CANCEL BUTTON (bottom, text-only) ── */}
+      {/* ── CANCEL / RETRY ── */}
       <View style={styles.cancelWrap}>
         <Pressable onPress={onCancel} hitSlop={16}>
           <Text style={styles.cancelText}>Cancel</Text>
         </Pressable>
 
-        {/* Retry: shown conditionally via animated values or showRetry */}
         {retryReveal && retryScale ? (
-          <RNAnimated.View
-            style={{ opacity: retryReveal, transform: [{ scale: retryScale }] }}
-          >
+          <RNAnimated.View style={{ opacity: retryReveal, transform: [{ scale: retryScale }] }}>
             <PressableScale onPress={onRetry} style={styles.retryBtn} scale={0.97} haptic>
               <Ionicons name="refresh" size={17} color={C.text} />
               <Text style={styles.retryText}>Retry</Text>
@@ -457,142 +399,42 @@ export function LoadingScreen({
           </PressableScale>
         ) : null}
       </View>
-    </RNAnimated.View>
+
+    </View>
   );
 }
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    overflow: "hidden",
     backgroundColor: "#000",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: SP.xxxl,
-    paddingHorizontal: SP.xl,
-  },
-  // Subtle center glow behind everything
-  bgGlow: {
-    position: "absolute",
-    top: "20%",
-    alignSelf: "center",
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    backgroundColor: "rgba(255,255,255,0.025)",
-  },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.28)",
   },
 
-  // ── Photo preview frame ─────────────────────────────────────────────────────
-  photoFrame: {
-    width: 120,
-    height: 120,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: SP.lg,
-  },
-  scanRing: {
-    position: "absolute",
-    width: 116,
-    height: 116,
-    borderRadius: 58,
-    borderWidth: 2,
-    borderColor: "transparent",
-    borderTopColor: "rgba(255,255,255,0.70)",
-    borderRightColor: "rgba(255,255,255,0.25)",
-  },
-  scanRingInner: {
-    position: "absolute",
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 1,
-    borderColor: "transparent",
-    borderBottomColor: "rgba(255,255,255,0.40)",
-    borderLeftColor: "rgba(255,255,255,0.15)",
-  },
-  photoCircle: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    overflow: "hidden",
-    borderWidth: 1.5,
-    borderColor: "rgba(255,255,255,0.20)",
-  },
-  photoCircleImg: {
-    width: 88,
-    height: 88,
-  },
-
-  // orb (used when no photo)
-  orbContainer: {
-    width: 120,
-    height: 120,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: SP.lg,
-  },
-  ring: {
-    position: "absolute",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.22)",
-  },
-  orbitRing: {
-    position: "absolute",
-    width: 104,
-    height: 104,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  orbitDot: {
-    position: "absolute",
-    backgroundColor: "rgba(255,255,255,0.70)",
-  },
-  core: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#fff",
-    shadowOffset: { width: 0, height: 0 },
-    shadowRadius: 20,
-    elevation: 0,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.30)",
-  },
-  coreInner: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "rgba(255,255,255,0.94)",
-  },
-
-  // ── Stage text ──────────────────────────────────────────────────────────────
   textBlock: {
     alignItems: "center",
     paddingHorizontal: SP.lg,
     marginBottom: SP.lg,
+    marginTop: 4,
   },
   primaryText: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "700",
     color: "#ffffff",
     textAlign: "center",
     marginBottom: SP.xs,
+    letterSpacing: 0.2,
   },
   subText: {
     fontSize: 13,
-    color: "rgba(255,255,255,0.45)",
+    color: "rgba(255,255,255,0.42)",
     textAlign: "center",
     lineHeight: 18,
   },
 
-  // ── Stage pills ─────────────────────────────────────────────────────────────
   stagePills: {
     flexDirection: "row",
     gap: SP.sm,
@@ -616,32 +458,28 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.55)",
   },
 
-  // ── Progress bar ────────────────────────────────────────────────────────────
   progressTrack: {
-    width: "100%",
-    height: 1,
-    backgroundColor: "rgba(255,255,255,0.08)",
+    width: "72%",
+    height: 1.5,
+    backgroundColor: "rgba(255,255,255,0.07)",
     borderRadius: 1,
     marginBottom: SP.xl,
     overflow: "hidden",
-    marginTop: 24,
   },
   progressFill: {
-    height: 1,
-    backgroundColor: "rgba(255,255,255,0.55)",
+    height: 1.5,
+    backgroundColor: "rgba(255,255,255,0.50)",
     borderRadius: 1,
   },
 
-  // ── Cancel (bottom, text-only) ──────────────────────────────────────────────
   cancelWrap: {
     flexDirection: "row",
     alignItems: "center",
     gap: SP.lg,
-    marginTop: SP.sm,
   },
   cancelText: {
     fontSize: 14,
-    color: "rgba(255,255,255,0.4)",
+    color: "rgba(255,255,255,0.38)",
     letterSpacing: 0.2,
   },
   retryBtn: {
@@ -659,5 +497,17 @@ const styles = StyleSheet.create({
   retryText: {
     ...TY.label,
     color: C.text,
+  },
+
+  weakSignalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: SP.sm,
+  },
+  weakSignalText: {
+    fontSize: 11,
+    color: "rgba(255,165,50,0.70)",
+    letterSpacing: 0.1,
   },
 });

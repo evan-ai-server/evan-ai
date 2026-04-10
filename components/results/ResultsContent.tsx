@@ -16,7 +16,6 @@ import {
   Image,
   StyleSheet,
   Animated as RNAnimated,
-  Easing,
   Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -29,7 +28,6 @@ import Reanimated, {
   withSequence,
   interpolate,
   Extrapolation,
-  runOnJS,
 } from "react-native-reanimated";
 import { LoadingScreen, LoadingStage } from "../scan/LoadingScreen";
 import { CardDeck } from "./CardDeck";
@@ -37,7 +35,7 @@ import { ResultsDock } from "./ResultsDock";
 import { AskAIDrawer, ScanContext } from "./AskAIDrawer";
 import { AutoListingDrawer } from "./AutoListingDrawer";
 import { OfflineBanner } from "./OfflineBanner";
-import { C, SP, R, TY, SH, confidenceLabel, fmtMoney } from "../design/DS";
+import { C, SP, R, TY, confidenceLabel } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
 
 interface ResultsContentProps {
@@ -53,6 +51,7 @@ interface ResultsContentProps {
   scanStage?: LoadingStage;
   scanStageMeta?: string;
   showRetryWhileLoading?: boolean;
+  slowNetwork?: boolean;
   loadingDots?: string;
   retryReveal?: RNAnimated.Value;
   retryScale?: RNAnimated.Value;
@@ -67,6 +66,9 @@ interface ResultsContentProps {
   weaponStats?: any;
   intelLevel?: number;
   lastScan?: any;
+
+  // ── User identity ──────────────────────────
+  userId?: string | null;
 
   // ── Watchlist ──────────────────────────────
   watchlist?: any[];
@@ -106,15 +108,17 @@ export function ResultsContent({
   scanStage = "idle",
   scanStageMeta,
   showRetryWhileLoading,
+  slowNetwork,
   loadingDots = "",
   retryReveal,
   retryScale,
-  resultEntry,
-  neuralPulse,
-  aiRevealActive,
+  resultEntry: _resultEntry,
+  neuralPulse: _neuralPulse,
+  aiRevealActive: _aiRevealActive,
   weaponStats,
   intelLevel,
   lastScan,
+  userId,
   onCancel,
   onRetry,
   onNewScan,
@@ -178,6 +182,7 @@ export function ResultsContent({
       loadingOpacity.value = withTiming(1, { duration: 380 });
       loadingScale.value = withSpring(1, { damping: 22, stiffness: 200 });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingResults]);
 
   // Transition: loading → results
@@ -206,6 +211,7 @@ export function ResultsContent({
         withSpring(1, { mass: 0.8, damping: 20, stiffness: 200 }),
       );
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingResults, activeResult]);
 
   // ── Animated styles ───────────────────────────────────────────────────────
@@ -291,6 +297,7 @@ export function ResultsContent({
             onCancel={onCancel}
             onRetry={onRetry}
             showRetry={showRetryWhileLoading}
+            slowNetwork={slowNetwork}
             retryReveal={retryReveal}
             retryScale={retryScale}
             loadingDots={loadingDots}
@@ -383,6 +390,8 @@ export function ResultsContent({
             <ResultsDock
               activeResult={activeResult}
               currentCard={currentCard}
+              userId={userId ?? null}
+              apiBase={resolvedApiBase}
               onOpenListing={handleOpenListing}
               onNewScan={onNewScan}
               onTrack={() => onTrack(activeResult)}
@@ -468,7 +477,7 @@ export function ResultsContent({
 function IdentityHeader({
   activeResult,
   lastScan,
-  weaponStats,
+  weaponStats: _weaponStats,
   intelLevel,
 }: {
   activeResult: any;
@@ -530,7 +539,7 @@ function IdentityHeader({
               <>
                 <Text style={styles.metaSep}>·</Text>
                 <Text numberOfLines={1} style={[styles.identityMetaText, { flex: 1 }]}>
-                  "{query}"
+                  &quot;{query}&quot;
                 </Text>
               </>
             ) : null}
@@ -556,7 +565,7 @@ function EmptyState({ onNewScan }: { onNewScan: () => void }) {
     <View style={styles.emptyWrap}>
       <Text style={styles.emptyTitle}>Ready.</Text>
       <Text style={styles.emptyMsg}>
-        Scan an item and enter the price you're paying — we'll find cheaper matches.
+        Scan an item and enter the price you&apos;re paying — we&apos;ll find cheaper matches.
       </Text>
       <PressableScale onPress={onNewScan} style={styles.emptyCTA} scale={0.96} haptic>
         <Ionicons name="camera-outline" size={18} color="#000" />

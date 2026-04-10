@@ -1,6 +1,10 @@
 import React, { useCallback, useMemo, useEffect, useRef, useState } from "react";
 import { ResultsContent } from "../components/results/ResultsContent";
-import { OfflineBanner } from "../components/results/OfflineBanner";
+import {
+  useNetworkStatus,
+  useOfflineQueue,
+  type RunScanFn,
+} from "../components/offline";
 import { ReceiptResultPanel } from "../components/results/ReceiptResultPanel";
 import { FlipCalculatorPanel } from "../components/results/FlipCalculatorPanel";
 import { DeepAuthCard, type DeepAuthResult } from "../components/results/DeepAuthCard";
@@ -28,6 +32,7 @@ import {
   Platform,
   Modal,
   ScrollView,
+  KeyboardAvoidingView,
   Linking,
   Keyboard,
   Alert,
@@ -39,6 +44,7 @@ import {
   AccessibilityInfo,
   Animated as RNAnimated,
   useWindowDimensions,
+  PanResponder,
 } from "react-native";
 
 import {
@@ -181,14 +187,22 @@ const safeNum = (n: any) =>
   Number.isFinite(Number(n)) ? Number(n) : 0;
 // saveIntel stub removed — real implementation exists later
 const STORAGE_KEY = "EVANAI_APP_STATE_V2";
-const PROD_API_BASE = "https://YOUR_PROD_DOMAIN_HERE"; // <- replace
+// Env-driven API base — set EXPO_PUBLIC_API_URL in .env / app.config.js for prod.
+// Set EXPO_PUBLIC_DEV_API_URL for local dev (defaults to localhost:3001).
+const PROD_API_BASE =
+  process.env.EXPO_PUBLIC_API_URL || "https://YOUR_PROD_DOMAIN_HERE";
 if (!__DEV__) {
   if (!PROD_API_BASE || PROD_API_BASE.includes("YOUR_PROD_DOMAIN_HERE")) {
-    throw new Error("PROD_API_BASE is not set for production.");
+    throw new Error(
+      "PROD_API_BASE is not set. Add EXPO_PUBLIC_API_URL to your environment."
+    );
   }
 }
-const STAGING_API_BASE = "https://YOUR_STAGING_DOMAIN_HERE"; // <- optional
-const DEV_API_BASE = "http://192.168.1.227:3001"; // physical phone on same Wi-Fi
+const _STAGING_API_BASE =
+  process.env.EXPO_PUBLIC_STAGING_API_URL || "https://YOUR_STAGING_DOMAIN_HERE";
+// Dev: prefer env var, fallback localhost so the app works without LAN config.
+const DEV_API_BASE =
+  process.env.EXPO_PUBLIC_DEV_API_URL || "http://localhost:3001";
 const API_BASE = __DEV__ ? DEV_API_BASE : PROD_API_BASE;
 // Safe fallback used before state initializes
 const SAFE_API_BASE = API_BASE;
@@ -209,14 +223,14 @@ const smoothConfidence = (c) => {
 const CONFIDENCE_THRESHOLD = 0.30;
 const MAX_VISION_RETRIES = 1;
 
-// ✅ Free cycle reset window (30 days)
-const FREE_CYCLE_MS = 30 * 24 * 60 * 60 * 1000;
+// ✅ Free cycle reset window (24 hours — server-side quota resets at midnight UTC)
+const FREE_CYCLE_MS = 24 * 60 * 60 * 1000;
 // -------------------------
 // LOADING UX CAPS
 // -------------------------
-const SOFT_SCAN_UI_MS = 5500;        // show retry, but DO NOT abort yet
-const HARD_SCAN_ABORT_MS = 25000;    // real kill switch
-const MARKET_REQUEST_ABORT_MS = 22000;
+const SOFT_SCAN_UI_MS = 16000;       // show retry, but DO NOT abort yet — oracle can take 10-15s
+const HARD_SCAN_ABORT_MS = 38000;    // real kill switch — oracle GPT can take 10-15s
+const MARKET_REQUEST_ABORT_MS = 28000; // oracle fallback needs ~15s; give 28s total
 const RETRY_REVEAL_MS = 2500;
 
 // money
@@ -227,7 +241,7 @@ const PRO_YEARLY_PRICE = 24.99;
 // ✅ HAPTICS (SAFE OPTIONAL)
 // -------------------------
 const hapticSelect = () => { try { Haptics.selectionAsync(); } catch {} };
-const hapticShutter = () => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {} };
+const _hapticShutter = () => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {} };
 const hapticSoftSnap = () => {
   try { Haptics.selectionAsync(); } catch {}
   setTimeout(() => {
@@ -238,7 +252,7 @@ const hapticTick = () => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle
 // -------------------------
 // ✅ LOGOS (remote PNG so no missing asset crashes)
 // -------------------------
-const LOGO_URIS = {
+const _LOGO_URIS = {
   ebay: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/EBay_logo.svg/320px-EBay_logo.svg.png",
   google:
     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Google_%22G%22_Logo.svg/256px-Google_%22G%22_Logo.svg.png",
@@ -282,7 +296,7 @@ const safeMoney = (v: any) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const priceLadderData = (r: any) => {
+const _priceLadderData = (r: any) => {
   const paying = safeMoney(r?.scannedPrice);
   const cheapest = safeMoney(r?.price);
   const avg = safeMoney(r?.avgMarket || r?.estimatedResale || 0);
@@ -398,7 +412,7 @@ const computeInsights = ({
     authenticityScore,
   };
 };
-const buildShareCardText = (card) => {
+const _buildShareCardText = (card) => {
   if (!card) return "";
   const lines = [];
   lines.push("EVAN AI");
@@ -419,7 +433,7 @@ const buildShareCardText = (card) => {
 // -------------------------
 // RESULTS: SMALL RESULT CARD
 // -------------------------
-const renderSmallResultCard = (item, idx) => {
+const _renderSmallResultCard = (item, idx) => {
   if (!item) return null;
 const title = item.title || item.itemName || "Listing";
 const rawUrl = item.url || item.buyLink || item.link || null;
@@ -548,7 +562,7 @@ const requestUnverifiedLinkPrompt = (payload) => {
       __unverifiedLinkPrompt(payload);
       return true;
     }
-  } catch (e) {}
+  } catch (_e) {}
   return false;
 };
 async function safeOpenUrl(url, label) {
@@ -732,7 +746,7 @@ class AppErrorBoundary extends React.Component<
     return this.props.children;
   }
 }
-const track = async (event, props = {}) => {
+const _track = async (event, props = {}) => {
   try {
     // local debug
     console.log("📈", event, props);
@@ -744,7 +758,7 @@ const track = async (event, props = {}) => {
     // });
   } catch {}
 };
-class ErrorBoundary extends React.Component<
+class _ErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { hasError: boolean; message?: string }
 > {
@@ -934,7 +948,7 @@ const TUTORIAL_STEPS = [
     accentColor: "#82c8ff",
     subtitle: "FREE TO START",
     title: "You're ready\nto go.",
-    body: "Start with 6 free scans — no credit card needed. Upgrade to Pro for unlimited scans, price alerts, and watchlist sync.",
+    body: "Start with 2 free scans per day — no credit card, no commitment. Upgrade to Pro for unlimited scans, price alerts, and watchlist sync.",
   },
 ] as const;
 
@@ -1072,6 +1086,7 @@ React.useEffect(() => {
     trace.value = 0;
     shimmer.value = 0;
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [active, onFinished]);
 
 const dimOpacity = 0.48;
@@ -1215,7 +1230,7 @@ const [batchQueue, setBatchQueue] = useState<BatchJob[]>([]);
 const [batchRunning, setBatchRunning] = useState(false);
 const [cloudImportOpen, setCloudImportOpen] = useState(false);
 const [cloudImportText, setCloudImportText] = useState("");
-const [refState, setRefState] = useState<{ code: string; earned: number; used: number }>({
+const [refState, _setRefState] = useState<{ code: string; earned: number; used: number }>({
   code: "",
   earned: 0,
   used: 0,
@@ -1266,7 +1281,7 @@ const I_STEPS = useMemo(() => [
     accentColor: "#ffffff",
     iconColor: "white",
     icon: "camera-outline" as const,
-    spotlight: { x: SW / 2 - 62, y: SH - CAMERA_CONTROLS_BOTTOM - 62, w: 124, h: 124, r: 62 },
+    spotlight: { x: SW / 2 - 62, y: SH - CAMERA_CONTROLS_BOTTOM - 112, w: 124, h: 124, r: 62 },
     tooltipTop: true,
     isLast: false,
   },
@@ -1274,7 +1289,7 @@ const I_STEPS = useMemo(() => [
     tab: "camera" as string | null,
     title: "Track your\ndeal intelligence.",
     subtitle: "SCAN COUNTER",
-    body: "Your scan count and Pro status live here. Tap to upgrade anytime — unlimited scans and price alerts.",
+    body: "Your scan count and Pro status live here. 2 free scans per day, resets at midnight. Tap to upgrade for unlimited access.",
     accentColor: "#50ff96",
     iconColor: "#50ff96",
     icon: "pulse-outline" as const,
@@ -1302,7 +1317,7 @@ const I_STEPS = useMemo(() => [
     accentColor: "#ffd060",
     iconColor: "#ffd060",
     icon: "heart-outline" as const,
-    spotlight: { x: 16, y: TOP + 56, w: SW - 32, h: Math.round(SH * 0.32), r: 20 },
+    spotlight: { x: 16, y: TOP + 56, w: SW - 32, h: Math.round(SH * 0.22), r: 20 },
     tooltipTop: false,
     isLast: false,
   },
@@ -1310,7 +1325,7 @@ const I_STEPS = useMemo(() => [
     tab: "camera" as string | null,
     title: "You're ready\nto hunt deals.",
     subtitle: "LET'S GO",
-    body: "6 free scans loaded and waiting. Every item you see is a potential steal, flip, or fortune. Start now.",
+    body: "7 free scans loaded and waiting. Every item you see is a potential steal, flip, or fortune. Start now.",
     accentColor: "#50ff96",
     iconColor: "#50ff96",
     icon: "flash-outline" as const,
@@ -1477,7 +1492,7 @@ useEffect(() => {
 }, [userId]);
 
   const scanReqIdRef = useRef(0);
-const activeAbortRef = useRef<AbortController | null>(null);
+const _activeAbortRef = useRef<AbortController | null>(null);
 const isMountedRef = useRef(true);
 useEffect(() => {
   isMountedRef.current = true;
@@ -1525,19 +1540,19 @@ const isReqAlive = (reqId: number) =>
     };
   }, []);
 const [tab, setTab] = useState("camera");
-const [neuralLearningLevel, setNeuralLearningLevel] = useState(0);
+const [_neuralLearningLevel, setNeuralLearningLevel] = useState(0);
 
 // ✅ MUST exist before showOnlyActiveTab reads it
 const tabSwitchingRef = useRef(false);
 const pendingTabRef = useRef<any>(null);
-const lastTabTapRef = useRef<number>(0); // ✅ spam-tap throttle
+const _lastTabTapRef = useRef<number>(0); // ✅ spam-tap throttle
 const goTabLastRef = useRef(0);
 
 // ✅ Anti-spam tab switching (prevents lag + overlay buildup)
 const lastTabPressRef = useRef(0);
 const TAB_COOLDOWN_MS = 260;
 
-const showOnlyActiveTab = true;
+const _showOnlyActiveTab = true;
 
 const tabFade = useRef(new RNAnimated.Value(1)).current; // ✅ never start hidden
 
@@ -1545,6 +1560,7 @@ const tabFade = useRef(new RNAnimated.Value(1)).current; // ✅ never start hidd
   const [loadingResults, setLoadingResults] = useState(false);
   const [loadingPhotoUri, setLoadingPhotoUri] = useState(null);
   const [showRetryWhileLoading, setShowRetryWhileLoading] = useState(false);
+  const [slowNetwork, setSlowNetwork] = useState(false);
   const [activeResult, setActiveResult] = useState(null);
   const activeScanReqIdRef = useRef<number>(0);
 
@@ -1556,11 +1572,11 @@ useEffect(() => {
   });
 }, [loadingResults, loadingOpacity]);
 
-const loadingFadeStyle = useAnimatedStyle(() => ({
+const _loadingFadeStyle = useAnimatedStyle(() => ({
   opacity: loadingOpacity.value,
 }));
 
-  const confidenceBreath = useRef(new RNAnimated.Value(0)).current;
+  const _confidenceBreath = useRef(new RNAnimated.Value(0)).current;
   const uiDepth = useRef(new RNAnimated.Value(0)).current;
   const cameraGlassDepth = useRef(new RNAnimated.Value(0)).current;
   const uiBreath = useRef(new RNAnimated.Value(0)).current;
@@ -1585,12 +1601,17 @@ useEffect(() => {
 
   loop.start();
   return () => loop.stop();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
   const neuralAura = useRef(new RNAnimated.Value(0)).current;
 const [showOnboard, setShowOnboard] = useState(false);
 const onboardOpacity = useRef(new RNAnimated.Value(0)).current;
-const onboardScale = useRef(new RNAnimated.Value(0.96)).current;
-const onboardGlow = useRef(new RNAnimated.Value(0)).current;
+const tutorialOpacity = useRef(new RNAnimated.Value(1)).current;
+const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
+const welcomeScreenOp = useRef(new RNAnimated.Value(0)).current;
+const [cameraDelayedActive, setCameraDelayedActive] = useState(false);
+const _onboardScale = useRef(new RNAnimated.Value(0.96)).current;
+const _onboardGlow = useRef(new RNAnimated.Value(0)).current;
 const onboardGlowLoopRef = useRef<any>(null);
 const [tutorialStep, setTutorialStep] = useState(0);
 const tutorialContentOp = useRef(new RNAnimated.Value(0)).current;
@@ -1610,6 +1631,11 @@ const iTutSpotOp = useRef(new RNAnimated.Value(0)).current;
 const iTutRingScale = useRef(new RNAnimated.Value(1.0)).current;
 const iTutRingOpacity = useRef(new RNAnimated.Value(0)).current;
 const iTutRingPulseRef = useRef<any>(null);
+// Expanding ripple rings for spotlight steps
+const iTutRipple0 = useRef(new RNAnimated.Value(0)).current;
+const iTutRipple1 = useRef(new RNAnimated.Value(0)).current;
+const iTutRipple2 = useRef(new RNAnimated.Value(0)).current;
+const iTutRippleRef = useRef<any>(null);
 
 // ── Achievement toast (dopamine system) ─────────────────────────────────
 const [achieveToast, setAchieveToast] = useState<{ icon: string; title: string; body: string; color: string } | null>(null);
@@ -1627,19 +1653,43 @@ const [rivalryCount, setRivalryCount] = useState<number>(0);
 const [deadStockData, setDeadStockData] = useState<{ daysListed: number; suggestedOffer: number; leveragePct: number; message: string; urgencyLevel: string } | null>(null);
 
 // ── Feature: Regret Tracker ──────────────────────────────────────────────
-const [regretItems, setRegretItems] = useState<Array<{ itemName: string; passedPrice: number; currentPrice: number; category: string; passedAt: number }>>([]);
+const [regretItems, setRegretItems] = useState<{ itemName: string; passedPrice: number; currentPrice: number; category: string; passedAt: number }[]>([]);
 const [regretAlertOpen, setRegretAlertOpen] = useState(false);
 const regretAlertOp = useRef(new RNAnimated.Value(0)).current;
 const regretAlertY = useRef(new RNAnimated.Value(80)).current;
 
 // ── Feature: Thrift Heat Map ─────────────────────────────────────────────
 const [thriftHeatOpen, setThriftHeatOpen] = useState(false);
-const [thriftStores, setThriftStores] = useState<Array<{ name: string; emoji: string; heat: string; heatScore: number; isHotNow: boolean; isHotToday: boolean; tip: string; tagline: string; nextHotDay: string | null }>>([]);
+const [thriftStores, setThriftStores] = useState<{ name: string; emoji: string; heat: string; heatScore: number; isHotNow: boolean; isHotToday: boolean; tip: string; tagline: string; nextHotDay: string | null }[]>([]);
 const thriftHeatOp = useRef(new RNAnimated.Value(0)).current;
 const thriftHeatY = useRef(new RNAnimated.Value(60)).current;
+const heatMapHeightRef = useRef(500);
+const heatMapHeightAnim = useRef(new RNAnimated.Value(500)).current;
+const heatMapPanResponder = useRef(PanResponder.create({
+  onStartShouldSetPanResponder: () => true,
+  onPanResponderMove: (_, g) => {
+    const newH = Math.max(250, Math.min(800, heatMapHeightRef.current - g.dy));
+    heatMapHeightAnim.setValue(newH);
+  },
+  onPanResponderRelease: (_, g) => {
+    const newH = heatMapHeightRef.current - g.dy;
+    if (newH > 800) {
+      RNAnimated.spring(heatMapHeightAnim, { toValue: 500, useNativeDriver: false }).start();
+    } else if (newH < 250) {
+      // close
+      RNAnimated.parallel([
+        RNAnimated.timing(thriftHeatOp, { toValue: 0, duration: 220, useNativeDriver: true }),
+        RNAnimated.timing(thriftHeatY, { toValue: 60, duration: 220, useNativeDriver: true }),
+      ]).start(() => setThriftHeatOpen(false));
+    } else {
+      heatMapHeightRef.current = newH;
+      RNAnimated.spring(heatMapHeightAnim, { toValue: newH, useNativeDriver: false }).start();
+    }
+  },
+})).current;
 
 // Feature 6: Lowball Script Generator
-const [lowballScripts, setLowballScripts] = useState<Array<{ platform: string; tone: string; message: string }>>([]);
+const [lowballScripts, setLowballScripts] = useState<{ platform: string; tone: string; message: string }[]>([]);
 const [lowballOpen, setLowballOpen] = useState(false);
 const lowballOp = useRef(new RNAnimated.Value(0)).current;
 const lowballY = useRef(new RNAnimated.Value(60)).current;
@@ -1659,7 +1709,7 @@ const gotAwayOp = useRef(new RNAnimated.Value(0)).current;
 const gotAwayY = useRef(new RNAnimated.Value(60)).current;
 
 // Feature 11: Scan Graveyard
-const [graveyardItems, setGraveyardItems] = useState<Array<{ itemName: string; originalPrice: number; currentEstimate: number; dropPct: number; ageDays: number; message: string }>>([]);
+const [graveyardItems, setGraveyardItems] = useState<{ itemName: string; originalPrice: number; currentEstimate: number; dropPct: number; ageDays: number; message: string }[]>([]);
 const [graveyardOpen, setGraveyardOpen] = useState(false);
 const graveyardOp = useRef(new RNAnimated.Value(0)).current;
 const graveyardY = useRef(new RNAnimated.Value(60)).current;
@@ -1684,20 +1734,20 @@ const [saturation, setSaturation] = useState<{ saturationPct: number; level: str
 
 // Intel Signal Drawer
 const [intelExpanded, setIntelExpanded] = useState(false);
-const intelExpandOp = useRef(new RNAnimated.Value(0)).current;
-const intelExpandH = useRef(new RNAnimated.Value(0)).current;
+const _intelExpandOp = useRef(new RNAnimated.Value(0)).current;
+const _intelExpandH = useRef(new RNAnimated.Value(0)).current;
 
 const [showSplash, setShowSplash] = useState(true);
 // ✅ Keep splash visible minimum time
-const splashStartRef = useRef(Date.now());
-const SPLASH_MIN_MS = 3500;
+const _splashStartRef = useRef(Date.now());
+const SPLASH_MIN_MS = 4500;
 const [loadingDots, setLoadingDots] = useState(".");
 const [splashLoadingDots, setSplashLoadingDots] = useState(".");
 const splashOpacity = useRef(new RNAnimated.Value(1)).current; 
 const logoScale = useRef(new RNAnimated.Value(0.9)).current;
 const dotY = useRef(new RNAnimated.Value(0)).current;
 const splashDots = useRef(new RNAnimated.Value(0)).current;
-const [splashDotCount, setSplashDotCount] = useState(1);
+const [_splashDotCount, setSplashDotCount] = useState(1);
 const [splashInfoOpen, setSplashInfoOpen] = useState(false);
 const splashOrbScale   = useRef(new RNAnimated.Value(0.85)).current;
 const splashOrbOpacity = useRef(new RNAnimated.Value(0)).current;
@@ -1712,8 +1762,8 @@ const appStateRef = useRef(AppState.currentState);
 // 🔥 APPLE MICRO-PHYSICS (PHASE 1)
 const breathingGlow = useRef(new RNAnimated.Value(0)).current;
 const neuralPulse = useRef(new RNAnimated.Value(0)).current;
-const glassShift = useRef(new RNAnimated.Value(0)).current;
-const cameraPointerEvents = tab === "camera" ? "auto" : "none";
+const _glassShift = useRef(new RNAnimated.Value(0)).current;
+const _cameraPointerEvents = tab === "camera" ? "auto" : "none";
 
   useEffect(() => {
   
@@ -1788,6 +1838,7 @@ return () => {
     neuralAura.stopAnimation();
   } catch {}
 };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
 
@@ -1824,6 +1875,7 @@ RNAnimated.parallel([
     useNativeDriver: true,
   }),
 ]).start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [showSplash]);
 
 // ===============================
@@ -1833,23 +1885,24 @@ RNAnimated.parallel([
 const [isPro, setIsPro] = useState(false);
 const [scansUsed, setScansUsed] = useState(0);
 const [bonusScans, setBonusScans] = useState<number>(0);
-const [isOnline, setIsOnline] = useState(true);
-const [offlineQueueCount, setOfflineQueueCount] = useState(0);
-const drainQueueInFlightRef = React.useRef(false);
+const [guestId, setGuestId] = useState<string | null>(null);
+const [scanResetAt, setScanResetAt] = useState<string | null>(null); // ISO string from server
+// isOnline / pendingCount / offlineItems now come from useNetworkStatus + useOfflineQueue hooks
+// (declared after resolvedApiBase below)
 
-// Global FREE_SCAN_LIMIT is the source of truth (currently 6)
+// Global FREE_SCAN_LIMIT — 2 free scans per day (server-side enforced)
 // ✅ crash-proof: FREE_SCAN_LIMIT may be declared later in this file
 
-const FREE_SCAN_LIMIT_SAFE = 6;
+const FREE_SCAN_LIMIT_SAFE = 2;
 
 const freeScansRemaining = Math.max(0, FREE_SCAN_LIMIT_SAFE + (bonusScans || 0) - scansUsed);
 const hasUnlimited = isPro === true;
-const canScan = hasUnlimited || freeScansRemaining > 0;
+const _canScan = hasUnlimited || freeScansRemaining > 0;
 
-const totalFreeScans = FREE_SCAN_LIMIT_SAFE + (bonusScans || 0);
-const demoLabel = isPro
+const _totalFreeScans = FREE_SCAN_LIMIT_SAFE + (bonusScans || 0);
+const _demoLabel = isPro
   ? "Pro · Unlimited"
-  : `${scansUsed} / ${totalFreeScans} free scans`;
+  : `${scansUsed} / ${FREE_SCAN_LIMIT_SAFE} free scans`;
 
 const [previewImageUri, setPreviewImageUri] = useState(null);
 const previewAnim = useRef(new RNAnimated.Value(0)).current;
@@ -1892,7 +1945,7 @@ const trackCategoryScan = useCallback(async (category: string) => {
   try {
     const key = "EVAN_FATIGUE_SCANS_V1";
     const raw = await AsyncStorage.getItem(key);
-    const data: Array<{ category: string; ts: number }> = raw ? JSON.parse(raw) : [];
+    const data: { category: string; ts: number }[] = raw ? JSON.parse(raw) : [];
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const fresh = data.filter(d => d.ts > weekAgo);
     fresh.push({ category: category.toLowerCase(), ts: Date.now() });
@@ -1992,7 +2045,7 @@ const closeLowball = useCallback(() => {
 const computeFlipPersonality = useCallback(async () => {
   try {
     const raw = await AsyncStorage.getItem("EVAN_FATIGUE_SCANS_V1");
-    const scans: Array<{ category: string; ts: number }> = raw ? JSON.parse(raw) : [];
+    const scans: { category: string; ts: number }[] = raw ? JSON.parse(raw) : [];
     const total = scans.length;
     const bought = 0; // we track scans, not purchases — bought is always 0 for now
     const now = Date.now();
@@ -2021,7 +2074,7 @@ const computeFlipPersonality = useCallback(async () => {
 }, []);
 
 // Feature 8: check condition drift on watchlist
-const checkConditionDrift = useCallback((itemName: string, storedCondition: string, currentCondition: string) => {
+const _checkConditionDrift = useCallback((itemName: string, storedCondition: string, currentCondition: string) => {
   if (!storedCondition || !currentCondition) return;
   const downgrade = ["like new", "excellent", "very good", "good", "fair", "poor", "for parts"];
   const storedIdx = downgrade.findIndex(c => storedCondition.toLowerCase().includes(c));
@@ -2072,7 +2125,7 @@ const closeGotAway = useCallback(() => {
 const openGraveyard = useCallback(async () => {
   try {
     const raw = await AsyncStorage.getItem("EVAN_REGRET_V1");
-    const passed: Array<{ itemName: string; passedPrice: number; category: string; passedAt: number }> = raw ? JSON.parse(raw) : [];
+    const passed: { itemName: string; passedPrice: number; category: string; passedAt: number }[] = raw ? JSON.parse(raw) : [];
     if (passed.length > 0) {
       const res = await apiFetch("/intel/scan-graveyard", {
         method: "POST",
@@ -2137,7 +2190,7 @@ const closeSnipe = useCallback(() => {
 const checkDuplicateScan = useCallback(async (itemName: string, price: number) => {
   try {
     const raw = await AsyncStorage.getItem("EVAN_SCAN_HISTORY_V1");
-    const history: Array<{ itemName: string; price: number; scannedAt: number; category: string }> = raw ? JSON.parse(raw) : [];
+    const history: { itemName: string; price: number; scannedAt: number; category: string }[] = raw ? JSON.parse(raw) : [];
     const res = await apiFetch("/intel/duplicate-scan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2155,7 +2208,7 @@ const checkDuplicateScan = useCallback(async (itemName: string, price: number) =
 const computeProfitPerHour = useCallback(async () => {
   try {
     const raw = await AsyncStorage.getItem("EVAN_FLIP_SESSIONS_V1");
-    const sessions: Array<{ buyPrice: number; sellPrice: number; scanMins: number; listMins: number; shipMins: number }> = raw ? JSON.parse(raw) : [];
+    const sessions: { buyPrice: number; sellPrice: number; scanMins: number; listMins: number; shipMins: number }[] = raw ? JSON.parse(raw) : [];
     if (sessions.length === 0) {
       setProfitPerHour({
         effectiveHourlyRate: 0,
@@ -2205,6 +2258,7 @@ const checkCategorySaturation = useCallback(async (category: string) => {
   } catch {}
 }, []);
 
+// eslint-disable-next-line react-hooks/exhaustive-deps
 useEffect(() => { computeFlipPersonality(); }, []);
 
 const skipOnboard = async () => {
@@ -2238,8 +2292,28 @@ const advanceTutorialStep = () => {
 };
 
 const openTutorial = () => {
+  tutorialOpacity.setValue(0);
   openInteractiveTutorial();
+  RNAnimated.timing(tutorialOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
 };
+
+// ── Tutorial confirm modal animation ────────────────────────────────────────
+useEffect(() => {
+  if (tutorialConfirmOpen) {
+    tutorialConfirmOp.setValue(0);
+    tutorialConfirmY.setValue(28);
+    RNAnimated.parallel([
+      RNAnimated.timing(tutorialConfirmOp, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      RNAnimated.spring(tutorialConfirmY, { toValue: 0, damping: 22, stiffness: 220, useNativeDriver: true }),
+    ]).start();
+  } else {
+    RNAnimated.parallel([
+      RNAnimated.timing(tutorialConfirmOp, { toValue: 0, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+      RNAnimated.timing(tutorialConfirmY, { toValue: 16, duration: 180, useNativeDriver: true }),
+    ]).start();
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [tutorialConfirmOpen]);
 
 // ── Interactive tutorial functions ──────────────────────────────────────
 const showAchievement = useCallback((toast: { icon: string; title: string; body: string; color: string }) => {
@@ -2261,6 +2335,7 @@ const showAchievement = useCallback((toast: { icon: string; title: string; body:
 
 const closeInteractiveTutorial = useCallback(() => {
   try { iTutRingPulseRef.current?.stop?.(); } catch {}
+  try { iTutRippleRef.current?.stop?.(); } catch {}
   RNAnimated.parallel([
     RNAnimated.timing(iTutBgOp, { toValue: 0, duration: 280, useNativeDriver: true }),
     RNAnimated.timing(iTutCardOp, { toValue: 0, duration: 200, useNativeDriver: true }),
@@ -2305,8 +2380,44 @@ const startITutRingPulse = useCallback(() => {
   pulse.start();
 }, [iTutRingOpacity, iTutRingScale]);
 
+const stopITutRipple = useCallback(() => {
+  try { iTutRippleRef.current?.stop?.(); } catch {}
+  iTutRipple0.setValue(0);
+  iTutRipple1.setValue(0);
+  iTutRipple2.setValue(0);
+}, [iTutRipple0, iTutRipple1, iTutRipple2]);
+
+const startITutRipple = useCallback(() => {
+  stopITutRipple();
+  // Each ripple animates from 0→1, staggered by 700ms; loop indefinitely
+  const makeRippleLoop = (val: ReturnType<typeof useRef<any>>["current"], delay: number) => {
+    val.setValue(0);
+    const loop = RNAnimated.loop(
+      RNAnimated.sequence([
+        RNAnimated.delay(delay),
+        RNAnimated.timing(val, {
+          toValue: 1,
+          duration: 1600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    return loop;
+  };
+  const r0 = makeRippleLoop(iTutRipple0, 0);
+  const r1 = makeRippleLoop(iTutRipple1, 550);
+  const r2 = makeRippleLoop(iTutRipple2, 1100);
+  r0.start();
+  r1.start();
+  r2.start();
+  // Store refs so we can stop all three
+  iTutRippleRef.current = { stop: () => { r0.stop(); r1.stop(); r2.stop(); } };
+}, [iTutRipple0, iTutRipple1, iTutRipple2, stopITutRipple]);
+
 const goToITutStep = useCallback((nextStep: number) => {
   try { Haptics.selectionAsync(); } catch {}
+  try { iTutRippleRef.current?.stop?.(); } catch {}
   RNAnimated.parallel([
     RNAnimated.timing(iTutCardOp, { toValue: 0, duration: 150, useNativeDriver: true }),
     RNAnimated.timing(iTutCardY, { toValue: -12, duration: 150, useNativeDriver: true }),
@@ -2341,7 +2452,9 @@ useEffect(() => {
       openTutorial();
     } catch {}
   })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   return () => { alive = false; try { onboardGlowLoopRef.current?.stop?.(); } catch {} };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [showSplash]);
 
 // ── Step transition effect: navigate tab + show spotlight ──────────────
@@ -2349,12 +2462,21 @@ useEffect(() => {
   if (!showITutorial) return;
   const step = I_STEPS[Math.min(iTutStep, I_STEPS.length - 1)];
   if (!step) return;
-  if (step.tab) setTab(step.tab as any);
-  const delay = step.tab ? 360 : 80;
+  if (step.tab) {
+    // Fade the tab content, switch, fade back in — without the full goTab mask logic
+    RNAnimated.timing(tabFade, { toValue: 0, duration: 150, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(() => {
+      setTab(step.tab as any);
+      RNAnimated.timing(tabFade, { toValue: 1, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    });
+  }
+  const delay = step.tab ? 400 : 80;
   const timer = setTimeout(() => {
     if (step.spotlight) {
       RNAnimated.timing(iTutSpotOp, { toValue: 1, duration: 300, useNativeDriver: true }).start();
       startITutRingPulse();
+      startITutRipple();
+    } else {
+      stopITutRipple();
     }
     animITutCardIn();
   }, delay);
@@ -2410,6 +2532,7 @@ fetch(`${resolvedApiBase || SAFE_API_BASE}/watch/recheck`, {
       watchlistIntervalRef.current = null;
     }
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [userId, watchlist]);
 
 // ===============================
@@ -2501,6 +2624,7 @@ if (profileModalRef.current) {
   });
 
   return () => sub.remove();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
   // ✅ FIX #2 (FLASHING CAMERA):
@@ -2533,13 +2657,14 @@ const inPreview = !!photo;
 
 // ✅ Keep tabs visible on Results/Profile/Watchlist.
 // Only hide when the camera preview/zoom overlays are up.
-const hideTabBar =
+const _hideTabBar =
   zoomUri != null ||
   previewImageUri != null ||
   inPreview;
 
-  const [refinePhotos, setRefinePhotos] = useState([]); // { uri }
+  const [_refinePhotos, setRefinePhotos] = useState([]); // { uri }
   const [cameraReady, setCameraReady] = useState(false);
+const cameraReadyOp = useRef(new RNAnimated.Value(0)).current;
 
 useEffect(() => {
   if (!loadingResults) return;
@@ -2657,20 +2782,20 @@ useEffect(() => {
 
   // ✅ AI STAGED REVEAL (investor wow)
   const [aiRevealActive, setAiRevealActive] = useState(false);
-  const [aiRevealStep, setAiRevealStep] = useState(0);
+  const [_aiRevealStep, setAiRevealStep] = useState(0);
   const aiRevealOpacity = useRef(new RNAnimated.Value(0)).current;
   const aiRevealScale = useRef(new RNAnimated.Value(0.98)).current;
   // ✅ Confidence badge animation
-  const confPop = useRef(new RNAnimated.Value(0)).current;  // scale
+  const _confPop = useRef(new RNAnimated.Value(0)).current;  // scale
   // ⚡ FINAL ADD #2 — confidence aura
   const confidenceAura = useRef(new RNAnimated.Value(0)).current;
-  const confGlow = useRef(new RNAnimated.Value(0)).current; // subtle pulse
+  const _confGlow = useRef(new RNAnimated.Value(0)).current; // subtle pulse
   // ✅ See more modal
   const [seeMoreOpen, setSeeMoreOpen] = useState(false);
   const [seeMoreListings, setSeeMoreListings] = useState([]);
   // ✅ Niche feature: Haggle Mode
   const [haggleOpen, setHaggleOpen] = useState(false);
-  const [haggleLines, setHaggleLines] = useState([]);
+  const [haggleLines, _setHaggleLines] = useState([]);
   // ✅ Monthly free pass pill explainer (tappable pill -> mini GUI)
   const [freePassInfoOpen, setFreePassInfoOpen] = useState(false);
 
@@ -2687,9 +2812,9 @@ useEffect(() => {
 async function prepareImage(uri) {
   const result = await ImageManipulator.manipulateAsync(
     uri,
-    [{ resize: { width: 896 } }],
+    [{ resize: { width: 768 } }],
     {
-      compress: 0.80,
+      compress: 0.62,
       format: ImageManipulator.SaveFormat.JPEG,
     }
   );
@@ -2704,6 +2829,36 @@ const scanAbortRef = useRef(null);
   const [cycleStartMs, setCycleStartMs] = useState(Date.now());
 // ✅ resolved backend base (learned from vision success)
 const [resolvedApiBase, setResolvedApiBase] = useState(API_BASE);
+
+// ─── Offline system ───────────────────────────────────────────────────────────
+// runScan is defined further below. We use a stable wrapper so useOfflineQueue
+// always holds a valid function reference regardless of declaration order.
+const _queueRunScanRef = useRef<RunScanFn | null>(null);
+const _stableRunScanForQueue = useCallback<RunScanFn>((params) => {
+  if (!_queueRunScanRef.current) return Promise.resolve();
+  return _queueRunScanRef.current(params);
+}, []);
+
+const { isOnline, checkNow: checkNetworkNow } = useNetworkStatus(resolvedApiBase);
+const {
+  items:       offlineItems,
+  pendingCount,
+  enqueue:     enqueueOffline,
+  flush:       flushOffline,
+  retryItem:   retryOfflineItem,
+  deleteItem:  deleteOfflineItem,
+  setPriority: setOfflinePriority,
+  isFlushing:  isFlushingQueue,
+} = useOfflineQueue(_stableRunScanForQueue);
+
+// Auto-flush queue when connectivity is restored
+useEffect(() => {
+  if (isOnline && pendingCount > 0) {
+    flushOffline(resolvedApiBase || SAFE_API_BASE).catch(() => {});
+  }
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [isOnline]);
+// ─────────────────────────────────────────────────────────────────────────────
 // -------------------------
 // ✅ FEATURE: SCAN MODES
 // -------------------------
@@ -2714,7 +2869,7 @@ const SCAN_MODES = {
   LABEL: "label",
   PROP: "prop",
 };
-const SCAN_MODE_FALLBACKS = [
+const _SCAN_MODE_FALLBACKS = [
   SCAN_MODES.ITEM,
   SCAN_MODES.MARK,
   SCAN_MODES.PART,
@@ -2722,12 +2877,12 @@ const SCAN_MODE_FALLBACKS = [
 ];
 const [scanMode, setScanMode] = useState(SCAN_MODES.ITEM);
 // optional input used only for PROP mode
-const [propContext, setPropContext] = useState("");
+const [propContext, _setPropContext] = useState("");
 // Camera UI
   const [cameraFacing, setCameraFacing] = useState("back");
   const [torchOn, setTorchOn] = useState(false);
   const [batchMode, setBatchMode] = useState(false);
-  const [batchCount, setBatchCount] = useState(0);
+  const [_batchCount, setBatchCount] = useState(0);
   // Feature 3: Receipt scan mode
   const [receiptMode, setReceiptMode] = useState(false);
   const [receiptLoading, setReceiptLoading] = useState(false);
@@ -2753,7 +2908,7 @@ const effectiveReferralCode = (() => {
   return (a || b || c || "EVAN0000").toUpperCase();
 })();
 
-const [referralLoading, setReferralLoading] = useState(false);
+const [_referralLoading, setReferralLoading] = useState(false);
 
 useEffect(() => {
   if (!userId) return;
@@ -2796,7 +2951,7 @@ useEffect(() => {
   loadReferral();
 }, [resolvedApiBase, userId]);
 
-const handleShareReferral = async () => {
+const _handleShareReferral = async () => {
   if (!referralCode) return;
   const shareLink = `https://evanai.app?ref=${effectiveReferralCode}`;
   await Share.share({
@@ -2840,20 +2995,20 @@ useEffect(() => {
 const [priceChangeBanner, setPriceChangeBanner] = useState(null);
   // History
   const [history, setHistory] = useState([]);
-  const HISTORY_STORAGE_KEY = "evanai-history";
+  const _HISTORY_STORAGE_KEY = "evanai-history";
   const SAVINGS_STORAGE_KEY = "evanai-savings";
   // Profile modals
   // null | "subscription" | "payments" | "review" | "terms" | "privacy"
   const [profileModal, setProfileModal] = useState(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authInput, setAuthInput] = useState("");
+  const [_authInput, _setAuthInput] = useState("");
   const [authStep, setAuthStep] = useState<"email" | "password">("email");
-  const [authMethod, setAuthMethod] = useState<"phone" | "email">("email");
+  const [_authMethod, _setAuthMethod] = useState<"phone" | "email">("email");
   const [authEmail, setAuthEmail] = useState("");
-  const [authPhone, setAuthPhone] = useState("");
+  const [_authPhone, _setAuthPhone] = useState("");
   const [authOtp, setAuthOtp] = useState(""); // repurposed: password field
-  const [authOtpTarget, setAuthOtpTarget] = useState("");
-  const [authSimCode, setAuthSimCode] = useState("");
+  const [_authOtpTarget, _setAuthOtpTarget] = useState("");
+  const [_authSimCode, _setAuthSimCode] = useState("");
   const [authError, setAuthError] = useState("");
   const [authSending, setAuthSending] = useState(false);
   const [authPwVisible, setAuthPwVisible] = useState(false);
@@ -2882,7 +3037,7 @@ useEffect(() => {
     }).start();
   }
 }, [showPaywall, paywallPop]);
-const [showHowDifferent, setShowHowDifferent] = useState(false);
+const [_showHowDifferent, _setShowHowDifferent] = useState(false);
 // ✅ PREVIEW LAYOUT (prevents previewBottom crash)
 // keeps the buttons above the keyboard
 const previewBottom = Math.max(24, (keyboardHeight || 0) + 16);
@@ -2901,7 +3056,7 @@ const previewPanelOpacity = useRef(new RNAnimated.Value(0)).current;
 // LEVEL 100 BARCODE AI
 // -------------------------
 const [barcodeMode, setBarcodeMode] = useState(false);
-const [lastBarcode, setLastBarcode] = useState<string | null>(null);
+const [_lastBarcode, setLastBarcode] = useState<string | null>(null);
 const barcodeLockRef = useRef(false);
 
   // Hide preview buttons AFTER user submits (presses Use Photo)
@@ -2912,15 +3067,13 @@ const barcodeLockRef = useRef(false);
  
 // ✅ BUTTON ENABLEMENT (safe: now state exists)
 const parsedScanPrice = toNumber(scanPriceInput);
-const parsedCheapestAlt = toNumber(cheapestAltInput);
+const _parsedCheapestAlt = toNumber(cheapestAltInput);
 const canUsePhoto =
   !!photo?.uri &&
   !loadingResults &&
   !priceSubmitted &&
   Number.isFinite(parsedScanPrice) &&
-  parsedScanPrice > 0 &&
-  Number.isFinite(parsedCheapestAlt) &&
-  parsedCheapestAlt > 0;
+  parsedScanPrice > 0;
 // Trigger preview panel entrance when photo is set
 useEffect(() => {
   if (photo) {
@@ -2935,10 +3088,11 @@ useEffect(() => {
       }),
     ]).start();
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [photo]);
 
 // ✅ Feature #3/#10/#11: collector + material + alternatives enrich
-const [enrich, setEnrich] = useState(null);
+const [_enrich, _setEnrich] = useState(null);
   // Active result
  const [profitCalcOpen, setProfitCalcOpen] = useState(false);
  // Feature 5: hyperlocal pricing — user's zip code
@@ -2960,7 +3114,7 @@ const [enrich, setEnrich] = useState(null);
  const [communityComps, setCommunityComps] = useState<CommunityCompsData | null>(null);
  const [communityCompsLoading, setCommunityCompsLoading] = useState(false);
  // Feature 14: Public savings profile sync flag
- const [savingsSynced, setSavingsSynced] = useState(false);
+ const [_savingsSynced, _setSavingsSynced] = useState(false);
  // Feature 1: P&L Tracker
  const [plFlips, setPlFlips] = useState<PLFlip[]>([]);
  // Feature 2: Haggle Score
@@ -3014,18 +3168,70 @@ useEffect(() => {
 
 // ── Live Activity Ticker animation ───────────────────────────────────────────
 useEffect(() => {
-  tickerX.setValue(0);
-  const anim = RNAnimated.loop(
+  let cancelled = false;
+  const runTicker = () => {
+    if (cancelled) return;
+    tickerX.setValue(0);
     RNAnimated.timing(tickerX, {
       toValue: -TICKER_TOTAL_W,
-      duration: TICKER_TOTAL_W * 32, // ~32ms per char → smooth
+      duration: TICKER_TOTAL_W * 32,
       easing: Easing.linear,
       useNativeDriver: true,
-    })
-  );
-  anim.start();
-  return () => anim.stop();
+      isInteraction: false,
+    }).start(({ finished }) => {
+      if (finished && !cancelled) runTicker();
+    });
+  };
+  runTicker();
+  return () => { cancelled = true; tickerX.stopAnimation(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
+
+// ── Camera delayed-active: keep camera live 350ms after leaving tab to avoid flash ──
+useEffect(() => {
+  // Always stop in-flight shutter animations and reset to resting state.
+  // stopAnimation() is critical: without it, a running RNAnimated sequence
+  // will override any subsequent .setValue() calls on the next frame.
+  snapScale.stopAnimation();   snapScale.setValue(1);
+  snapDepth.stopAnimation();   snapDepth.setValue(0);
+  ringScale.stopAnimation();   ringScale.setValue(0);
+  ringOpacity.stopAnimation(); ringOpacity.setValue(0);
+  // Cancel pending ripple setTimeout timers and reset ripple anims
+  rippleTimersRef.current.forEach(clearTimeout);
+  rippleTimersRef.current = [];
+  rippleAnims.forEach((r) => {
+    r.scale.stopAnimation();   r.scale.setValue(0);
+    r.opacity.stopAnimation(); r.opacity.setValue(0);
+  });
+  setIsCapturing(false);
+  scanLockRef.current = false;
+
+  if (tab === "camera") {
+    setCameraDelayedActive(true);
+    if (cameraReady) {
+      // Camera was warm — restore overlay to transparent immediately
+      cameraReadyOp.setValue(1);
+    } else {
+      // Camera needs to warm up — show black overlay until onCameraReady fires.
+      // Fallback: if onCameraReady never fires (Expo Camera quirk), clear overlay after 600ms.
+      cameraReadyOp.setValue(0);
+      const fallback = setTimeout(() => {
+        setCameraReady(true);
+        RNAnimated.timing(cameraReadyOp, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+      }, 600);
+      return () => clearTimeout(fallback);
+    }
+  } else {
+    // Leaving camera: hide overlay, defer camera deactivation
+    cameraReadyOp.setValue(0);
+    const t = setTimeout(() => {
+      setCameraDelayedActive(false);
+      setCameraReady(false);
+    }, 350);
+    return () => clearTimeout(t);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [tab]);
 
 // ── Feature 1: Persist P&L flips to AsyncStorage ─────────────────────────────
 useEffect(() => {
@@ -3047,8 +3253,9 @@ useEffect(() => {
       scanCount: scansUsed,
       flipCount: 0,
     }),
-    signal: AbortSignal.timeout(6000),
+    signal: abortAfter(6000),
   }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [savingsTotal, scansUsed]);
 
   // last scan status for Results screen
@@ -3072,31 +3279,43 @@ const statusLabel =
   const ringScale = useRef(new RNAnimated.Value(0)).current;
   const ringOpacity = useRef(new RNAnimated.Value(0)).current;
 
-  // Particle burst on shutter press (8 particles radiate outward)
-  const PARTICLE_COUNT = 8;
-  const particleAnims = useRef(
-    Array.from({ length: PARTICLE_COUNT }, () => ({
-      x: new RNAnimated.Value(0),
-      y: new RNAnimated.Value(0),
-      opacity: new RNAnimated.Value(0),
+  // Water ripple on shutter press (3 rings expand outward)
+  const RIPPLE_COUNT = 3;
+  const rippleAnims = useRef(
+    Array.from({ length: RIPPLE_COUNT }, () => ({
       scale: new RNAnimated.Value(0),
+      opacity: new RNAnimated.Value(0),
     }))
   ).current;
 
-  const triggerParticleBurst = () => {
-    particleAnims.forEach((p, i) => {
-      const angle = ((i * 360) / PARTICLE_COUNT) * (Math.PI / 180);
-      const dist = 55 + (i % 3) * 18;
-      p.x.setValue(0); p.y.setValue(0);
-      p.opacity.setValue(0); p.scale.setValue(0);
-      RNAnimated.parallel([
-        RNAnimated.timing(p.opacity, { toValue: 0.9, duration: 80, useNativeDriver: true }),
-        RNAnimated.spring(p.scale, { toValue: 1, damping: 10, stiffness: 320, useNativeDriver: true }),
-        RNAnimated.timing(p.x, { toValue: Math.cos(angle) * dist, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-        RNAnimated.timing(p.y, { toValue: Math.sin(angle) * dist, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      ]).start(() => {
-        RNAnimated.timing(p.opacity, { toValue: 0, duration: 180, useNativeDriver: true }).start();
-      });
+  const resetRipple = () => {
+    rippleAnims.forEach((r) => { r.scale.setValue(0); r.opacity.setValue(0); });
+  };
+
+  const rippleTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const triggerRipple = () => {
+    // Cancel any pending ripple timers from previous trigger
+    rippleTimersRef.current.forEach(clearTimeout);
+    rippleTimersRef.current = [];
+    rippleAnims.forEach((r, i) => {
+      r.scale.stopAnimation();   r.scale.setValue(0);
+      r.opacity.stopAnimation(); r.opacity.setValue(0);
+      const t = setTimeout(() => {
+        RNAnimated.parallel([
+          RNAnimated.timing(r.scale, {
+            toValue: 1,
+            duration: 600,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          RNAnimated.sequence([
+            RNAnimated.timing(r.opacity, { toValue: 0.6, duration: 80, useNativeDriver: true }),
+            RNAnimated.timing(r.opacity, { toValue: 0, duration: 520, useNativeDriver: true }),
+          ]),
+        ]).start();
+      }, i * 120);
+      rippleTimersRef.current.push(t);
     });
   };
   const loadingRot = useRef(new RNAnimated.Value(0)).current;
@@ -3135,7 +3354,7 @@ useEffect(() => {
   
 // Help overlay
   const [helpOpen, setHelpOpen] = useState(false);
-  const helpY = useRef(new RNAnimated.Value(14)).current;
+  const _helpY = useRef(new RNAnimated.Value(14)).current;
   const helpOpacity = useRef(new RNAnimated.Value(0)).current;
   // Flash mask
   const flashMaskOpacity = useRef(new RNAnimated.Value(0)).current;
@@ -3143,7 +3362,7 @@ useEffect(() => {
   const flashMidTimer = useRef(null);
   const flipTimer = useRef(null);
   // ✅ FIX #2 — prevent black flash on shutter
-const triggerFlashMask = () => {
+const _triggerFlashMask = () => {
   flashMaskOpacity.setValue(0);
   RNAnimated.timing(flashMaskOpacity, {
     toValue: 0,        // keep it invisible
@@ -3226,7 +3445,7 @@ useEffect(() => {
   ]).start();
 
   // Progress bar (JS driver — width animation)
-  RNAnimated.timing(splashProgressAnim, { toValue: 1, duration: 3400, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+  RNAnimated.timing(splashProgressAnim, { toValue: 1, duration: SPLASH_MIN_MS - 300, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
 
 RNAnimated.sequence([
   RNAnimated.delay(900),
@@ -3310,6 +3529,7 @@ const timer = setTimeout(() => {
       }
     } catch {}
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [showSplash, splashOpacity, logoScale, splashDots, dotY, reduceMotion]);
 
 useEffect(() => {
@@ -3441,7 +3661,7 @@ const loadRelistSuggestions = async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items: payload }),
-      signal: AbortSignal.timeout(20000),
+      signal: abortAfter(20000),
     });
     const json = await resp.json();
     if (json?.ok && Array.isArray(json.suggestions)) {
@@ -3472,7 +3692,7 @@ const runFlipScanner = async (category: string) => {
         zipCode,
         seedQuery: activeResult?.query || null,
       }),
-      signal: AbortSignal.timeout(40000),
+      signal: abortAfter(40000),
     });
     const json = await resp.json();
     if (json?.ok && Array.isArray(json.opportunities)) {
@@ -3521,7 +3741,7 @@ const loadRadar = async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ queries, zipCode, targetPrices }),
-      signal: AbortSignal.timeout(35000),
+      signal: abortAfter(35000),
     });
     const json = await resp.json();
     if (json?.ok) setRadarData(json);
@@ -3584,22 +3804,14 @@ useEffect(() => {
       } catch {}
     }
 
-    // When app comes back to foreground, check connectivity and drain the offline queue
-    if (next === "active") {
-      (async () => {
-        try {
-          const raw = await AsyncStorage.getItem(K.offlineQueue);
-          if (!raw) { setOfflineQueueCount(0); return; }
-          const queue = JSON.parse(raw);
-          if (!Array.isArray(queue) || queue.length === 0) { setOfflineQueueCount(0); return; }
-          setOfflineQueueCount(queue.length);
-          drainOfflineQueue();
-        } catch {}
-      })();
+    // When app comes back to foreground, flush queued offline scans
+    if (next === "active" && pendingCount > 0) {
+      flushOffline(resolvedApiBase || SAFE_API_BASE).catch(() => {});
     }
   });
 
   return () => sub.remove();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [resolvedApiBase]);
   // Torch rule
   useEffect(() => {
@@ -3932,7 +4144,7 @@ intuitionLine: buildIntuitionLine({
     setLastScan({ kind: "barcode", confidence: 0.75, query: q, results: top3 });
 
     stopLoadingSafely();
-  } catch (e: any) {
+  } catch (_e: any) {
     showUiError("Barcode scan failed", "Couldn’t reach marketplaces. Try again.");
     stopLoadingSafely();
   } finally {
@@ -4005,8 +4217,8 @@ RNAnimated.timing(neuralPulse, {
   // HAPTIC (premium, subtle)
   hapticSoftSnap();
 
-  // particle burst + ring burst
-  triggerParticleBurst();
+  // ripple + ring burst
+  triggerRipple();
   try {
     ringOpacity.setValue(1);
     ringScale.setValue(0.92);
@@ -4084,7 +4296,7 @@ if (receiptMode) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ imageBase64: b64 }),
-      signal: AbortSignal.timeout(45000),
+      signal: abortAfter(45000),
     });
     const json = await resp.json();
     if (json?.ok) {
@@ -4170,7 +4382,7 @@ const closeAllOverlays = () => {
   const zoomHudOpacity = useRef(new RNAnimated.Value(0)).current;
   const zoomHudY = useRef(new RNAnimated.Value(8)).current;
   const zoomHudTimer = useRef(null);
-  const [zoomHudText, setZoomHudText] = useState("1.0×");
+  const [_zoomHudText, setZoomHudText] = useState("1.0×");
   const hideZoomHud = () => {
     if (zoomHudTimer.current) clearTimeout(zoomHudTimer.current);
     zoomHudTimer.current = null;
@@ -4209,7 +4421,7 @@ const closeAllOverlays = () => {
       zoomHudTimer.current = setTimeout(hideZoomHud, 1400);
     });
   };
-  const setZoomLevel = (level) => {
+  const _setZoomLevel = (level) => {
     if (!photo && cameraFacing === "back") hapticSelect();
     const map = { 1: 0, 2: 0.5, 3: 1 };
     const z = map[level] ?? 0;
@@ -4235,9 +4447,12 @@ const closeAllOverlays = () => {
 }, [tab]);
   useEffect(() => {
     return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       if (flashMaskTimer.current) clearTimeout(flashMaskTimer.current);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       if (flashMidTimer.current) clearTimeout(flashMidTimer.current);
       if (zoomHudTimer.current) clearTimeout(zoomHudTimer.current);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       if (flipTimer.current) clearTimeout(flipTimer.current);
       if (scanAnimTimerRef.current) clearTimeout(scanAnimTimerRef.current);
       if (scanAbortRef.current) scanAbortRef.current.abort();
@@ -4247,14 +4462,14 @@ const closeAllOverlays = () => {
           splashDots.removeListener(splashDotsListenerIdRef.current);
           splashDotsListenerIdRef.current = null;
         }
-} catch (e) {}
+} catch (_e) {}
     };
   }, [splashDots]);
 // -------------------------
 // ✅ SIMPLE IN-MEMORY CACHES
 // -------------------------
 const VISION_CACHE = useRef(new Map()).current;
-const SERP_CACHE = useRef(new Map()).current;
+const _SERP_CACHE = useRef(new Map()).current;
 const MARKET_CACHE = useRef(new Map()).current;
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const isFresh = (entry) =>
@@ -4285,7 +4500,7 @@ const withTimeout = (ms, controller) => {
 // -------------------------
 // Scoring helper (required)
 // -------------------------
-const confidenceWeightedScore = (price, confidence) => {
+const _confidenceWeightedScore = (price, confidence) => {
   if (!Number.isFinite(price)) return Infinity;
   const c = Math.max(0, Math.min(1, Number(confidence) || 0));
   // lower confidence => slightly penalize "too-good-to-be-true" low prices
@@ -4324,6 +4539,8 @@ if (cached && isFresh(cached)) {
   const makeForm = () => {
     const form = new FormData();
     form.append("mode", scanMode);
+    const effectiveUserId = userId || installId;
+    if (effectiveUserId) form.append("userId", effectiveUserId);
     if (scanMode === SCAN_MODES.PROP && propContext.trim()) {
       form.append("propContext", propContext.trim());
     }
@@ -4358,25 +4575,30 @@ for (const rawBase of API_BASE_CANDIDATES) {
   const base = String(rawBase || "").replace(/\/+$/, "");
 
   try {
-    const healthRes = await fetch(`${base}/health`, {
-      method: "GET",
-      signal,
-    });
+    // Skip health check if this base was confirmed alive recently
+    const skipHealth = base === _healthBase && Date.now() - _healthOkMs < HEALTH_CACHE_TTL;
 
-    lastStatus = healthRes.status;
+    if (!skipHealth) {
+      const healthRes = await fetch(`${base}/health`, {
+        method: "GET",
+        signal,
+      });
 
-    if (!healthRes.ok) continue;
+      lastStatus = healthRes.status;
 
-    const healthText = await healthRes.text();
+      if (!healthRes.ok) continue;
 
-    let healthJson: any = null;
-    try {
-      healthJson = healthText ? JSON.parse(healthText) : null;
-    } catch {
-      healthJson = null;
+      const healthText = await healthRes.text();
+
+      let healthJson: any = null;
+      try {
+        healthJson = healthText ? JSON.parse(healthText) : null;
+      } catch {
+        healthJson = null;
+      }
+
+      if (healthJson?.ok === false) continue;
     }
-
-    if (healthJson?.ok === false) continue;
 
     for (const ep of endpoints) {
       const cleanEp = String(ep || "").startsWith("/") ? ep : `/${ep}`;
@@ -4384,10 +4606,12 @@ for (const rawBase of API_BASE_CANDIDATES) {
       try {
 const form = makeForm();
 
+const effectiveUid = _clientId || userId || installId;
 const res = await fetch(`${base}${cleanEp}`, {
   method: "POST",
   body: form,
   signal,
+  headers: effectiveUid ? { "x-user-id": effectiveUid } : {},
 });
 
         lastStatus = res.status;
@@ -4498,6 +4722,9 @@ if (finalQuery) {
   });
 
   setResolvedApiBase(base);
+  // Cache successful base so next scan skips health check
+  _healthBase = base;
+  _healthOkMs = Date.now();
 
   console.log("VISION RAW RESPONSE", JSON.stringify(data));
   console.log("VISION RAW TEXT", text);
@@ -4541,7 +4768,7 @@ return { query: null, variants: [], confidence: 0 };
 };
 
 // helpers moved to module scope (do not redfine in app)
-  const pickCheapest = (arr) => {
+  const _pickCheapest = (arr) => {
     if (!Array.isArray(arr) || arr.length === 0) return null;
     let best = null;
     let bestP = null;
@@ -4990,7 +5217,7 @@ if (intelRaw) {
       let loadedScans = Number.isFinite(parsed?.scansUsed)
         ? parsed.scansUsed
         : 0;
-      // reset free scans if 30 days passed
+      // reset free scans if 24 hours passed (daily quota)
       const now = Date.now();
       if (now - loadedCycleStart >= FREE_CYCLE_MS) {
         loadedScans = 0;
@@ -5007,6 +5234,20 @@ if (intelRaw) {
       if (parsed?.activeResult) setActiveResult(parsed.activeResult);
       if (parsed?.lastScan) setLastScan(parsed.lastScan);
 
+      // Local-first result cache: restore last scan result (Subway Mode / crash recovery)
+      try {
+        const lastResultRaw = await AsyncStorage.getItem("EVAN_LAST_RESULT_V1");
+        if (lastResultRaw) {
+          const lastResult = JSON.parse(lastResultRaw);
+          const ageMs = Date.now() - (lastResult?.savedAt || 0);
+          // Only restore if less than 30 minutes old and no active result
+          if (ageMs < 30 * 60 * 1000 && lastResult?.card && !parsed?.activeResult) {
+            setActiveResult(lastResult.card);
+            setResults([lastResult.card]);
+          }
+        }
+      } catch { /* non-fatal */ }
+
       // Restore JWT session
       try {
         const jwt = await AsyncStorage.getItem("evan_jwt_v1");
@@ -5019,7 +5260,7 @@ if (intelRaw) {
             if (payload.exp && payload.exp > nowSec) {
               _authJwt = jwt;
               setIsSignedIn(true);
-              if (payload.sub) setUserId(payload.sub);
+              if (payload.sub) { setUserId(payload.sub); _clientId = payload.sub; }
             } else {
               await AsyncStorage.removeItem("evan_jwt_v1");
             }
@@ -5040,6 +5281,7 @@ if (intelRaw) {
       setCycleStartMs(Date.now());
     }
   })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
 // ── Regret check on app open ──────────────────────────────────────────
@@ -5071,7 +5313,7 @@ useEffect(() => {
 // Marketplace fetches (MODULAR)
 // -----------------------------------
 
-const fetchEbayResults = async (query, signal) => {
+const _fetchEbayResults = async (query, signal) => {
   try {
     const data: any = await apiFetch(
       `/search/ebay?q=${encodeURIComponent(String(query || "").trim())}`,
@@ -5130,7 +5372,7 @@ const searchSerp = async (query, signal, variants: any[] = []) => {
 
 // ✅ Etsy disabled for now (stub)
 
-const searchEtsy = async (_query, _signal) => {
+const _searchEtsy = async (_query, _signal) => {
   return [];
 };
 
@@ -5156,7 +5398,7 @@ const mergeMarketResultSets = (...groups: any[][]) => {
   return out;
 };
 
-const buildEarlyPrefetchQuery = (q: string) => {
+const _buildEarlyPrefetchQuery = (q: string) => {
   const s = normalizeTitle(String(q || ""));
   if (!s) return "";
 
@@ -5502,7 +5744,7 @@ const extractProductSignature = (raw: string) => {
   };
 };
 
-const buildVisionSeedVariants = (q: string) => {
+const _buildVisionSeedVariants = (q: string) => {
   const sig = extractProductSignature(q);
 
   const base = normalizeTitle(sig.core);
@@ -5611,6 +5853,8 @@ const searchMarket = async (
     visionIdentity = null,
     category = "",
     sizeHint = null, // Feature 11
+    scanSource = null, // "vision" | "deterministic" — signals to backend which path was taken
+    scanMode: reqScanMode = null,
   }: any,
   signal?: AbortSignal
 ) => {
@@ -5628,6 +5872,9 @@ body: JSON.stringify({
   category,
   sizeHint: sizeHint || null,
   zipCode: zipCode || null,  // Feature 5: hyperlocal pricing
+  userId: userId || installId || undefined,
+  scanSource: scanSource || null,
+  scanMode: reqScanMode || null,
 }),
   signal,
 });
@@ -5685,6 +5932,157 @@ body: JSON.stringify({
   }
 };
 
+// ─── Staged market search via SSE stream ──────────────────────────────────────
+// Returns provisional results in ~4s (marketplace only), then complete in ~15s.
+// Falls back to legacy searchMarket() if streaming is unavailable.
+//
+// onProvisional: called when Phase 1 marketplace data arrives (≥2 listings)
+// onComplete:    called when Phase 2 enriched data arrives (oracle + sold comps)
+// onPhase:       called on phase transitions ("analyzing_fast" | "enriching")
+//
+// Phase 3 additions:
+//   • Stream read timeout (15s per chunk) prevents network partition hangs
+//   • scanId consistency check: ignores stale events from prior scans
+//   • degraded flag surfaced to callbacks so UI can show "limited data" indicator
+//
+// Returns the final/complete data, or provisional data if stream ends early.
+// ─────────────────────────────────────────────────────────────────────────────
+const searchMarketStream = async (
+  params: {
+    query: string;
+    variants?: string[];
+    scannedPrice?: number | null;
+    visionConfidence?: number;
+    visionIdentity?: any;
+    category?: string;
+    sizeHint?: string | null;
+    scanSource?: string | null;
+    scanMode?: string | null;
+    attributeCertainty?: any;
+  },
+  signal: AbortSignal,
+  onProvisional: (data: any) => void,
+  onComplete:    (data: any) => void,
+  onPhase?:      (phase: string) => void,
+): Promise<any> => {
+  const body = JSON.stringify({
+    query:              params.query,
+    variants:           params.variants    || [],
+    scannedPrice:       params.scannedPrice ?? null,
+    visionConfidence:   params.visionConfidence ?? 0.5,
+    visionIdentity:     params.visionIdentity   ?? null,
+    category:           params.category         ?? "",
+    sizeHint:           params.sizeHint         ?? null,
+    zipCode:            zipCode                  || null,
+    userId:             userId || installId      || undefined,
+    scanSource:         params.scanSource        ?? null,
+    scanMode:           params.scanMode          ?? null,
+    attributeCertainty: params.attributeCertainty ?? null,
+  });
+
+  let lastProvisional: any = null;
+  let finalData: any = null;
+
+  // Read with a per-chunk timeout to prevent network-partition hangs
+  const readWithTimeout = (reader: ReadableStreamDefaultReader<Uint8Array>, timeoutMs = 15000) =>
+    Promise.race<{ done: boolean; value: Uint8Array | undefined }>([
+      reader.read(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("stream_read_timeout")), timeoutMs)
+      ),
+    ]);
+
+  for (const rawBase of API_BASE_CANDIDATES) {
+    const base = String(rawBase || "").replace(/\/+$/, "");
+    try {
+      const resp = await fetch(`${base}/market/search/stream`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+        body,
+        signal,
+      });
+
+      if (!resp.ok || !resp.body) continue;
+
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let lastEvent = "";
+      let activeScanId: string | null = null; // set from first event
+
+      while (true) {
+        const { done, value } = await readWithTimeout(reader, 15000);
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+
+        // Parse SSE lines
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            lastEvent = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            try {
+              const rawData = JSON.parse(line.slice(6));
+
+              // Capture scanId from first event; ignore events with mismatched scanId
+              if (rawData?.scanId) {
+                if (activeScanId === null) activeScanId = rawData.scanId;
+                else if (activeScanId !== rawData.scanId) continue; // stale event from prior scan
+              }
+
+              // Merge normalizeMarketResponse (adds trusted/id/buyLink per item)
+              const data = rawData?.items
+                ? { ...rawData, ...normalizeMarketResponse(rawData) }
+                : rawData;
+
+              if (lastEvent === "provisional") {
+                // Phase 4: multiple provisional events are possible
+                // (earlyProvional from fast lanes, then full provisional).
+                // Always update lastProvisional; let the caller guard double-navigation.
+                lastProvisional = data;
+                onProvisional(data);
+              } else if (lastEvent === "complete") {
+                finalData = data;
+                onComplete(data);
+                // Persist for offline fallback (mirrors searchMarket behavior)
+                if (params.query && data?.items?.length) {
+                  writePriceCache(params.query, data);
+                }
+                setOfflineCachedAt(null);
+              } else if (lastEvent === "phase" && onPhase) {
+                onPhase(data.phase);
+              } else if (lastEvent === "error") {
+                throw new Error(data.message || data.code || "stream_error");
+              }
+            } catch (parseErr: any) {
+              if (parseErr?.name === "AbortError") throw parseErr;
+              if (parseErr?.message === "stream_read_timeout") throw parseErr;
+              // skip malformed SSE line
+            }
+            lastEvent = "";
+          }
+        }
+      }
+
+      // Stream ended — return final data (or provisional as fallback)
+      return finalData ?? lastProvisional ?? null;
+
+    } catch (e: any) {
+      if (e?.name === "AbortError") throw e;
+      // Try next base or fall through to legacy
+      console.warn("searchMarketStream failed for base:", base, e?.message);
+    }
+  }
+
+  // Fallback: if all stream attempts fail, use legacy searchMarket
+  console.warn("searchMarketStream: falling back to legacy searchMarket");
+  const legacyData = await searchMarket(params, signal);
+  if (legacyData) onComplete(legacyData);
+  return legacyData;
+};
+
   // ✅ keep free cycle reset fresh (runs occasionally)
   useEffect(() => {
     const t = setInterval(() => {
@@ -5734,6 +6132,7 @@ useEffect(() => {
     clearTimeout(retryTimer);
     clearInterval(tickInterval);
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [loadingResults]);
 
 // ✅ AI staged reveal → THEN result entry anim + soft haptic
@@ -5825,7 +6224,7 @@ try {
     lastScan,
   };
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-} catch (e) {}
+} catch (_e) {}
     })();
   }, [
     scansUsed,
@@ -5860,7 +6259,7 @@ try {
     loop.start();
     return () => loop.stop();
   }, [sway]);
-  const swayRotate = sway.interpolate({
+  const _swayRotate = sway.interpolate({
     inputRange: [0, 1],
     outputRange: ["-2deg", "2deg"],
   });
@@ -5883,6 +6282,7 @@ useEffect(() => {
     try { topHudOpacity?.setValue?.(0); } catch {}
     try { topHudY?.setValue?.(-10); } catch {}
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [tab, photo, loadingResults, showSplash]);
 
 // ✅ Tab transition safety: opacity + pointerEvents must never desync
@@ -5929,6 +6329,8 @@ const goTab = (next) => {
   try { setCloudImportOpen(false); } catch {}
   try { setInventoryOpen(false); } catch {}
   try { setBatchOpen(false); } catch {}
+  try { setTutorialConfirmOpen(false); } catch {}
+  try { Keyboard.dismiss(); } catch {}
 
   tabSwitchingRef.current = true;
   pendingTabRef.current = next;
@@ -5936,13 +6338,13 @@ const goTab = (next) => {
   // ✅ during transition, NO tab should be touchable until fade-in completes
   setTabInteractable(false);
 
-  // ✅ full-screen mask hides split-second tab overlap
+  // Subtle mask — just enough to cover the swap, not a hard flash
   setTabMaskVisible(true);
   try { tabMaskOpacity.stopAnimation?.(); } catch {}
   try { tabMaskOpacity.setValue?.(0); } catch {}
   RNAnimated.timing(tabMaskOpacity, {
-    toValue: 1,
-    duration: 90,
+    toValue: 0.6,
+    duration: 55,
     easing: Easing.out(Easing.cubic),
     useNativeDriver: true,
   }).start();
@@ -5961,7 +6363,7 @@ const goTab = (next) => {
     try {
       RNAnimated.timing(tabMaskOpacity, {
         toValue: 0,
-        duration: 110,
+        duration: 80,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start(() => {
@@ -5986,7 +6388,7 @@ const goTab = (next) => {
   // 1) Fade out current
   RNAnimated.timing(tabFade, {
     toValue: 0,
-    duration: 110,
+    duration: 55,
     easing: Easing.out(Easing.cubic),
     useNativeDriver: true,
   }).start(() => {
@@ -6030,7 +6432,7 @@ const goTab = (next) => {
     // 5) fade in new
     RNAnimated.timing(tabFade, {
       toValue: 1,
-      duration: 180,
+      duration: 130,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start(() => {
@@ -6044,7 +6446,7 @@ const goTab = (next) => {
 
       RNAnimated.timing(tabMaskOpacity, {
         toValue: 0,
-        duration: 110,
+        duration: 80,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start(() => {
@@ -6094,26 +6496,17 @@ const flipCamera = () => {
 };
   // Snap ring burst (not a flash)
   const playSnapRing = () => {
-    ringScale.setValue(0.6);
-    ringOpacity.setValue(0);
-    RNAnimated.parallel([
-      RNAnimated.timing(ringOpacity, {
-        toValue: 1,
-        duration: 70,
-        useNativeDriver: true,
-      }),
-      RNAnimated.timing(ringScale, {
-        toValue: 1.35,
-        duration: 220,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      RNAnimated.timing(ringOpacity, {
-        toValue: 0,
-        duration: 260,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
+    ringScale.stopAnimation();   ringScale.setValue(0.6);
+    ringOpacity.stopAnimation(); ringOpacity.setValue(0);
+    RNAnimated.sequence([
+      RNAnimated.parallel([
+        RNAnimated.timing(ringOpacity, { toValue: 0.85, duration: 70, useNativeDriver: true }),
+        RNAnimated.timing(ringScale,   { toValue: 1.05, duration: 70, useNativeDriver: true }),
+      ]),
+      RNAnimated.parallel([
+        RNAnimated.timing(ringOpacity, { toValue: 0, duration: 220, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        RNAnimated.timing(ringScale,   { toValue: 1.35, duration: 220, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      ]),
     ]).start();
   };
 
@@ -6121,19 +6514,13 @@ const flipCamera = () => {
 const cameraUiOpacity = useRef(new RNAnimated.Value(0)).current;
 
 useEffect(() => {
-  const shouldShow =
-    tab === "camera" &&
-    !!permission?.granted &&
-    !showSplash &&
-    !loadingResults &&
-    !photo &&
-    cameraReady;
-
-  try {
-    cameraUiOpacity.stopAnimation?.();
-  } catch {}
-
-  if (shouldShow) {
+  if (tab !== "camera" || !permission?.granted || showSplash || loadingResults || photo) {
+    cameraUiOpacity.setValue(0);
+    return;
+  }
+  // Use a small fixed delay instead of waiting for onCameraReady,
+  // which may not re-fire when camera was never fully deactivated.
+  const t = setTimeout(() => {
     cameraUiOpacity.setValue(0);
     RNAnimated.timing(cameraUiOpacity, {
       toValue: 1,
@@ -6141,10 +6528,10 @@ useEffect(() => {
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
-  } else {
-    cameraUiOpacity.setValue(0);
-  }
-}, [tab, permission?.granted, showSplash, loadingResults, photo, cameraReady, cameraUiOpacity]);
+  }, 150);
+  return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [tab, permission?.granted, showSplash, loadingResults, photo]);
   const animateUseRetryIn = () => {
     buttonsY.setValue(90);
     buttonsOpacity.setValue(0);
@@ -6167,12 +6554,19 @@ useEffect(() => {
     setRefinePhotos([]);
     scanLockRef.current = false;
     hapticSelect();
+    resetRipple();
     setPhoto(null);
     setScanPriceInput("");
     setPriceSubmitted(false);
     Keyboard.dismiss();
+    // Clean up cinematic state from takePhoto so overlays don't persist after retake
+    try { setScanAnimActive(false); } catch {}
+    try { setCinematicFreeze(false); } catch {}
+    try { setFreezeFrameUri(null); } catch {}
+    try { vignetteOpacity?.setValue?.(0); } catch {}
+    try { freezeOpacity?.setValue?.(0); } catch {}
   };
-  const getLoadingCopy = () => {
+  const _getLoadingCopy = () => {
     const ms = loadingTick;
     if (ms < 2200) return "Finding the cheapest match";
     if (ms < 6200) return "Checking more listings";
@@ -6402,7 +6796,7 @@ const normalizeListings = (raw, market, fallbackSource, query) => {
     .filter((x) => x?.title && Number.isFinite(x?.totalPrice));
 };
 
-const showSavedToast = (amount) => {
+const _showSavedToast = (amount) => {
   if (!Number.isFinite(amount) || amount <= 0) return;
   const msg = `saved ${money(amount)}`;
   setSavedToast(msg);
@@ -6571,6 +6965,7 @@ const stopLoadingSafely = (reqId?: number) => {
 
   setLoadingResults(false);
   setShowRetryWhileLoading(false);
+  setSlowNetwork(false);
 
   setScanStage("idle");
   setScanStageMeta("");
@@ -6588,12 +6983,12 @@ const stopLoadingSafely = (reqId?: number) => {
   try { retryReveal.setValue(0); } catch {}
 };
 
-const shippingCost = (item) => {
+const _shippingCost = (item) => {
   if (typeof item.shipping === "number") return item.shipping;
   if (typeof item.shippingCost === "number") return item.shippingCost;
   return 0;
 };
-const conditionWeight = (condition) => {
+const _conditionWeight = (condition) => {
   if (!condition) return 0.6;
   const c = condition.toLowerCase();
   if (c.includes("new")) return 0;
@@ -6620,6 +7015,41 @@ const trackEvent = (event: string, payload: any = {}) => {
   }).catch(() => {});
 };
 
+
+// ── Search-first: build a usable query from deterministic signals when vision
+// returns nothing. Never returns empty — always gives the backend something
+// meaningful to search with.
+const buildDeterministicFallbackQuery = ({
+  itemHint,
+  scanMode: mode,
+  scannedPrice,
+}: {
+  itemHint?: string | null;
+  scanMode?: string;
+  scannedPrice?: number | null;
+}): string | null => {
+  // Tier 1: user typed a hint — use it directly
+  const hint = typeof itemHint === "string" ? itemHint.trim() : "";
+  if (hint.length >= 2) return hint.toLowerCase();
+
+  // Tier 2: mode-based category seed
+  const modeHints: Record<string, string> = {
+    mark:    "brand logo item",
+    part:    "replacement part",
+    label:   "product label item",
+    prop:    "prop item",
+    barcode: "product",
+  };
+  if (mode && mode !== "item" && modeHints[mode]) return modeHints[mode];
+
+  // Tier 3: price-anchored generic search
+  if (Number.isFinite(scannedPrice) && (scannedPrice as number) > 0) {
+    return "item for sale";
+  }
+
+  // No usable signal — caller should hard-fail
+  return null;
+};
 
 const runScan = async ({
   photoUri,
@@ -6661,18 +7091,37 @@ if (!isPro) {
     return;
   }
 
+  // Server-side quota check (non-blocking — local check above is primary gate)
+  if (!internalRetry) {
+    try {
+      const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+        (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+      const effectiveId = userId || guestId || installId;
+      const qs = effectiveId ? (userId ? `userId=${userId}` : `guestId=${effectiveId}`) : "";
+      const checkRes = await fetch(`${apiBase}/api/scan/status${qs ? `?${qs}` : ""}`, { signal: AbortSignal.timeout(3000) })
+        .then(r => r.json()).catch(() => null);
+      if (checkRes?.ok && !checkRes.canScan) {
+        if (checkRes.resetAt) setScanResetAt(checkRes.resetAt);
+        setScansUsed(FREE_SCAN_LIMIT_SAFE); // sync local state
+        requestAnimationFrame(() => { setShowPaywall(true); });
+        return;
+      }
+      if (checkRes?.resetAt) setScanResetAt(checkRes.resetAt);
+    } catch { /* fail open — local gate is the fallback */ }
+  }
+
   // consume a bonus scan only when a scan is actually counted
   // (we decrement later when we confirm countScan)
 }
 
   try {
     if (scanAbortRef.current) scanAbortRef.current.abort();
-} catch (e) {}
+} catch (_e) {}
 
   const controller = new AbortController();
   scanAbortRef.current = controller;
 
-const startedAt = Date.now();
+const _startedAt = Date.now();
 
 const token = (scanTokenRef.current += 1);
 const hardStopToken = token;
@@ -6694,6 +7143,12 @@ const softRetryTimer = setTimeout(() => {
     reqId,
   });
 }, SOFT_SCAN_UI_MS);
+
+// Subway Mode: connection weak indicator at 10s (before retry UI)
+const subwayModeTimer = setTimeout(() => {
+  if (!isLiveScan() || hardStopToken !== scanTokenRef.current) return;
+  try { setSlowNetwork(true); } catch {}
+}, 10000);
 
 const hardStopTimer = setTimeout(() => {
   if (!isLiveScan() || hardStopToken !== scanTokenRef.current) return;
@@ -6752,6 +7207,25 @@ requestAnimationFrame(() => {
 
 const visionTimeout = withTimeout(7000, controller);
 
+// ── Speculative market search — fires concurrently with vision ────────────
+// If user typed an itemHint, we can start fetching prices before vision returns.
+// When vision query matches the hint (≥50% token overlap), these results are
+// reused directly, saving the full sequential market request time.
+let _speculativeMarketPromise: Promise<any> | null = null;
+if (itemHint && itemHint.trim().length >= 3) {
+  _speculativeMarketPromise = searchMarket(
+    {
+      query: itemHint.trim().toLowerCase(),
+      variants: [],
+      visionConfidence: 0.5,
+      visionIdentity: null,
+      scannedPrice,
+      category: "",
+    },
+    controller.signal
+  ).catch(() => null);
+}
+
 // LOCK TO THE CURRENT PHOTO ONLY
 // This removes stale refine-photo bleed and wrong-item query contamination.
 const photosToAnalyze = [photoUri];
@@ -6759,6 +7233,8 @@ const targets = photosToAnalyze.slice(0, 1);
 
 setScanStage("vision");
 setScanStageMeta("Identifying item...");
+// Haptic heartbeat: light "tick" when vision starts — user feels the AI working
+Haptics.selectionAsync().catch(() => {});
 
 const visionResults = await Promise.all(
   targets.map(async (uri) => {
@@ -6875,17 +7351,6 @@ const visionVariants = [
     if (!q) return false;
     if (q === normalizedVisionQuery) return false;
     if (q === "glasses" || q === "eyewear") return false;
-
-    if (
-      q === "orange glasses" ||
-      q === "wrap glasses" ||
-      q === "lens glasses" ||
-      q === "orange wrap glasses" ||
-      q === "lens wrap glasses"
-    ) {
-      return false;
-    }
-
     return true;
   })
   .slice(0, 8);
@@ -6915,6 +7380,8 @@ if (!visionQuery || !String(visionQuery).trim()) {
     scanSessionRef.current.visionRetries = retries + 1;
     clearTimeout(softRetryTimer);
     clearTimeout(hardStopTimer);
+    clearTimeout(subwayModeTimer);
+    try { setSlowNetwork(false); } catch {}
     return runScan({
       photoUri,
       scannedPrice,
@@ -6925,23 +7392,33 @@ if (!visionQuery || !String(visionQuery).trim()) {
     });
   }
 
-  setResults([]);
-  setActiveResult(null);
-
-  setLastScan({
-    kind: "no-query",
-    confidence: visionConfidence,
-    query: null,
+  // ── SEARCH-FIRST FALLBACK ────────────────────────────────────────────────
+  // Vision returned nothing. Instead of hard-failing, build a deterministic
+  // query from available signals and continue to the market search pipeline.
+  // The backend will use a broad search intent ladder for low-confidence queries.
+  const deterministicFallback = buildDeterministicFallbackQuery({
+    itemHint,
+    scanMode: effectiveScanMode,
+    scannedPrice,
   });
 
-  showUiError(
-    "Vision couldn’t name the item",
-    "The server responded, but it did not return a usable marketplace search query. Try retaking the photo closer, with the item filling more of the frame."
-  );
-
-  stopLoadingSafely(reqId);
-  goTab("results");
-  return;
+  if (deterministicFallback) {
+    console.log("RUNSCAN → vision null, deterministic fallback →", deterministicFallback);
+    visionQuery = deterministicFallback;
+    // visionConfidence stays 0 — backend treats this as broad search intent
+  } else {
+    // No signals whatsoever — only fail when we have nothing to search with
+    setResults([]);
+    setActiveResult(null);
+    setLastScan({ kind: "no-query", confidence: visionConfidence, query: null });
+    showUiError(
+      "Couldn’t identify item",
+      "Try typing an item name before scanning, or retake the photo closer with the item filling the frame."
+    );
+    stopLoadingSafely(reqId);
+    goTab("results");
+    return;
+  }
 }
 
 if (visionConfidence < CONFIDENCE_THRESHOLD) {
@@ -7048,6 +7525,24 @@ const marketTimer = setTimeout(() => {
   abortMarket();
 }, MARKET_REQUEST_ABORT_MS);
 
+// If speculative market ran, seed the cache when query matches vision result
+if (_speculativeMarketPromise) {
+  try {
+    const specData = await _speculativeMarketPromise;
+    if (specData?.items?.length >= 3) {
+      const hintWords = (itemHint || "").toLowerCase().split(/\s+/).filter((w: string) => w.length > 2);
+      const visionWords = (normalizedVisionQuery || "").toLowerCase().split(/\s+/).filter((w: string) => w.length > 2);
+      const overlapCount = hintWords.filter((hw: string) => visionWords.some((vw: string) => vw.includes(hw) || hw.includes(vw))).length;
+      const overlapRatio = hintWords.length ? overlapCount / hintWords.length : 0;
+      if (overlapRatio >= 0.5) {
+        const specKey = `${effectiveScanMode}|${normalizedVisionQuery}|${visionVariants.join("|")}`;
+        MARKET_CACHE.set(specKey, specData);
+        console.log("⚡ SPECULATIVE MARKET HIT — seeded cache", { overlapRatio });
+      }
+    }
+  } catch { /* non-fatal */ }
+}
+
 const marketCacheKey = `${effectiveScanMode}|${visionQuery}|${visionVariants.join("|")}`;
 const cachedMarket = MARKET_CACHE.get(marketCacheKey);
 
@@ -7069,6 +7564,8 @@ try {
   } else {
     setScanStage("market");
     setScanStageMeta(`Checking live comps for ${visionQuery}...`);
+    // Haptic heartbeat: second tick when market search starts
+    Haptics.selectionAsync().catch(() => {});
 
     console.log("RUNSCAN -> STARTING MARKET SEARCH", {
       visionQuery,
@@ -7077,7 +7574,9 @@ try {
       visionConfidence,
     });
 
-    const marketData: any = await searchMarket(
+    let _provisionalMarketData: any = null;
+    let _provisionalNavigated = false;
+    const marketData: any = await searchMarketStream(
       {
         query: visionQuery,
         variants: visionVariants,
@@ -7085,9 +7584,48 @@ try {
         visionIdentity: visionIdentity || null,
         scannedPrice,
         category: inferCategory(visionQuery),
-        sizeHint: sizeHint || null, // Feature 11
+        sizeHint: sizeHint || null,
+        scanSource: visionConfidence === 0 ? "deterministic" : "vision",
+        scanMode: effectiveScanMode,
       },
-      marketController.signal
+      marketController.signal,
+      // onProvisional: Phase 1 marketplace results
+      // Phase 4: may fire twice — first from fast native API lanes (~2s),
+      // second from full phase1 (~5s). _provisionalNavigated guards double-nav.
+      (provData: any) => {
+        if (!isLiveScan()) return;
+        _provisionalMarketData = provData;
+        const provCount = provData?.items?.length ?? provData?.top3?.length ?? 0;
+        if (provCount >= 2) {
+          // Build stage meta based on data quality signals
+          const isFastLane  = provData?.enrichingReason === "serp_pending";
+          const isDegraded  = provData?.degraded === true;
+          const stageMeta = isDegraded
+            ? `${provCount} listings — limited data`
+            : isFastLane
+            ? `${provCount} listings — still fetching more…`
+            : `${provCount} listings found — enriching…`;
+          setScanStage("analysis");
+          setScanStageMeta(stageMeta);
+          // Haptic heartbeat: third tick when listings land — "Finalizing Price"
+          Haptics.selectionAsync().catch(() => {});
+          // Navigate to results early — _provisionalNavigated prevents double navigation
+          if (!_provisionalNavigated && tabRef?.current !== "results") {
+            _provisionalNavigated = true;
+            requestAnimationFrame(() => { try { goTab("results"); } catch {} });
+          }
+        }
+      },
+      // onComplete: Phase 2 enriched results (oracle + sold comps)
+      (_finalData: any) => { /* final data handled by return value below */ },
+      // onPhase: stage transitions from server
+      (phase: string) => {
+        if (!isLiveScan()) return;
+        if (phase === "enriching") {
+          setScanStage("analysis");
+          setScanStageMeta("Enriching with deeper market data…");
+        }
+      },
     );
 
     const rawItems = Array.isArray(marketData?.items) ? marketData.items : [];
@@ -7185,7 +7723,7 @@ try {
           return Number(a.numericTotal || Infinity) - Number(b.numericTotal || Infinity);
         });
 
-      combined = relaxed.length ? relaxed : strictFiltered;
+      combined = relaxed.length ? relaxed : strictFiltered.length ? strictFiltered : preQualityCombined.slice(0, 15);
     }
 
     console.log("MARKET RAW COUNTS →", {
@@ -7353,7 +7891,7 @@ combined = (combined || [])
     const serverAnchored =
       !!item?.__fromMarketSearch ||
       (Number.isFinite(item?.__serverRank) && Number(item.__serverRank) <= 8) ||
-      combinedCountBeforeRank <= 3;
+      combinedCountBeforeRank > 0;
 
     const eyewearBridge =
       /(orange|amber)/.test(queryNorm) &&
@@ -7444,7 +7982,7 @@ priceScore * 0.12 +
 
 const requiredDealDelta = 0.01;
 
-const qualifiesSavingsFloor = (item) => {
+const _qualifiesSavingsFloor = (item) => {
   if (!Number.isFinite(scannedPrice) || Number(scannedPrice) <= 0) return true;
 
   const total = Number(
@@ -7782,7 +8320,26 @@ scanWhy: [
 if (countScan && !scanLockRef.current) {
   scanLockRef.current = true;
 
-  // consume bonus scan first
+  // Server-side consume — dedup by imageHash prevents double-counting same photo
+  if (!isPro) {
+    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const effectiveId = userId || guestId || installId;
+    const imgHash = await getImageCacheKey(photoUri).catch(() => "");
+    fetch(`${apiBase}/api/scan/consume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(userId ? { userId } : { guestId: effectiveId }),
+        imageHash: imgHash,
+      }),
+    }).then(r => r.json()).then(data => {
+      if (data?.resetAt) setScanResetAt(data.resetAt);
+      if (data?.scansUsed != null) setScansUsed(data.scansUsed);
+    }).catch(() => {});
+  }
+
+  // consume bonus scan first (local)
   if (!isPro && Number(bonusScans || 0) > 0) {
     setBonusScans((prev) => {
       const next = Math.max(0, (Number(prev) || 0) - 1);
@@ -7792,6 +8349,11 @@ if (countScan && !scanLockRef.current) {
   } else {
     setScansUsed((prev) => prev + 1);
   }
+
+  // Result persistence: save to AsyncStorage for Subway Mode / crash recovery
+  AsyncStorage.setItem("EVAN_LAST_RESULT_V1", JSON.stringify({
+    card, savedAt: Date.now(), photoUri,
+  })).catch(() => {});
 
   if (Number.isFinite(card.savedAmount)) {
     setSavingsTotal((prev) => {
@@ -7903,7 +8465,7 @@ if (photoUri && (card?.category || (card as any)?.visionIdentity?.brand || (card
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ imageBase64: b64, brand: _brand, category: _category, knownFakeTells: _knownTells }),
-          signal: AbortSignal.timeout(30000),
+          signal: abortAfter(30000),
         })
           .then((r) => r.json())
           .then((json) => { if (json?.ok) setDeepAuthResult(json); })
@@ -7918,7 +8480,7 @@ if (photoUri && (card?.category || (card as any)?.visionIdentity?.brand || (card
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ imageBase64: b64, statedCondition: _condition, category: _category, marketPrice: _marketPrice }),
-          signal: AbortSignal.timeout(30000),
+          signal: abortAfter(30000),
         })
           .then((r) => r.json())
           .then((json) => { if (json?.ok) setConditionAssessment(json); })
@@ -7932,7 +8494,7 @@ if (photoUri && (card?.category || (card as any)?.visionIdentity?.brand || (card
         setCommunityCompsLoading(true);
         setCommunityComps(null);
         fetch(`${apiBase}/api/community/comps?query=${encodeURIComponent(_compQuery)}`, {
-          signal: AbortSignal.timeout(8000),
+          signal: abortAfter(8000),
         })
           .then((r) => r.json())
           .then((json) => { if (json?.ok) setCommunityComps(json as CommunityCompsData); })
@@ -7952,7 +8514,7 @@ if (photoUri && (card?.category || (card as any)?.visionIdentity?.brand || (card
             currentPrice: Number(_scannedPrice),
             category: _category || "",
           }),
-          signal: AbortSignal.timeout(20000),
+          signal: abortAfter(20000),
         })
           .then((r) => r.json())
           .then((json) => { if (json?.ok) setHaggleResult(json as HaggleScoreResult); })
@@ -8084,8 +8646,14 @@ stopLoadingSafely(reqId);
 } finally {
   clearTimeout(softRetryTimer);
   clearTimeout(hardStopTimer);
+  clearTimeout(subwayModeTimer);
+  try { setSlowNetwork(false); } catch {}
 }
 };
+
+// Keep the offline queue's runScan reference current (resolves forward reference)
+// eslint-disable-next-line react-hooks/exhaustive-deps
+useEffect(() => { _queueRunScanRef.current = runScan; });
 
 // ── Feature 2: processBatchItem — runs vision + market search for one job ────
 // Called from the auto-processor useEffect below.
@@ -8183,90 +8751,20 @@ useEffect(() => {
   processBatchItem(pending.id).finally(() => {
     batchProcessingRef.current = false;
   });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [batchQueue, batchMode]);
 
-  // ─── Offline support ──────────────────────────────────────────────────────
-  const checkServerReachable = async (): Promise<boolean> => {
-    try {
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 3500);
-      const r = await fetch(`${resolvedApiBase || SAFE_API_BASE}/health`, {
-        method: "GET",
-        signal: ctrl.signal,
-      });
-      clearTimeout(tid);
-      return r.ok;
-    } catch {
-      return false;
-    }
-  };
-
-  const queueOfflineScan = async (params: {
-    photoUri: string;
-    scannedPrice: number;
-    cheapestAlt?: number | null;
-    itemHint?: string | null;
-  }) => {
-    try {
-      const raw = await AsyncStorage.getItem(K.offlineQueue);
-      const queue = raw ? JSON.parse(raw) : [];
-      const item = { ...params, queuedAt: Date.now(), id: `${Date.now()}_${Math.random().toString(36).slice(2,6)}` };
-      const next = [...queue, item].slice(-20); // cap at 20 queued scans
-      await AsyncStorage.setItem(K.offlineQueue, JSON.stringify(next));
-      setOfflineQueueCount(next.length);
-      setIsOnline(false);
-      setSavedToast(`Scan saved offline — will process when back online (${next.length} queued)`);
-    } catch {}
-  };
-
-  const drainOfflineQueue = async () => {
-    if (drainQueueInFlightRef.current) return;
-    drainQueueInFlightRef.current = true;
-    try {
-      const reachable = await checkServerReachable();
-      if (!reachable) { setIsOnline(false); return; }
-      setIsOnline(true);
-
-      const raw = await AsyncStorage.getItem(K.offlineQueue);
-      if (!raw) { setOfflineQueueCount(0); return; }
-      const queue: any[] = JSON.parse(raw);
-      if (!Array.isArray(queue) || queue.length === 0) { setOfflineQueueCount(0); return; }
-
-      setSavedToast(`Processing ${queue.length} queued scan${queue.length > 1 ? "s" : ""}…`);
-
-      // Process one at a time
-      for (let i = 0; i < queue.length; i++) {
-        const item = queue[i];
-        try {
-          await runScan({
-            photoUri: item.photoUri,
-            scannedPrice: item.scannedPrice,
-            cheapestAlt: item.cheapestAlt ?? null,
-            itemHint: item.itemHint ?? null,
-            countScan: true,
-          });
-          // Remove processed item
-          const remaining = queue.slice(i + 1);
-          await AsyncStorage.setItem(K.offlineQueue, JSON.stringify(remaining));
-          setOfflineQueueCount(remaining.length);
-          // Only process first item in this pass — let user see the result
-          break;
-        } catch {}
-      }
-    } catch {
-    } finally {
-      drainQueueInFlightRef.current = false;
-    }
-  };
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─── Offline support — handled by useNetworkStatus + useOfflineQueue hooks ──
+  // (checkServerReachable / queueOfflineScan / drainOfflineQueue replaced)
 
   const handleUsePhoto = async () => {
     if (!photo?.uri) return;
     if (!canUsePhoto) return;
     const scannedPrice = toNumber(scanPriceInput);
     if (!Number.isFinite(scannedPrice) || scannedPrice <= 0) return;
-    const cheapestAlt = toNumber(cheapestAltInput);
-    if (!Number.isFinite(cheapestAlt) || cheapestAlt <= 0) return;
+    // cheapestAltInput is optional (input removed from UI) — pass null when absent
+    const cheapestAltRaw = toNumber(cheapestAltInput);
+    const cheapestAlt = Number.isFinite(cheapestAltRaw) && cheapestAltRaw > 0 ? cheapestAltRaw : null;
     if (isFreeLimitReached) {
 requestAnimationFrame(() => {
   setShowPaywall(true);
@@ -8283,18 +8781,21 @@ const itemHint = itemNameInput.trim() || null;
 const sizeHintVal = sizeInput.trim() || null; // Feature 11
 
 // ── Offline check ──────────────────────────────────────────────────────
-const reachable = await checkServerReachable();
-if (!reachable) {
-  setIsOnline(false);
+const currentlyOnline = await checkNetworkNow();
+if (!currentlyOnline) {
   setPhoto(null);
   setScanPriceInput("");
   setCheapestAltInput("");
   setItemNameInput("");
   setSizeInput("");
-  await queueOfflineScan({ photoUri, scannedPrice, cheapestAlt, itemHint });
+  const { isDuplicate } = await enqueueOffline({
+    photoUri, scannedPrice, cheapestAlt, itemHint, sizeHint: sizeHintVal,
+  });
+  if (!isDuplicate) {
+    setSavedToast(`Scan queued — will send when back online (${pendingCount + 1} queued)`);
+  }
   return;
 }
-setIsOnline(true);
 // ──────────────────────────────────────────────────────────────────────
 
 // ✅ set loading panel image BEFORE we clear photo state
@@ -8334,7 +8835,7 @@ runScan({
 
 const MIN_LOADING_MS = 2200;
 
-const showMeCheaper = async () => {
+const _showMeCheaper = async () => {
   const q = activeResult?.visionQuery;
   if (!q) return;
 
@@ -8654,6 +9155,7 @@ fetch(`${resolvedApiBase}/history/load?userId=${encodeURIComponent(userId)}`)
     }
   })
   .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [userId]);
 // permission handled in UI — do not early return before hooks
 // ✅ HARD UI RECOVERY: if camera tab is active, force-clear any stuck overlays
@@ -8683,6 +9185,7 @@ useEffect(() => {
   // tab fade must be visible if we're on camera
     try { tabFade?.stopAnimation?.(); } catch {}
 try { tabFade?.setValue?.(1); } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [tab]);
 
 // -------------------------
@@ -8776,6 +9279,7 @@ useEffect(() => {
       sub?.remove?.();
     } catch {}
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
 const [dailyGoal, setDailyGoal] = useState<number>(6);
@@ -8801,6 +9305,7 @@ const applyReferralCode = async (
 ) => {
   const code = String(rawCode || "").trim().toUpperCase();
   if (!code) return false;
+  if (code.length < 4) return false;
   if (referralBusy) return false;
 
   if (code === String(effectiveReferralCode || "").trim().toUpperCase()) {
@@ -8876,11 +9381,11 @@ const applyReferralCode = async (
 
 const [todayScanCount, setTodayScanCount] = useState<number>(0);
 const [scanStreak, setScanStreak] = useState<number>(0);
-const [welcomeBackOpen, setWelcomeBackOpen] = useState(false);
+const [_welcomeBackOpen, setWelcomeBackOpen] = useState(false);
 const prevHistorySigRef = useRef<string>("");
 const watchCheckInFlightRef = useRef(false);
 const lastGlobalWatchCheckMsRef = useRef(0);
-const prevBestByIdRef = useRef<Record<string, number>>({});
+const _prevBestByIdRef = useRef<Record<string, number>>({});
 
 useEffect(() => {
   (async () => {
@@ -8889,6 +9394,32 @@ useEffect(() => {
       const iid = (await AsyncStorage.getItem(K.installId)) || mkInstallId();
       await AsyncStorage.setItem(K.installId, iid);
       setInstallId(iid);
+      if (!_clientId) _clientId = iid;
+
+      // Server-issued guest identity — persistent across reinstalls via fingerprint
+      try {
+        const cachedGid = await AsyncStorage.getItem("EVAN_GUEST_ID_V1");
+        const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+          (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+        const gidRes = await fetch(`${apiBase}/api/guest/identify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fingerprint: iid }),
+        }).then(r => r.json()).catch(() => null);
+        const newGid = gidRes?.guestId || cachedGid || iid;
+        if (newGid) {
+          await AsyncStorage.setItem("EVAN_GUEST_ID_V1", newGid);
+          setGuestId(newGid);
+        }
+        // Sync server scan quota on app open
+        const effectiveId = userId || newGid || iid;
+        const statusRes = await fetch(`${apiBase}/api/scan/status?${userId ? `userId=${userId}` : `guestId=${newGid}`}`)
+          .then(r => r.json()).catch(() => null);
+        if (statusRes?.ok) {
+          if (Number.isFinite(statusRes.scansUsed)) setScansUsed(statusRes.scansUsed);
+          if (statusRes.resetAt) setScanResetAt(statusRes.resetAt);
+        }
+      } catch { /* non-fatal — local state is fallback */ }
 
       // goal
       const g = await AsyncStorage.getItem(K.dailyGoal);
@@ -8930,14 +9461,7 @@ useEffect(() => {
       const bs = await AsyncStorage.getItem(K.bonusScans);
       if (bs != null) setBonusScans(clampInt(bs, 0, 9999));
 
-      // Load offline queue count
-      try {
-        const oq = await AsyncStorage.getItem(K.offlineQueue);
-        if (oq) {
-          const q = JSON.parse(oq);
-          if (Array.isArray(q) && q.length > 0) setOfflineQueueCount(q.length);
-        }
-      } catch {}
+      // Offline queue count is now managed by useOfflineQueue hook (SQLite-backed)
 
       // AUTO REFERRAL DETECTION FROM SHARED LINK
       try {
@@ -8977,6 +9501,7 @@ useEffect(() => {
       } catch {}
     } catch {}
   })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
 // DATA COMPOUNDING: detect new scans by history signature (no need to touch your scan pipeline)
@@ -9012,6 +9537,7 @@ useEffect(() => {
       } catch {}
     })();
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [history]);
 // ── Flip profile: reload whenever history reaches a threshold ────────────
 useEffect(() => {
@@ -9037,6 +9563,7 @@ useEffect(() => {
     }
   })();
   return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [history.length]);
 
 // REAL-TIME PRICE MOVEMENT: auto re-check watchlist (foreground + app resume)
@@ -9058,6 +9585,7 @@ const doWatchCheck = useCallback(
       watchCheckInFlightRef.current = false;
     }
   },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   [autoWatchEnabled, watchlist, runDailyWatchlistCheck]
 );
 // foreground intervals (watchlist tab = faster loop)
@@ -9074,6 +9602,7 @@ useEffect(() => {
   return () => {
     clearInterval(id);
   };
+   
 }, [tab, autoWatchEnabled, doWatchCheck]);
 // resume check (app comes back)
 useEffect(() => {
@@ -9090,6 +9619,7 @@ useEffect(() => {
     } catch {}
   });
   return () => sub.remove();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [autoWatchEnabled, doWatchCheck]);
 
 
@@ -9116,6 +9646,7 @@ useEffect(() => {
       } catch {}
     }
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [showSplash, loadingResults, tab, photo]);
 
 // ✅ HARD TAB FADE RECOVERY — prevents “UI disappears” (tabFade stuck at 0)
@@ -9134,6 +9665,7 @@ useEffect(() => {
   }, 60);
 
   return () => clearTimeout(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [tab]);
 
 useEffect(() => {
@@ -9204,12 +9736,13 @@ const buildShareCardTextV2 = useCallback(
       `Try Evan AI: ${shareUrl}`,
     ].join("\n");
   },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   [effectiveReferralCode, money, percent]
 );
 
 // BRAND STATS (investor-grade “intelligence branding”)
 
-const weeklyIntel = useMemo(() => {
+const _weeklyIntel = useMemo(() => {
   return weeklyStats(intelState?.events || []);
 }, [intelState]);
 
@@ -9266,14 +9799,16 @@ return {
   dropCount,
   iq,
 };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [history, watchlist, savingsTotal, dailyGoal, todayScanCount, scanStreak, dropCount, money, percent]);
 
 const intelLevel = useMemo(() => {
   const iq = Number(weaponStats?.iq || 0);
   return Math.max(1, Math.min(20, Math.floor(iq / 50) + 1));
+   
 }, [weaponStats?.iq]);
 
-const intelIdentityLine = useMemo(() => {
+const _intelIdentityLine = useMemo(() => {
   const lvl = intelLevel;
   if (lvl >= 16) return "You’re running investor-grade instincts.";
   if (lvl >= 11) return "Your market eye is getting sharp.";
@@ -9296,6 +9831,7 @@ const userRank = useMemo(() => {
   let lvl = USER_RANKS[0];
   for (const l of USER_RANKS) { if (scans >= l.min) lvl = l; }
   return lvl;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [weaponStats.scans]);
 
 // ── Achievement: level-up + milestone toasts ───────────────────────────
@@ -9342,12 +9878,12 @@ useEffect(() => {
 // ✅ Removed: preLoadBlack "micro flash" (causes visible flashes)
 
 
-const pulseScale = loadingPulse.interpolate({
+const _pulseScale = loadingPulse.interpolate({
   inputRange: [0, 1],
   outputRange: [0.96, 1.10],
 });
 
-const pulseOpacity = loadingPulse.interpolate({
+const _pulseOpacity = loadingPulse.interpolate({
   inputRange: [0, 1],
   outputRange: [0.6, 1],
 });
@@ -9634,25 +10170,37 @@ transform: [
       position: "absolute", bottom: 0, left: 0, right: 0,
       backgroundColor: "rgba(8,8,8,0.98)",
       borderTopLeftRadius: 32, borderTopRightRadius: 32,
-      borderWidth: 1, borderColor: "rgba(255,255,255,0.09)",
       paddingHorizontal: 20, paddingTop: 24,
       paddingBottom: BOTTOM + 28,
       opacity: thriftHeatOp,
       transform: [{ translateY: thriftHeatY }],
       shadowColor: "#000", shadowOpacity: 0.6, shadowRadius: 40, shadowOffset: { width: 0, height: -8 },
     }}>
-      {/* Handle */}
-      <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.15)", alignSelf: "center", marginBottom: 20 }} />
+      {/* Handle — drag to resize */}
+      <View {...heatMapPanResponder.panHandlers} style={{ paddingVertical: 10, alignItems: "center", marginBottom: 10 }}>
+        <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.15)" }} />
+      </View>
 
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 }}>
         <Ionicons name="map-outline" size={22} color="#50ff96" />
-        <Text style={{ color: "white", fontSize: 22, fontWeight: "900", letterSpacing: -0.5 }}>Thrift Heat Map</Text>
+        <Text style={{ color: "white", fontSize: 22, fontWeight: "900", letterSpacing: -0.5, flex: 1 }}>Thrift Heat Map</Text>
+        <Pressable
+          onPress={() => {
+            RNAnimated.parallel([
+              RNAnimated.timing(thriftHeatOp, { toValue: 0, duration: 200, useNativeDriver: true }),
+              RNAnimated.timing(thriftHeatY, { toValue: 60, duration: 200, useNativeDriver: true }),
+            ]).start(() => setThriftHeatOpen(false));
+          }}
+          style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center" }}
+        >
+          <Ionicons name="close" size={18} color="rgba(255,255,255,0.7)" />
+        </Pressable>
       </View>
       <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 13, fontWeight: "600", marginBottom: 20 }}>
         Best days &amp; times to hit each chain — based on real restocking patterns.
       </Text>
 
-      <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+      <RNAnimated.ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: heatMapHeightAnim }}>
         {(thriftStores.length > 0 ? thriftStores : [
           { name: "Goodwill", emoji: "\uD83C\uDFEA", heat: "WARM TODAY", heatScore: 65, isHotNow: false, isHotToday: true, tagline: "Tue–Thu mornings after donation drops", tip: "Arrive at open Tue–Thu.", nextHotDay: "Tomorrow" },
           { name: "Salvation Army", emoji: "\uD83D\uDD34", heat: "COLD TODAY", heatScore: 30, isHotNow: false, isHotToday: false, tagline: "Monday = freshest weekend haul", tip: "Monday–Wednesday mornings.", nextHotDay: "Monday" },
@@ -9690,12 +10238,12 @@ transform: [
             </Text>
           </View>
         ))}
-      </ScrollView>
+      </RNAnimated.ScrollView>
 
-      <View style={{ backgroundColor: "rgba(255,255,255,0.03)", borderRadius: 12, padding: 14, marginBottom: 16 }}>
-        <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 10, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>PRO TIP</Text>
-        <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 13, lineHeight: 19 }}>
-          Talk to the sorting staff. They'll tell you what came in that morning.
+      <View style={{ backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: "rgba(255,255,255,0.09)" }}>
+        <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 10, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>PRO TIP</Text>
+        <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13, lineHeight: 19 }}>
+          Talk to the sorting staff. They&apos;ll tell you what came in that morning.
         </Text>
       </View>
 
@@ -9708,7 +10256,7 @@ transform: [
 
 {/* Feature 6: Lowball Script Sheet */}
 {lowballOpen ? (
-  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 990 }}>
+  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 100000 }}>
     <Pressable
       style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" }}
       onPress={closeLowball}
@@ -9752,7 +10300,7 @@ transform: [
 
 {/* Feature 10: The One That Got Away Sheet */}
 {gotAwayOpen ? (
-  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 990 }}>
+  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 100000 }}>
     <Pressable
       style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" }}
       onPress={closeGotAway}
@@ -9805,7 +10353,7 @@ transform: [
 
 {/* Feature 11: Scan Graveyard Sheet */}
 {graveyardOpen ? (
-  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 990 }}>
+  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 100000 }}>
     <Pressable
       style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" }}
       onPress={closeGraveyard}
@@ -9858,7 +10406,7 @@ transform: [
 
 {/* Feature 12: Snipe Timer Sheet */}
 {snipeOpen ? (
-  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 990 }}>
+  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 100000 }}>
     <Pressable
       style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" }}
       onPress={closeSnipe}
@@ -9918,7 +10466,7 @@ transform: [
 
 {/* Feature 14: Profit Per Hour Sheet */}
 {profitOpen ? (
-  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 990 }}>
+  <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 100000 }}>
     <Pressable
       style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.65)" }}
       onPress={closeProfitSheet}
@@ -9991,12 +10539,13 @@ transform: [
   const step = I_STEPS[Math.min(iTutStep, I_STEPS.length - 1)];
   const spot = step?.spotlight ?? null;
   const tooltipGoesTop = !!(step?.tooltipTop && spot);
+  const aboveTabBar = TAB_BAR_BOTTOM + TAB_BAR_H + 20;
   const tooltipPos: any = tooltipGoesTop && spot
     ? { bottom: SH - spot.y + 20, left: 20, right: 20 }
-    : { bottom: BOTTOM + 28, left: 20, right: 20 };
+    : { bottom: aboveTabBar, left: 20, right: 20 };
 
   return (
-    <View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, { zIndex: 9993 }]}>
+    <RNAnimated.View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, { zIndex: 100001, opacity: tutorialOpacity }]}>
       {/* Full-screen dark backdrop */}
       <RNAnimated.View
         pointerEvents="none"
@@ -10044,6 +10593,27 @@ transform: [
             opacity: iTutRingOpacity,
             transform: [{ scale: iTutRingScale }],
           }} />
+          {/* Expanding ripple rings — centered on spotlight */}
+          {([iTutRipple0, iTutRipple1, iTutRipple2] as const).map((rVal, i) => (
+            <RNAnimated.View
+              key={`ripple-${i}`}
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                top: spot.y,
+                left: spot.x,
+                width: spot.w,
+                height: spot.h,
+                borderRadius: spot.r,
+                borderWidth: 2,
+                borderColor: "rgba(255,255,255,0.7)",
+                opacity: rVal.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0, 0.55, 0] }),
+                transform: [{
+                  scale: rVal.interpolate({ inputRange: [0, 1], outputRange: [1.0, 1.75] }),
+                }],
+              }}
+            />
+          ))}
         </RNAnimated.View>
       ) : null}
 
@@ -10109,12 +10679,25 @@ transform: [
             ))}
           </View>
 
+          {/* Back button (visible when not on first step) */}
+          {iTutStep > 0 ? (
+            <Pressable
+              onPress={() => goToITutStep(iTutStep - 1)}
+              style={({ pressed }) => [{ marginBottom: 8, paddingVertical: 6, alignItems: "center", opacity: pressed ? 0.5 : 1 }]}
+            >
+              <Text style={{ color: "rgba(255,255,255,0.35)", fontWeight: "600", fontSize: 13 }}>← Back</Text>
+            </Pressable>
+          ) : null}
+
           {/* Primary CTA */}
           <Pressable
             onPress={() => {
               if (step?.isLast) {
                 try { AsyncStorage.setItem("EVAN_ONBOARD_V1", "1"); } catch {}
                 closeInteractiveTutorial();
+                setShowWelcomeScreen(true);
+                welcomeScreenOp.setValue(0);
+                RNAnimated.timing(welcomeScreenOp, { toValue: 1, duration: 400, useNativeDriver: true }).start();
               } else {
                 goToITutStep(iTutStep + 1);
               }
@@ -10182,13 +10765,39 @@ transform: [
           <Ionicons name="close" size={18} color="rgba(255,255,255,0.75)" />
         </Pressable>
       </RNAnimated.View>
-    </View>
+    </RNAnimated.View>
   );
 })() : null}
 
+{/* ── WELCOME TO EVAN AI SCREEN ────────────────────────────────────────── */}
+{showWelcomeScreen ? (
+  <RNAnimated.View
+    style={[
+      StyleSheet.absoluteFillObject,
+      { zIndex: 200000, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", alignItems: "center", opacity: welcomeScreenOp },
+    ]}
+  >
+    <Pressable
+      style={[StyleSheet.absoluteFillObject, { justifyContent: "center", alignItems: "center" }]}
+      onPress={() => {
+        RNAnimated.timing(welcomeScreenOp, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+          setShowWelcomeScreen(false);
+        });
+      }}
+    >
+      <Text style={{ color: "white", fontSize: 34, fontWeight: "900", textAlign: "center", letterSpacing: -0.5, lineHeight: 40, paddingHorizontal: 40 }}>
+        {"Welcome to\nEvan AI"}
+      </Text>
+      <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 15, marginTop: 16, letterSpacing: 0.3 }}>
+        Tap anywhere to begin
+      </Text>
+    </Pressable>
+  </RNAnimated.View>
+) : null}
+
 {/* ── CINEMATIC TUTORIAL OVERLAY ──────────────────────────────────────── */}
 {showOnboard ? (
-  <View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, { zIndex: 9988 }]}>
+  <View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, { zIndex: 100001 }]}>
     {/* Blurred backdrop */}
     <RNAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { opacity: onboardOpacity }]}>
       <BlurView intensity={55} tint="dark" style={StyleSheet.absoluteFillObject} />
@@ -10320,71 +10929,79 @@ transform: [
 ) : null}
 
 {/* ── TUTORIAL "ARE YOU SURE?" CONFIRM ────────────────────────────────── */}
-{tutorialConfirmOpen ? (
-  <View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, { zIndex: 9985 }]}>
+<RNAnimated.View
+  pointerEvents={tutorialConfirmOpen ? "box-none" : "none"}
+  style={[StyleSheet.absoluteFillObject, { zIndex: 100001, justifyContent: "center", alignItems: "center", padding: 24, opacity: tutorialConfirmOp }]}
+>
+  <RNAnimated.View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.65)", opacity: tutorialConfirmOp }]} />
+  <Pressable
+    style={[StyleSheet.absoluteFillObject]}
+    onPress={() => setTutorialConfirmOpen(false)}
+  />
+  <RNAnimated.View style={{
+    width: "100%",
+    backgroundColor: "rgba(14,14,14,0.98)",
+    borderRadius: 28,
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.10)",
+    padding: 28,
+    shadowColor: "#000", shadowOpacity: 0.65, shadowRadius: 40, shadowOffset: { width: 0, height: 0 },
+    transform: [{ translateY: tutorialConfirmY }],
+  }}>
+    {/* X close */}
     <Pressable
-      style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.55)" }]}
       onPress={() => setTutorialConfirmOpen(false)}
-    />
-    <RNAnimated.View style={{
-      position: "absolute", bottom: 0, left: 0, right: 0,
-      backgroundColor: "rgba(10,10,10,0.97)",
-      borderTopLeftRadius: 32, borderTopRightRadius: 32,
-      borderWidth: 1, borderColor: "rgba(255,255,255,0.09)",
-      padding: 28, paddingBottom: BOTTOM + 20,
-      shadowColor: "#000", shadowOpacity: 0.55, shadowRadius: 36, shadowOffset: { width: 0, height: -8 },
-    }}>
-      {/* X close */}
+      style={({ pressed }) => [{
+        position: "absolute", top: 18, right: 18,
+        width: 34, height: 34, borderRadius: 17,
+        backgroundColor: "rgba(255,255,255,0.08)",
+        borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
+        alignItems: "center", justifyContent: "center",
+        opacity: pressed ? 0.7 : 1,
+      }]}
+    >
+      <Ionicons name="close" size={16} color="rgba(255,255,255,0.7)" />
+    </Pressable>
+
+    <View style={{ width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.07)", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>
+      <Ionicons name="play-circle-outline" size={26} color="white" />
+    </View>
+    <Text style={{ color: "white", fontSize: 22, fontWeight: "900", letterSpacing: -0.5 }}>
+      Watch the tutorial?
+    </Text>
+    <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, marginTop: 8, lineHeight: 20, fontWeight: "500" }}>
+      You&apos;ve already been through this — but hey, a refresher never hurts.
+    </Text>
+
+    <View style={{ flexDirection: "row", gap: 10, marginTop: 24 }}>
+      <Pressable
+        onPress={() => {
+          // Start tutorial immediately so it mounts before confirm fades out
+          openTutorial();
+          // Small delay so tutorial overlay is rendered before confirm vanishes
+          setTimeout(() => setTutorialConfirmOpen(false), 80);
+        }}
+        style={({ pressed }) => [{
+          flex: 1, paddingVertical: 15, borderRadius: 16,
+          backgroundColor: pressed ? "rgba(235,235,235,0.96)" : "#ffffff",
+          alignItems: "center",
+        }]}
+      >
+        <Text style={{ color: "#000", fontWeight: "900", fontSize: 14 }}>Yeah, show me</Text>
+      </Pressable>
       <Pressable
         onPress={() => setTutorialConfirmOpen(false)}
         style={({ pressed }) => [{
-          position: "absolute", top: 18, right: 18,
-          width: 34, height: 34, borderRadius: 17,
-          backgroundColor: "rgba(255,255,255,0.08)",
+          flex: 1, paddingVertical: 15, borderRadius: 16,
+          backgroundColor: "rgba(255,255,255,0.07)",
           borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
-          alignItems: "center", justifyContent: "center",
-          opacity: pressed ? 0.7 : 1,
+          alignItems: "center", opacity: pressed ? 0.75 : 1,
         }]}
       >
-        <Ionicons name="close" size={16} color="rgba(255,255,255,0.7)" />
+        <Text style={{ color: "rgba(255,255,255,0.7)", fontWeight: "700", fontSize: 14 }}>Nah, I&apos;m good</Text>
       </Pressable>
-
-      <View style={{ width: 56, height: 56, borderRadius: 18, backgroundColor: "rgba(255,255,255,0.07)", borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center", marginBottom: 18 }}>
-        <Ionicons name="play-circle-outline" size={26} color="white" />
-      </View>
-      <Text style={{ color: "white", fontSize: 22, fontWeight: "900", letterSpacing: -0.5 }}>
-        Watch the tutorial?
-      </Text>
-      <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, marginTop: 8, lineHeight: 20, fontWeight: "500" }}>
-        You've already been through this — but hey, a refresher never hurts.
-      </Text>
-
-      <View style={{ flexDirection: "row", gap: 10, marginTop: 24 }}>
-        <Pressable
-          onPress={() => { setTutorialConfirmOpen(false); openTutorial(); }}
-          style={({ pressed }) => [{
-            flex: 1, paddingVertical: 15, borderRadius: 16,
-            backgroundColor: pressed ? "rgba(235,235,235,0.96)" : "#ffffff",
-            alignItems: "center",
-          }]}
-        >
-          <Text style={{ color: "#000", fontWeight: "900", fontSize: 14 }}>Yeah, show me</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setTutorialConfirmOpen(false)}
-          style={({ pressed }) => [{
-            flex: 1, paddingVertical: 15, borderRadius: 16,
-            backgroundColor: "rgba(255,255,255,0.07)",
-            borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
-            alignItems: "center", opacity: pressed ? 0.75 : 1,
-          }]}
-        >
-          <Text style={{ color: "rgba(255,255,255,0.7)", fontWeight: "700", fontSize: 14 }}>Nah, I'm good</Text>
-        </Pressable>
-      </View>
-    </RNAnimated.View>
-  </View>
-) : null}
+    </View>
+  </RNAnimated.View>
+</RNAnimated.View>
 
 {/* ===== TOP HUD (CAMERA ONLY) ===== */}
 {tab === "camera" && !photo && !loadingResults && !showSplash ? (
@@ -10422,7 +11039,7 @@ transform: [
       ]}
     >
       <Text style={{ color: "white", fontSize: 16, fontWeight: "800" }}>
-        {isPro ? "Pro · Unlimited" : `${scansUsed || 0}/${totalFreeScans} free scans`}
+        {isPro ? "Pro · Unlimited" : `${scansUsed || 0}/${FREE_SCAN_LIMIT_SAFE} free scans`}
       </Text>
       <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, fontWeight: "800", marginTop: 2 }}>
         Tap to upgrade
@@ -10565,9 +11182,8 @@ pointerEvents={tab === "camera" && tabInteractable ? "auto" : "none"}
           facing={cameraFacing}
           enableTorch={torchOn}
           animatedProps={cameraAnimatedProps}
-          // ✅ Keep camera session alive to prevent re-init flash
-          active={permission?.granted}
-          onCameraReady={() => setCameraReady(true)}
+          active={permission?.granted && cameraDelayedActive}
+          onCameraReady={() => { setCameraReady(true); RNAnimated.timing(cameraReadyOp, { toValue: 1, duration: 200, useNativeDriver: true }).start(); }}
           barcodeScannerSettings={{
             barcodeTypes: [
               "ean13",
@@ -10592,6 +11208,15 @@ onBarcodeScanned={(d) => {
           </Pressable>
         </View>
       )}
+      {/* Camera fade-in overlay — prevents black flash before preview appears */}
+      <RNAnimated.View
+        pointerEvents="none"
+        style={{
+          ...StyleSheet.absoluteFillObject,
+          backgroundColor: "#000",
+          opacity: cameraReadyOp.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+        }}
+      />
     </View>
   </GestureDetector>
 
@@ -10704,19 +11329,8 @@ onBarcodeScanned={(d) => {
               placeholderTextColor="rgba(255,255,255,0.35)"
               keyboardType="numeric"
               style={styles.priceInput}
-              returnKeyType="next"
-            />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.priceLabel}>Cheapest alternative</Text>
-            <TextInput
-              value={cheapestAltInput}
-              onChangeText={setCheapestAltInput}
-              placeholder="$0.00"
-              placeholderTextColor="rgba(255,255,255,0.35)"
-              keyboardType="numeric"
-              style={styles.priceInput}
               returnKeyType="done"
+              onSubmitEditing={() => Keyboard.dismiss()}
             />
           </View>
         </View>
@@ -10750,13 +11364,12 @@ onBarcodeScanned={(d) => {
   ) : null}
 
 
-{/* Live Activity Ticker */}
-{!photo && !loadingResults && !showSplash ? (
-  <RNAnimated.View
+{/* Live Activity Ticker — always mounted so the tickerX animation chain never breaks on unmount */}
+<RNAnimated.View
     pointerEvents="none"
     style={{
       position: "absolute",
-      bottom: CAMERA_CONTROLS_BOTTOM + 170,
+      bottom: CAMERA_CONTROLS_BOTTOM + 200,
       left: 0,
       right: 0,
       height: 28,
@@ -10788,7 +11401,6 @@ onBarcodeScanned={(d) => {
       </RNAnimated.Text>
     </View>
   </RNAnimated.View>
-) : null}
 
 {/* BOTTOM CAMERA CONTROLS (ABOVE TAB BAR, NO OVERLAY) */}
 {!photo && !loadingResults ? (
@@ -10797,12 +11409,12 @@ onBarcodeScanned={(d) => {
       styles.cameraControlsRow,
       { bottom: CAMERA_CONTROLS_BOTTOM, opacity: cameraUiOpacity },
     ]}
-    pointerEvents={cameraReady && !showSplash ? "auto" : "none"}
+    pointerEvents={tab === "camera" && !showSplash ? "auto" : "none"}
   >
     {/* ── Mode strip — Batch & Receipt toggles ──────────────────────── */}
     <View style={{
       position: "absolute",
-      bottom: 88,
+      bottom: 140,
       left: 0,
       right: 0,
       flexDirection: "row",
@@ -10880,9 +11492,9 @@ onBarcodeScanned={(d) => {
         </Text>
       </Pressable>
 
-      {/* Inventory Scan button — opens new BatchScanScreen */}
+      {/* Inventory Scan button — opens inventory modal */}
       <Pressable
-        onPress={() => { hapticSelect?.(); setBatchInventoryOpen(true); }}
+        onPress={() => { hapticSelect?.(); setInventoryOpen(true); }}
         style={{
           flexDirection: "row",
           alignItems: "center",
@@ -10970,27 +11582,25 @@ onBarcodeScanned={(d) => {
             ]}
           />
           <View style={styles.shutterInner} />
+          {/* Water ripple — centered inside shutterOuter so rings expand from exact shutter center */}
+          {rippleAnims.map((r, i) => (
+            <RNAnimated.View
+              key={i}
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                width: 120 + i * 30,
+                height: 120 + i * 30,
+                borderRadius: (120 + i * 30) / 2,
+                borderWidth: 1.5,
+                borderColor: "rgba(255,255,255,0.7)",
+                opacity: r.opacity,
+                transform: [{ scale: r.scale }],
+              }}
+            />
+          ))}
         </RNAnimated.View>
       </Pressable>
-
-      {/* Particle burst — 8 dots radiate from shutter center */}
-      <View pointerEvents="none" style={{ position: "absolute", width: 0, height: 0, alignItems: "center", justifyContent: "center" }}>
-        {particleAnims.map((p, i) => (
-          <RNAnimated.View
-            key={i}
-            pointerEvents="none"
-            style={{
-              position: "absolute",
-              width: i % 2 === 0 ? 7 : 5,
-              height: i % 2 === 0 ? 7 : 5,
-              borderRadius: 4,
-              backgroundColor: i % 3 === 0 ? "rgba(255,255,255,0.95)" : i % 3 === 1 ? "rgba(200,240,255,0.85)" : "rgba(255,220,120,0.80)",
-              opacity: p.opacity,
-              transform: [{ translateX: p.x }, { translateY: p.y }, { scale: p.scale }],
-            }}
-          />
-        ))}
-      </View>
     </View>
 
     {/* RIGHT SLOT (fixed width) */}
@@ -11044,10 +11654,10 @@ style={[
 ]}
   pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
 >
-<SafeAreaView style={{ flex: 1 }} edges={["top", "bottom"]}>
+<SafeAreaView style={{ flex: 1 }} edges={loadingResults ? [] : ["top", "bottom"]}>
 <ScrollView
-  style={[styles.page, { flex: 1 }]}
-  contentContainerStyle={{ flexGrow: 1, paddingTop: 12, paddingBottom: 100, backgroundColor: "transparent" }}
+  style={loadingResults ? { flex: 1, backgroundColor: TOK.C.bg } : [styles.page, { flex: 1 }]}
+  contentContainerStyle={loadingResults ? { flexGrow: 1 } : { flexGrow: 1, paddingTop: 12, paddingBottom: 100, backgroundColor: "transparent" }}
   showsVerticalScrollIndicator={false}
   bounces={true}
   alwaysBounceVertical={true}
@@ -11109,6 +11719,7 @@ style={[
   scanStage={scanStage}
   scanStageMeta={scanStageMeta}
   showRetryWhileLoading={showRetryWhileLoading}
+  slowNetwork={slowNetwork}
   loadingDots={loadingDots}
   retryReveal={retryReveal}
   retryScale={retryScale}
@@ -11292,7 +11903,7 @@ style={[
 {/* ── Intel Signal Cards ──────────────────────────────── */}
 {tab === "results" && (ghostRisk || deadStockData || rivalryCount > 0 || dupeScan || conditionDrift || saturation || activeResult) ? (() => {
   // Compute which signals are "active"
-  const signals: Array<{ key: string; priority: number }> = [];
+  const signals: { key: string; priority: number }[] = [];
   if (ghostRisk?.level === "high") signals.push({ key: "ghost_high", priority: 1 });
   if (deadStockData?.urgencyLevel === "high") signals.push({ key: "dead_high", priority: 2 });
   if (rivalryCount > 0) signals.push({ key: "rivalry", priority: 3 });
@@ -11367,7 +11978,7 @@ style={[
             style={{ marginTop: 10, backgroundColor: "rgba(80,255,150,0.08)", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "rgba(80,255,150,0.15)" }}
           >
             <Text style={{ color: "rgba(80,255,150,0.6)", fontSize: 10, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>TAP TO COPY SCRIPT</Text>
-            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 12, lineHeight: 17, fontStyle: "italic" }}>"{(deadStockData as any).negotiationScript}"</Text>
+            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 12, lineHeight: 17, fontStyle: "italic" }}>&quot;{(deadStockData as any).negotiationScript}&quot;</Text>
           </Pressable>
         ) : null}
         {(deadStockData as any).leverageBar != null ? (
@@ -11402,7 +12013,7 @@ style={[
             style={{ marginTop: 10, backgroundColor: "rgba(80,255,150,0.08)", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "rgba(80,255,150,0.15)" }}
           >
             <Text style={{ color: "rgba(80,255,150,0.6)", fontSize: 10, letterSpacing: 1, textTransform: "uppercase", marginBottom: 4 }}>TAP TO COPY SCRIPT</Text>
-            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 12, lineHeight: 17, fontStyle: "italic" }}>"{(deadStockData as any).negotiationScript}"</Text>
+            <Text style={{ color: "rgba(255,255,255,0.65)", fontSize: 12, lineHeight: 17, fontStyle: "italic" }}>&quot;{(deadStockData as any).negotiationScript}&quot;</Text>
           </Pressable>
         ) : null}
         {(deadStockData as any).leverageBar != null ? (
@@ -11502,7 +12113,7 @@ style={[
           {flipFatigue.count} {flipFatigue.category} scans this week. Zero purchased.
         </Text>
         <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "500", marginTop: 4 }}>
-          You're hunting in a crowded lane. Switch categories or you're wasting time.
+          You&apos;re hunting in a crowded lane. Switch categories or you&apos;re wasting time.
         </Text>
         <Text style={{ color: "rgba(255,200,60,0.5)", fontSize: 11, marginTop: 6 }}>
           ~{Math.round(flipFatigue.count * 3.5)}min of browsing · $0 profit. Consider switching categories.
@@ -11762,6 +12373,8 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
         placeholderTextColor="rgba(255,255,255,0.3)"
         keyboardType="numeric"
         maxLength={10}
+        returnKeyType="done"
+        onSubmitEditing={() => Keyboard.dismiss()}
         style={{ flex: 1, color: "white", fontSize: 13, fontFamily: "System" }}
       />
       {!!zipCode && (
@@ -11927,8 +12540,8 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
 
 <ScrollView
   ref={profileScrollRef}
-  style={{ flex: 1 }}
-  contentContainerStyle={{ paddingBottom: TAB_BAR_H + TAB_BAR_MARGIN + BOTTOM + 40, flexGrow: 1 }}
+  style={{ flex: 1, backgroundColor: "#000" }}
+  contentContainerStyle={{ paddingBottom: TAB_BAR_H + TAB_BAR_MARGIN + BOTTOM + 40, flexGrow: 1, backgroundColor: "#000" }}
   showsVerticalScrollIndicator={false}
   bounces={true}
   alwaysBounceVertical={true}
@@ -12046,7 +12659,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
       <Pressable
         onPress={() => {
           hapticSelect?.();
-          const uid = installId || effectiveReferralCode || "EVAN";
+          const _uid = installId || effectiveReferralCode || "EVAN";
           const msg = `🏆 My Evan AI Stats\n💰 Saved: ${money(savingsTotal)}\n📸 Scans: ${scansUsed}\n\nScan smarter → https://evanai.app`;
           Share.share({ message: msg }).catch(() => {});
         }}
@@ -12096,7 +12709,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
   onMarkSold={handlePlMarkSold}
 />
 
-          <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, fontWeight: "700", letterSpacing: 1.1, textTransform: "uppercase", marginTop: 18, marginBottom: 8, paddingHorizontal: 2 }}>Account</Text>
+          <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "700", letterSpacing: 1.1, textTransform: "uppercase", marginTop: 24, marginBottom: 10, paddingHorizontal: 2 }}>Account</Text>
           <View style={{ borderRadius: 22, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", backgroundColor: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
           <Pressable
             style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
@@ -12180,7 +12793,7 @@ setSavedToast("Checking…");
   </View>
 ) : null}
 
-<Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, fontWeight: "700", letterSpacing: 1.1, textTransform: "uppercase", marginTop: 18, marginBottom: 8, paddingHorizontal: 2 }}>Pro Tools</Text>
+<Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "700", letterSpacing: 1.1, textTransform: "uppercase", marginTop: 24, marginBottom: 10, paddingHorizontal: 2 }}>Pro Tools</Text>
 <Pressable
   onPress={() => {
     hapticSelect?.();
@@ -12190,16 +12803,16 @@ setSavedToast("Checking…");
     padding: 16,
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: "rgba(255,210,80,0.22)",
-    backgroundColor: "rgba(255,200,50,0.07)",
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.06)",
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
     opacity: pressed ? 0.8 : 1,
   }]}
 >
-  <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: "rgba(255,200,50,0.14)", alignItems: "center", justifyContent: "center" }}>
-    <Ionicons name="rocket-outline" size={20} color="#ffd060" />
+  <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.10)", alignItems: "center", justifyContent: "center" }}>
+    <Ionicons name="rocket-outline" size={20} color="white" />
   </View>
   <View style={{ flex: 1 }}>
     <Text style={{ color: "white", fontWeight: "900", fontSize: 15 }}>Billionaire features</Text>
@@ -12207,11 +12820,11 @@ setSavedToast("Checking…");
       Seller mode · inventory · multi-item scan
     </Text>
   </View>
-  <Ionicons name="chevron-forward" size={16} color="rgba(255,200,50,0.5)" />
+  <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
 </Pressable>
 
-<Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, fontWeight: "700", letterSpacing: 1.1, textTransform: "uppercase", marginTop: 18, marginBottom: 8, paddingHorizontal: 2 }}>App</Text>
-<View style={{ borderRadius: 22, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", backgroundColor: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+<Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "700", letterSpacing: 1.1, textTransform: "uppercase", marginTop: 24, marginBottom: 10, paddingHorizontal: 2 }}>App</Text>
+<View style={{ borderRadius: 22 }}>
 <Pressable
   style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
   onPress={() => {
@@ -12253,12 +12866,19 @@ setSavedToast("Checking…");
   onPress={() => { hapticSelect(); openThriftHeat(); }}
   style={({ pressed }) => [styles.profileBtn, pressed && styles.tabPressed]}
 >
-  <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(80,255,150,0.10)", alignItems: "center", justifyContent: "center", marginRight: 12 }}>
-    <Ionicons name="map-outline" size={17} color="#50ff96" />
-  </View>
-  <Text style={styles.profileBtnText}>Thrift Heat Map</Text>
-  <View style={{ marginLeft: "auto", paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: "rgba(80,255,150,0.12)" }}>
-    <Text style={{ color: "#50ff96", fontSize: 10, fontWeight: "800" }}>LIVE</Text>
+  <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+    <View style={[styles.inlineRow, { flex: 1 }]}>
+      <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+        <Ionicons name="map-outline" size={17} color="white" />
+      </View>
+      <Text style={styles.profileBtnText}>Thrift Heat Map</Text>
+    </View>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
+      <View style={{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: "rgba(255,50,50,0.18)", borderWidth: 1, borderColor: "rgba(255,60,60,0.35)" }}>
+        <Text style={{ color: "#ff4444", fontSize: 10, fontWeight: "900", letterSpacing: 0.5 }}>● LIVE</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
+    </View>
   </View>
 </Pressable>
 <View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)", marginHorizontal: 16 }} />
@@ -12288,56 +12908,60 @@ setSavedToast("Checking…");
   </View>
 ) : null}
 
+<View style={{ borderRadius: 22, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", backgroundColor: "rgba(255,255,255,0.04)", overflow: "hidden", marginBottom: 10 }}>
 {/* Feature 10: Got Away button */}
 <Pressable
   onPress={openGotAway}
-  style={{
-    backgroundColor: "rgba(255,60,60,0.08)", borderRadius: 14,
-    borderWidth: 1, borderColor: "rgba(255,60,60,0.15)",
-    padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 12,
-  }}
+  style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
 >
-  <Text style={{ fontSize: 18 }}>💔</Text>
-  <View style={{ flex: 1 }}>
-    <Text style={{ color: "#ff6b6b", fontWeight: "800", fontSize: 13 }}>The One That Got Away</Text>
-    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>{regretItems.length} missed flip{regretItems.length !== 1 ? "s" : ""} in 30 days</Text>
+  <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+    <View style={styles.inlineRow}>
+      <Text style={{ fontSize: 18, marginRight: 4 }}>💔</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: "rgba(255,255,255,0.9)", fontWeight: "800", fontSize: 13 }}>The One That Got Away</Text>
+        <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>{regretItems.length} missed flip{regretItems.length !== 1 ? "s" : ""} in 30 days</Text>
+      </View>
+    </View>
+    <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
   </View>
-  <Text style={{ color: "rgba(255,100,100,0.4)", fontSize: 16 }}>→</Text>
 </Pressable>
+<View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)", marginHorizontal: 16 }} />
 
 {/* Feature 11: Scan Graveyard button */}
 <Pressable
   onPress={openGraveyard}
-  style={{
-    backgroundColor: "rgba(80,255,150,0.06)", borderRadius: 14,
-    borderWidth: 1, borderColor: "rgba(80,255,150,0.12)",
-    padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 12,
-  }}
+  style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
 >
-  <Text style={{ fontSize: 18 }}>⚰️</Text>
-  <View style={{ flex: 1 }}>
-    <Text style={{ color: "#50ff96", fontWeight: "800", fontSize: 13 }}>Scan Graveyard</Text>
-    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>Items you passed that finally dropped</Text>
+  <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+    <View style={styles.inlineRow}>
+      <Text style={{ fontSize: 18, marginRight: 4 }}>⚰️</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: "rgba(255,255,255,0.9)", fontWeight: "800", fontSize: 13 }}>Scan Graveyard</Text>
+        <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>Items you passed that finally dropped</Text>
+      </View>
+    </View>
+    <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
   </View>
-  <Text style={{ color: "rgba(80,255,150,0.4)", fontSize: 16 }}>→</Text>
 </Pressable>
+<View style={{ height: 1, backgroundColor: "rgba(255,255,255,0.07)", marginHorizontal: 16 }} />
 
 {/* Feature 14: Profit Per Hour */}
 <Pressable
   onPress={computeProfitPerHour}
-  style={{
-    backgroundColor: "rgba(255,255,255,0.04)", borderRadius: 14,
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.07)",
-    padding: 16, marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 12,
-  }}
+  style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
 >
-  <Text style={{ fontSize: 18 }}>💰</Text>
-  <View style={{ flex: 1 }}>
-    <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>Profit Per Hour</Text>
-    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>Are you working below minimum wage?</Text>
+  <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
+    <View style={styles.inlineRow}>
+      <Text style={{ fontSize: 18, marginRight: 4 }}>💰</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>Profit Per Hour</Text>
+        <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>Are you working below minimum wage?</Text>
+      </View>
+    </View>
+    <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
   </View>
-  <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 16 }}>→</Text>
 </Pressable>
+</View>
 
 <Pressable
   style={({ pressed }) => [styles.profileBtn, pressed && { backgroundColor: "rgba(255,255,255,0.06)" }]}
@@ -12461,7 +13085,7 @@ setSavedToast("Checking…");
     </Pressable>
 
     <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 }}>
-      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(80,255,150,0.7)" }} />
+      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.4)" }} />
       <Text style={{ color: "rgba(255,255,255,0.5)", fontWeight: "700", fontSize: 12 }}>
         {Number(referralUses || 0)} {Number(referralUses || 0) === 1 ? "person used" : "people used"} your code
       </Text>
@@ -12481,6 +13105,8 @@ setSavedToast("Checking…");
       autoCorrect={false}
       placeholder="ENTER CODE"
       placeholderTextColor="rgba(255,255,255,0.28)"
+      returnKeyType="done"
+      onSubmitEditing={() => Keyboard.dismiss()}
       style={{
         flex: 1,
         minHeight: 50,
@@ -12500,6 +13126,7 @@ setSavedToast("Checking…");
       disabled={!referralInput.trim() || !!referredBy || referralBusy}
       onPress={async () => {
         hapticSelect?.();
+        Keyboard.dismiss();
         const code = referralInput.trim().toUpperCase();
         if (!/^[A-Z0-9]{4,12}$/.test(code)) {
           setReferralCodeError("Invalid code format — codes are 4–12 letters/numbers.");
@@ -12550,8 +13177,8 @@ setSavedToast("Checking…");
     </View>
   ) : referredBy ? (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 5, marginTop: 8 }}>
-      <Ionicons name="checkmark-circle-outline" size={13} color="rgba(80,255,150,0.9)" />
-      <Text style={{ color: "rgba(80,255,150,0.9)", fontSize: 12, fontWeight: "700" }}>
+      <Ionicons name="checkmark-circle-outline" size={13} color="rgba(255,255,255,0.6)" />
+      <Text style={{ color: "rgba(255,255,255,0.6)", fontSize: 12, fontWeight: "700" }}>
         Applied: {referredBy}
       </Text>
     </View>
@@ -12706,7 +13333,7 @@ ${shareLink}`
       StyleSheet.absoluteFillObject,
       {
         zIndex: 6000,
-        backgroundColor: "transparent",
+        backgroundColor: "#000",
         opacity: tabMaskOpacity,
       },
     ]}
@@ -13547,9 +14174,13 @@ const store =
       }}
     >
       <View style={styles.modalCard}>
-        <Text style={styles.modalTitle}>Free scans used ({FREE_SCAN_LIMIT_FALLBACK})</Text>
+        <Text style={styles.modalTitle}>You've reached your daily limit</Text>
         <Text style={styles.modalDesc}>
-          You get 6 free scans every 30 days. Upgrade for unlimited access.
+          {`You get ${FREE_SCAN_LIMIT_FALLBACK} free scans per day.${
+            scanResetAt
+              ? `\nResets at ${new Date(scanResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`
+              : "\nCome back tomorrow for more."
+          }`}
         </Text>
 
         <View style={styles.paywallBox}>
@@ -13560,7 +14191,7 @@ const store =
             </Text>
           </View>
           <Text style={styles.paywallSub}>
-            Resale intelligence that pays for itself
+            Unlimited scans · price alerts · watchlist sync
           </Text>
         </View>
 
@@ -13573,7 +14204,7 @@ const store =
           style={styles.modalPrimary}
         >
           <Text style={styles.modalPrimaryText}>
-            Go Pro — ${PRO_MONTHLY_PRICE.toFixed(2)}/mo
+            Upgrade for unlimited scans
           </Text>
         </Pressable>
 
@@ -13584,7 +14215,7 @@ const store =
           }}
           style={styles.modalSecondary}
         >
-          <Text style={styles.modalSecondaryText}>Not now</Text>
+          <Text style={styles.modalSecondaryText}>Come back tomorrow</Text>
         </Pressable>
       </View>
     </RNAnimated.View>
@@ -13895,7 +14526,7 @@ onPress={() => {
             setUnverifiedPrompt(null);
             try {
               await opener?.();
-            } catch (e) {}
+            } catch (_e) {}
           }}
         >
           <Text style={styles.modalPrimaryText}>Open link</Text>
@@ -14318,8 +14949,17 @@ const pick = await ImagePicker.launchImageLibraryAsync({
     setAuthIsRegister(false);
   }}
 >
+  <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
   <View style={styles.modalBackdrop}>
     <View style={styles.modalCard}>
+      {/* X close button */}
+      <Pressable
+        onPress={() => { setAuthModalOpen(false); setAuthStep("email"); setAuthEmail(""); setAuthOtp(""); setAuthError(""); setAuthSending(false); setAuthPwVisible(false); setAuthIsRegister(false); }}
+        style={{ position: "absolute", top: 14, right: 14, zIndex: 10, padding: 6, borderRadius: 20, backgroundColor: "rgba(255,255,255,0.07)" }}
+        hitSlop={8}
+      >
+        <Ionicons name="close" size={18} color="rgba(255,255,255,0.55)" />
+      </Pressable>
 
       {authStep === "email" ? (
         <>
@@ -14467,7 +15107,7 @@ const pick = await ImagePicker.launchImageLibraryAsync({
                 setAuthError(""); setAuthSending(false); setAuthPwVisible(false); setAuthIsRegister(false);
                 setAuthModalOpen(false);
                 setSavedToast(authIsRegister ? "Account created ✓" : "Signed in ✓");
-              } catch (e: any) {
+              } catch (_e: any) {
                 setAuthError("Network error — check your connection");
               } finally {
                 setAuthSending(false);
@@ -14492,6 +15132,7 @@ const pick = await ImagePicker.launchImageLibraryAsync({
       )}
     </View>
   </View>
+  </KeyboardAvoidingView>
 </Modal>
 {/* NEGOTIATION COACH DRAWER */}
 <NegotiationCoach
@@ -14577,61 +15218,6 @@ const pick = await ImagePicker.launchImageLibraryAsync({
 ) : null}
 
 {/* welcome back modal removed */}
-
-{/* ── OFFLINE BANNER ── */}
-{!isOnline ? (
-  <View
-    pointerEvents="none"
-    style={{
-      position: "absolute",
-      top: 54,
-      alignSelf: "center",
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      paddingHorizontal: 14,
-      paddingVertical: 7,
-      borderRadius: 999,
-      backgroundColor: "rgba(255,200,0,0.12)",
-      borderWidth: 1,
-      borderColor: "rgba(255,200,0,0.30)",
-      zIndex: 99990,
-    }}
-  >
-    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: "rgba(255,200,0,0.90)" }} />
-    <Text style={{ color: "rgba(255,210,60,0.95)", fontSize: 11, fontWeight: "800", letterSpacing: 0.6 }}>
-      {offlineQueueCount > 0
-        ? `Offline · ${offlineQueueCount} scan${offlineQueueCount > 1 ? "s" : ""} queued`
-        : "Offline · scans will queue"}
-    </Text>
-  </View>
-) : offlineQueueCount > 0 ? (
-  <View
-    pointerEvents="box-none"
-    style={{
-      position: "absolute",
-      top: 54,
-      alignSelf: "center",
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      paddingHorizontal: 14,
-      paddingVertical: 7,
-      borderRadius: 999,
-      backgroundColor: "rgba(120,255,160,0.10)",
-      borderWidth: 1,
-      borderColor: "rgba(120,255,160,0.28)",
-      zIndex: 99990,
-    }}
-  >
-    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: "rgba(120,255,160,0.90)" }} />
-    <Pressable onPress={drainOfflineQueue}>
-      <Text style={{ color: "rgba(140,255,180,0.95)", fontSize: 11, fontWeight: "800", letterSpacing: 0.6 }}>
-        {`Back online · tap to process ${offlineQueueCount} queued scan${offlineQueueCount > 1 ? "s" : ""}`}
-      </Text>
-    </Pressable>
-  </View>
-) : null}
 
 {/* ✅ SAVED TOAST — RIGHT HERE */}
 {Boolean(savedToast) && (
@@ -14799,8 +15385,11 @@ style={[
       <View style={styles.modalCard}>
         <Text style={styles.modalTitle}>Free scans</Text>
         <Text style={styles.modalDesc}>
-          You get {FREE_SCAN_LIMIT_FALLBACK} free scans every 30 days.{"\n"}
-          Upgrade to Pro for unlimited scans anytime.
+          {`You get ${FREE_SCAN_LIMIT_FALLBACK} free scans per day.${
+            scanResetAt
+              ? `\nResets at ${new Date(scanResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`
+              : ""
+          }\nUpgrade to Pro for unlimited scans anytime.`}
         </Text>
 
         <Pressable
@@ -14832,8 +15421,7 @@ style={[
       <Pressable style={styles.modalCard} onPress={() => {}}>
         <Text style={styles.modalTitle}>Free scans</Text>
         <Text style={styles.modalDesc}>
-          You get {FREE_SCAN_LIMIT_SAFE} free scans every 30 days.{"\n"}
-          Upgrade to Pro for unlimited scans anytime.
+          {`You get ${FREE_SCAN_LIMIT_SAFE} free scans per day.\nUpgrade to Pro for unlimited scans anytime.`}
         </Text>
 
         <Pressable
@@ -15019,7 +15607,7 @@ const snapshot = {
       buildReferralCode(installId) ||
       "EVANAI";
 
-    const earned =
+    const _earned =
       (typeof refState !== "undefined" && Number(refState?.earned || 0)) || 0;
 
     const msg =
@@ -15460,6 +16048,7 @@ const calcTotalCost = (item: any) => {
 // -------------------------
 // COMPONENTS
 // -------------------------
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function CountUpNumber({
   value = 0,
   prefix = "",
@@ -15497,6 +16086,7 @@ function CountUpNumber({
     </Text>
   );
 }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function IconButton({ icon, onPress }) {
   return (
     <Pressable
@@ -15558,7 +16148,7 @@ function PayPill({ icon, label }) {
     </View>
   );
 }
-function LogoChip({ uri, label, dim = false }) {
+function _LogoChip({ uri, label, dim = false }) {
   return (
     <View style={[styles.logoChip, dim && { opacity: 0.35 }]}>
       <Image source={{ uri }} style={styles.logoImg} resizeMode="contain" />
@@ -15566,7 +16156,7 @@ function LogoChip({ uri, label, dim = false }) {
     </View>
   );
 }
-function BrandIntelligenceCard({ stats, intelEvents = [], onPress, ...rest }: any) {
+function _BrandIntelligenceCard({ stats, intelEvents = [], onPress, ..._rest }: any) {
   if (!stats) return null;
   return (
     <Pressable
@@ -15678,7 +16268,7 @@ type ResultsLoadingPanelProps = {
   loadingDots?: string;
 };
 
-const ResultsLoadingPanel = React.memo(function ResultsLoadingPanel({
+const _ResultsLoadingPanel = React.memo(function ResultsLoadingPanel({
   photoUri,
   headline,
   stage = "idle",
@@ -15739,7 +16329,7 @@ useEffect(() => {
   };
 }, [spinnerTurn, spinnerGlow]);
 
-const spinnerRotate = spinnerTurn.interpolate({
+const _spinnerRotate = spinnerTurn.interpolate({
   inputRange: [0, 1],
   outputRange: ["0deg", "360deg"],
 });
@@ -16482,6 +17072,7 @@ function useWatchlistRealtime(watchlist: any[] = [], setWatchlist: any, enabled 
         intervalRef.current = null;
       }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, appActive, setWatchlist, Array.isArray(watchlist) ? watchlist.length : 0]);
 }
 
@@ -16489,7 +17080,7 @@ function useWatchlistRealtime(watchlist: any[] = [], setWatchlist: any, enabled 
 // WATCHLIST SCREEN (Apple-level)
 // -------------------------
 
-const WatchlistScreen = React.memo(function WatchlistScreen({
+const _WatchlistScreen = React.memo(function WatchlistScreen({
   watchlist,
   setWatchlist,
   watchSearch,
@@ -16897,7 +17488,7 @@ const BILLION = {
   PRICE_PREDICT_V1: true,
 };
 const CLOUD_KEY = "EVAN_CLOUD_EXPORT_V1";
-const REF_KEY = "EVAN_REFERRAL_V1";
+const _REF_KEY = "EVAN_REFERRAL_V1";
 const INV_KEY = "EVAN_INVENTORY_V1";
 const SELLER_KEY = "EVAN_SELLER_MODE_V1";
 const BATCH_KEY = "EVAN_BATCH_QUEUE_V1";
@@ -16906,7 +17497,7 @@ const WATCH_POLL_LAST_KEY = "EVAN_WATCH_POLL_LAST_V1";
 const REF_REWARD_FREE_SCANS = 3;
 
 // ✅ unify scan-limit naming (prevents crashes)
-const FREE_SCAN_LIMIT_FALLBACK = 6;
+const FREE_SCAN_LIMIT_FALLBACK = 2;
 
 const REFERRAL_CODE_POOL = [
   "EVAN7K3Q9M2A",
@@ -17063,7 +17654,7 @@ function todayScanCount(intel: IntelState | null | undefined) {
 function countDropsFromWatchlist(watchlist: any[]) {
   return (watchlist || []).reduce((s, x) => s + Math.min(99, Number(x?.dropCount || 0)), 0);
 }
-function computeIntelUIStats(intel: IntelState | null | undefined, watchlist: any[]) {
+function _computeIntelUIStats(intel: IntelState | null | undefined, watchlist: any[]) {
   const goal = Number(intel?.goal) || DEFAULT_DAILY_GOAL;
   const today = todayScanCount(intel);
   const progress = Math.max(0, Math.min(1, goal ? today / goal : 0));
@@ -17085,14 +17676,14 @@ function computeIntelUIStats(intel: IntelState | null | undefined, watchlist: an
     headline,
   };
 }
-function marketHeat(result) {
+function _marketHeat(result) {
   const pct = Number(result?.cheaperPct || 0);
   if (pct > 35) return "HOT";
   if (pct > 15) return "WARM";
   return "COOL";
 }
 
-const matchQuality = (r: any) => {
+const _matchQuality = (r: any) => {
   const conf = Number(r?.visionConfidence || 0);
   const matches = Number(r?.totalMatches || 0);
 
@@ -17257,7 +17848,7 @@ function rankScoreV2({
     (pricePenalty * 2.0);       // punish unknown price
   return score;
 }
-function sortListingsV2(queryTitle: string, listings: any[], confidence: number) {
+function _sortListingsV2(queryTitle: string, listings: any[], confidence: number) {
   const arr = Array.isArray(listings) ? [...listings] : [];
   arr.sort((a, b) => rankScoreV2({ queryTitle, item: b, confidence }) - rankScoreV2({ queryTitle, item: a, confidence }));
   return arr;
@@ -17296,7 +17887,7 @@ function predictNext7dPrice({
 // ===============================
 // SOCIAL SHARING HOOKS (v1)
 // ===============================
-function buildShareLinkParams({ installId, refCode }: any) {
+function _buildShareLinkParams({ installId, refCode }: any) {
   const rid = encodeURIComponent(String(refCode || ""));
   const iid = encodeURIComponent(String(installId || ""));
   return `?ref=${rid}&iid=${iid}`;
@@ -17327,7 +17918,7 @@ async function exportCloudSnapshot(payload: any) {
     return null;
   }
 }
-async function importCloudSnapshot() {
+async function _importCloudSnapshot() {
   try {
     const raw = await AsyncStorage.getItem(CLOUD_KEY);
     if (!raw) return null;
@@ -17337,7 +17928,7 @@ async function importCloudSnapshot() {
   }
 }
 // Optional: API cloud store (no break if off)
-async function cloudPushToApi(snapshot: any) {
+async function _cloudPushToApi(snapshot: any) {
   if (!CLOUD_API_ENABLED) return false;
   try {
     await apiFetch("/cloud/push", {
@@ -17351,7 +17942,7 @@ async function cloudPushToApi(snapshot: any) {
     return false;
   }
 }
-async function cloudPullFromApi() {
+async function _cloudPullFromApi() {
   if (!CLOUD_API_ENABLED) return null;
   try {
     return await apiFetch("/cloud/pull", { method: "GET", timeoutMs: 8000, retries: 0 });
@@ -17372,7 +17963,7 @@ type InventoryItem = {
   thumbUri?: string | null;
   notes?: string | null;
 };
-async function loadInventory(): Promise<InventoryItem[]> {
+async function _loadInventory(): Promise<InventoryItem[]> {
   try {
     const raw = await AsyncStorage.getItem(INV_KEY);
     if (!raw) return [];
@@ -17431,7 +18022,7 @@ function buildShareText(result: any) {
   const sPart = savings ? ` saving me $${String(savings)}` : "";
   return `Evan AI found this ${domain} deal${sPart} with ${conf}% confidence.`;
 }
-async function shareScanResult(result: any, setIntelState: any) {
+async function _shareScanResult(result: any, setIntelState: any) {
   const msg = buildShareText(result);
   try {
     await Share.share({ message: msg });
@@ -17442,7 +18033,7 @@ async function shareScanResult(result: any, setIntelState: any) {
     });
   } catch {}
 }
-async function shareAppInvite(setIntelState: any) {
+async function _shareAppInvite(setIntelState: any) {
   const msg =
     "Download Evan AI — camera-first deal intelligence. Scan it. Verify it. Buy smart. 🚀";
   try {
@@ -17454,7 +18045,7 @@ async function shareAppInvite(setIntelState: any) {
     });
   } catch {}
 }
-async function copyShareText(result: any) {
+async function _copyShareText(result: any) {
   try {
     const msg = buildShareText(result);
     await Clipboard.setStringAsync(msg);
@@ -17474,8 +18065,22 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// ── AbortSignal.timeout polyfill for Hermes / React Native ───────────────────
+function abortAfter(ms: number): AbortSignal {
+  const ctrl = new AbortController();
+  setTimeout(() => ctrl.abort(), ms);
+  return ctrl.signal;
+}
+
 // ── Auth JWT (module-level, restored from AsyncStorage on boot) ──────────────
 let _authJwt: string | null = null;
+// ── Client identity — installId or userId, used as x-user-id fallback when no JWT ──
+let _clientId: string | null = null;
+
+// ── Health check cache — skip round-trip if server was confirmed alive recently
+let _healthBase: string = "";
+let _healthOkMs: number = 0;
+const HEALTH_CACHE_TTL = 3 * 60 * 1000; // 3 minutes
 
 async function apiFetch<T>(
   path: string,
@@ -17505,6 +18110,7 @@ async function apiFetch<T>(
         headers: {
           "Content-Type": "application/json",
           ...(_authJwt ? { Authorization: `Bearer ${_authJwt}` } : {}),
+          ...(!_authJwt && _clientId ? { "x-user-id": _clientId } : {}),
           ...(opts.headers || {}),
         },
       });
@@ -17545,8 +18151,8 @@ async function apiFetch<T>(
 // NEURAL EDGE DETECTION ENGINE (PHASE 11)
 // (SHIP-SAFE STUB — no late imports)
 // ===============================
-const EDGE_ENGINE_ENABLED = false as const;
-function detectEdges(_frame: any) {
+const _EDGE_ENGINE_ENABLED = false as const;
+function _detectEdges(_frame: any) {
   return null;
 }
 // -------------------------
@@ -18151,7 +18757,8 @@ signInBtn: {
   },
   profileBtn: {
     paddingVertical: 15,
-    paddingHorizontal: 16,
+    paddingLeft: 16,
+    paddingRight: 28,
     borderRadius: 0,
     borderWidth: 0,
     backgroundColor: "transparent",
