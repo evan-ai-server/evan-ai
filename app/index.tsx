@@ -20,6 +20,7 @@ import { WatchlistCard } from "../components/watchlist/WatchlistCard";
 import { BatchScanScreen } from "../components/batch/BatchScanScreen";
 import ItemHintInput from "../components/scan/ItemHintInput";
 import { updateWidgetData } from "../components/widget/updateWidgetData";
+import { OnboardingFlow, type SurveyAnswers } from "../components/onboarding/OnboardingFlow";
 
 import {
   View,
@@ -1606,6 +1607,7 @@ useEffect(() => {
   const neuralAura = useRef(new RNAnimated.Value(0)).current;
 const [showOnboard, setShowOnboard] = useState(false);
 const onboardOpacity = useRef(new RNAnimated.Value(0)).current;
+const [showSurvey, setShowSurvey] = useState(false);
 const tutorialOpacity = useRef(new RNAnimated.Value(1)).current;
 const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
 const welcomeScreenOp = useRef(new RNAnimated.Value(0)).current;
@@ -2269,6 +2271,16 @@ const skipOnboard = async () => {
   }).start(() => { setShowOnboard(false); setTutorialStep(0); });
 };
 
+// Survey complete — persist answers, optionally launch tutorial
+const handleSurveyComplete = useCallback(async (ans: SurveyAnswers, goTutorial: boolean) => {
+  try { await AsyncStorage.setItem("EVAN_SURVEY_V1", JSON.stringify(ans)); } catch {}
+  setShowSurvey(false);
+  if (goTutorial) {
+    // Brief pause lets the survey fade-out finish before tutorial mounts
+    setTimeout(() => openTutorial(), 380);
+  }
+}, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 const animTutorialContentIn = () => {
   tutorialContentY.setValue(22);
   tutorialIconScale.setValue(0.68);
@@ -2446,9 +2458,16 @@ useEffect(() => {
   let alive = true;
   (async () => {
     try {
+      // Survey check — show pre-tutorial onboarding if not yet completed
+      const surveySeen = await AsyncStorage.getItem("EVAN_SURVEY_V1");
+      if (!alive) return;
+      if (!surveySeen) {
+        setShowSurvey(true);
+        return;
+      }
+      // Tutorial check — show interactive tutorial if not yet seen
       const seen = await AsyncStorage.getItem("EVAN_ONBOARD_V1");
       if (!alive || seen) return;
-      // First-time user — open tutorial
       openTutorial();
     } catch {}
   })();
@@ -10768,6 +10787,14 @@ transform: [
     </RNAnimated.View>
   );
 })() : null}
+
+{/* ── ONBOARDING SURVEY (pre-tutorial, first-launch only) ─────────────── */}
+{showSurvey ? (
+  <OnboardingFlow
+    cameraPermissionGranted={permission?.granted ?? false}
+    onComplete={handleSurveyComplete}
+  />
+) : null}
 
 {/* ── WELCOME TO EVAN AI SCREEN ────────────────────────────────────────── */}
 {showWelcomeScreen ? (
