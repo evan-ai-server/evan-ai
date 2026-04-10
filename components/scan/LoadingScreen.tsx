@@ -325,9 +325,20 @@ export function LoadingScreen({
           {stageMeta ?? stageCopy.sub}
         </Text>
         {slowNetwork ? (
-          <View style={styles.weakSignalRow}>
-            <Ionicons name="wifi-outline" size={11} color="rgba(255,165,50,0.70)" />
-            <Text style={styles.weakSignalText}>Connection weak — still searching…</Text>
+          <View style={styles.subwayModeBlock}>
+            <View style={styles.subwayModeHeader}>
+              <View style={styles.subwayModeDot} />
+              <Text style={styles.subwayModeLabel}>DEEP ANALYSIS MODE</Text>
+            </View>
+            <Text style={styles.subwayModeText}>
+              Low signal detected — extending market search for best results
+            </Text>
+            {onRetry ? (
+              <Pressable onPress={onRetry} style={styles.subwayRetryBtn}>
+                <Ionicons name="refresh-outline" size={13} color="rgba(255,255,255,0.75)" />
+                <Text style={styles.subwayRetryText}>Retry with fresh scan</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
       </RNAnimated.View>
@@ -509,5 +520,57 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "rgba(255,165,50,0.70)",
     letterSpacing: 0.1,
+  },
+
+  // ── Subway-Mode (Deep Analysis) ──────────────────────────────────────────
+  subwayModeBlock: {
+    marginTop: SP.md,
+    borderWidth: 1,
+    borderColor: "rgba(255,200,60,0.20)",
+    borderRadius: R.md,
+    backgroundColor: "rgba(255,175,0,0.07)",
+    paddingHorizontal: SP.md,
+    paddingVertical: SP.sm + 2,
+    alignItems: "center",
+    gap: 4,
+  },
+  subwayModeHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  subwayModeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,200,60,0.85)",
+  },
+  subwayModeLabel: {
+    ...TY.cap,
+    color: "rgba(255,210,80,0.85)",
+    letterSpacing: 1.2,
+  },
+  subwayModeText: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.45)",
+    textAlign: "center",
+    lineHeight: 15,
+  },
+  subwayRetryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 4,
+    paddingHorizontal: SP.md,
+    paddingVertical: 6,
+    borderRadius: R.pill,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  subwayRetryText: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.75)",
+    fontWeight: "700",
   },
 });

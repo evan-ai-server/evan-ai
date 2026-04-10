@@ -375,6 +375,11 @@ export function ResultCard({
     ? computeVelocitySignal(data.priceChartPoints)
     : null;
 
+  // Confidence Range — "Est. $X – $Y" (App Store compliant: no "Guaranteed" language)
+  const confLow  = Number.isFinite(Number(data.historicalLow))  ? Number(data.historicalLow)  : null;
+  const confHigh = Number.isFinite(Number(data.historicalHigh)) ? Number(data.historicalHigh) : null;
+  const hasConfRange = isHero && confLow != null && confHigh != null && confHigh > confLow;
+
   return (
     <View style={[styles.card, isHero ? SH.cardActive : SH.card]}>
       {/* ── IMAGE SECTION (60%) ───────────────────────────────── */}
@@ -515,6 +520,16 @@ export function ResultCard({
               height={42}
               width={CARD.width - SP.lg * 2}
             />
+          ) : null}
+
+          {/* Confidence Range — "Est. $X – $Y" (legally safe, no "Guaranteed" language) */}
+          {hasConfRange ? (
+            <View style={styles.confRangeRow}>
+              <Ionicons name="analytics-outline" size={11} color="rgba(160,210,255,0.65)" />
+              <Text style={styles.confRangeText}>
+                {`Est. margin range  ${fmtMoney(confLow)} – ${fmtMoney(confHigh)}`}
+              </Text>
+            </View>
           ) : null}
 
           {/* Feature 8: Best time to buy signal */}
@@ -802,6 +817,23 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
+  },
+
+  // ── Confidence Range (App-Store-safe "Est. margin" display) ─────────────
+  confRangeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 3,
+    paddingLeft: 6,
+    borderLeftWidth: 1.5,
+    borderLeftColor: "rgba(100,180,255,0.22)",
+  },
+  confRangeText: {
+    ...TY.cap,
+    color: "rgba(160,210,255,0.72)",
+    fontSize: 9,
+    flex: 1,
   },
 
   // ── Intelligence rows (Features 8 & 10) ──────────────────────────────────
