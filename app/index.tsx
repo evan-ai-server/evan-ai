@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useEffect, useRef, useState } from "react";
+import { SubscriptionModal } from "../components/subscription/SubscriptionModal";
 import { ResultsContent } from "../components/results/ResultsContent";
 import {
   useNetworkStatus,
@@ -21,6 +22,8 @@ import { BatchScanScreen } from "../components/batch/BatchScanScreen";
 import ItemHintInput from "../components/scan/ItemHintInput";
 import { updateWidgetData } from "../components/widget/updateWidgetData";
 import { OnboardingFlow, type SurveyAnswers } from "../components/onboarding/OnboardingFlow";
+import { SingularityPipelineModal } from "../components/onboarding/SingularityPipeline";
+import { useSpatialZone, type ZoneKey } from "../components/spatial/SpatialContext";
 
 import {
   View,
@@ -71,14 +74,19 @@ import Reanimated, {
   useDerivedValue,
   clamp,
   withTiming,
+  withSpring,
+  withRepeat,
   cancelAnimation,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
   withSequence,
+  interpolate,
+  Extrapolation,
 } from "react-native-reanimated";
 
+import { Accelerometer } from "expo-sensors";
 import * as WebBrowser from "expo-web-browser";
 import * as Haptics from "expo-haptics";
 import * as Notifications from "expo-notifications";
@@ -89,6 +97,7 @@ import * as Clipboard from "expo-clipboard";
 import { configurePurchases, identifyUser, purchaseMonthly, purchaseYearly, restorePurchases } from "../src/purchases";
 
 import { BlurView } from "expo-blur";
+import { SoundEffect } from "../components/design/DS";
 import {
   Canvas,
   Group,
@@ -237,8 +246,8 @@ const MARKET_REQUEST_ABORT_MS = 28000; // oracle fallback needs ~15s; give 28s t
 const RETRY_REVEAL_MS = 2500;
 
 // money
-const PRO_MONTHLY_PRICE = 2.99;
-const PRO_YEARLY_PRICE = 24.99;
+const PRO_MONTHLY_PRICE = 7.77;
+const PRO_YEARLY_PRICE = 22.22;
 
 // -------------------------
 // ✅ HAPTICS (SAFE OPTIONAL)
@@ -976,6 +985,217 @@ export default function App() {
   );
 }
 
+// ─── Jackpot Price — golden breathing glow on the Go Pass price ───────────────
+function JackpotPrice({ price }: { price: number }) {
+  const glow = useSharedValue(0.35);
+  useEffect(() => {
+    glow.value = withRepeat(
+      withSequence(
+        withTiming(0.75, { duration: 1500 }),
+        withTiming(0.35, { duration: 1500 }),
+      ),
+      -1, false,
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const glowStyle = useAnimatedStyle(() => ({
+    shadowColor: "#FFD700",
+    shadowOpacity: glow.value,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+  }));
+  return (
+    <Reanimated.View style={[glowStyle as any, { alignSelf: "flex-start" }]}>
+      <Text style={{ color: "white", fontWeight: "900", fontSize: 30, letterSpacing: -0.8, lineHeight: 32 }}>
+        ${price.toFixed(2)}
+        <Text style={{ fontSize: 14, color: "rgba(255,255,255,0.70)", fontWeight: "800" }}>{" "}/ mo</Text>
+      </Text>
+    </Reanimated.View>
+  );
+}
+
+// ─── Sentient Greeting ────────────────────────────────────────────────────────
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h >= 5  && h < 11) return "The early bird gets the flip.";
+  if (h >= 11 && h < 14) return "Midday market check. Prices are moving.";
+  if (h >= 14 && h < 18) return "Afternoon run. Best time to list.";
+  if (h >= 18 && h < 23) return "Evening sourcing. Deals are waiting.";
+  return "Night owl mode active. Find the hidden gems.";
+}
+
+// ─── Laser Scanner ──────────────────────────────────────────────────────────────
+// Horizontal neon line that sweeps the viewfinder; haptic tick at each bounce.
+function LaserScanner({ active, goldPulse }: { active: boolean; goldPulse?: boolean }) {
+  const progress  = useSharedValue(0);
+  const bounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const goldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isGold, setIsGold] = useState(false);
+  const { height: screenH } = useWindowDimensions();
+
+  useEffect(() => {
+    if (!active) { progress.value = 0; return; }
+    const PERIOD = 1900;
+    progress.value = withRepeat(
+      withTiming(1, { duration: PERIOD, easing: Easing.inOut(Easing.sin) }),
+      -1, true,
+    );
+    const tick = () => {
+      try { Haptics.selectionAsync(); } catch {}
+      bounceRef.current = setTimeout(tick, PERIOD);
+    };
+    bounceRef.current = setTimeout(tick, PERIOD);
+    return () => { if (bounceRef.current) clearTimeout(bounceRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+
+  // Gold pulse: fires when goldPulse prop becomes true while active
+  useEffect(() => {
+    if (active && goldPulse) {
+      setIsGold(true);
+      if (goldTimerRef.current) clearTimeout(goldTimerRef.current);
+      goldTimerRef.current = setTimeout(() => setIsGold(false), 3000);
+    }
+    return () => { if (goldTimerRef.current) clearTimeout(goldTimerRef.current); };
+  }, [active, goldPulse]);
+
+  const lineColor = isGold ? "rgba(255,215,0,0.92)"  : "rgba(0,255,180,0.92)";
+  const shadowC   = isGold ? "rgba(255,215,0,1)"      : "rgba(0,255,180,1)";
+  const glowColor = isGold ? "rgba(255,215,0,0.08)"   : "rgba(0,255,180,0.07)";
+
+  const lineStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: interpolate(progress.value, [0, 1], [0, screenH - 2], Extrapolation.CLAMP) }],
+  }));
+
+  if (!active) return null;
+  return (
+    <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+      <Reanimated.View style={[laserStyles.glow, lineStyle as any, { backgroundColor: glowColor }]} />
+      <Reanimated.View style={[laserStyles.line, lineStyle as any, { backgroundColor: lineColor, shadowColor: shadowC }]} />
+    </View>
+  );
+}
+const laserStyles = StyleSheet.create({
+  line: {
+    position: "absolute", left: 0, right: 0, height: 1.5,
+    backgroundColor: "rgba(0,255,180,0.92)",
+    shadowColor: "rgba(0,255,180,1)", shadowOpacity: 0.9, shadowRadius: 5, shadowOffset: { width: 0, height: 0 },
+  },
+  glow: {
+    position: "absolute", left: 0, right: 0, height: 14, marginTop: -6,
+    backgroundColor: "rgba(0,255,180,0.07)",
+  },
+});
+
+// ─── Focus Lock Indicator ─────────────────────────────────────────────────────
+function FocusLockIndicator({ visible }: { visible: boolean }) {
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = visible
+      ? withSpring(1, { damping: 14, stiffness: 220 })
+      : withTiming(0, { duration: 280 });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+  // Breathing haptic: rhythmic light pulse while focus is locked
+  useEffect(() => {
+    if (!visible) return;
+    const interval = setInterval(() => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [visible]);
+  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return (
+    <Reanimated.View
+      pointerEvents="none"
+      style={[focusLockStyles.badge, style as any]}
+    >
+      <Ionicons name="aperture-outline" size={11} color="rgba(0,255,180,0.92)" />
+      <Text style={focusLockStyles.text}>FOCUS LOCKED</Text>
+    </Reanimated.View>
+  );
+}
+const focusLockStyles = StyleSheet.create({
+  badge: {
+    position: "absolute",
+    top: 84,
+    alignSelf: "center",
+    left: "50%",
+    marginLeft: -60,
+    width: 120,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    backgroundColor: "rgba(0,16,10,0.78)",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(0,255,180,0.32)",
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+  },
+  text: {
+    fontSize: 10,
+    fontWeight: "700" as const,
+    letterSpacing: 1.1,
+    color: "rgba(0,255,180,0.9)",
+  },
+});
+
+// ─── Vault Fly Particle ───────────────────────────────────────────────────────
+function VaultFlyParticle({ uri }: { uri: string }) {
+  const { width: W, height: H } = useWindowDimensions();
+  const tx = useSharedValue(0);
+  const ty = useSharedValue(0);
+  const sc = useSharedValue(1);
+  const op = useSharedValue(0.95);
+
+  useEffect(() => {
+    // Fly from center (card) → bottom-right (profile tab, ~3rd of 4 tabs)
+    tx.value = withTiming(W * 0.30, { duration: 680, easing: Easing.in(Easing.quad) });
+    ty.value = withTiming(H * 0.42, { duration: 680, easing: Easing.in(Easing.quad) });
+    sc.value  = withTiming(0.06, { duration: 680 });
+    op.value  = withSequence(
+      withTiming(1,   { duration: 160 }),
+      withDelay(280, withTiming(0, { duration: 360 })),
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: op.value,
+    transform: [
+      { translateX: tx.value },
+      { translateY: ty.value },
+      { scale: sc.value },
+    ] as any,
+  }));
+
+  return (
+    <Reanimated.View
+      pointerEvents="none"
+      style={[vaultFlyStyles.particle, style as any]}
+    >
+      <Image source={{ uri }} style={vaultFlyStyles.img} resizeMode="cover" />
+    </Reanimated.View>
+  );
+}
+const vaultFlyStyles = StyleSheet.create({
+  particle: {
+    position: "absolute",
+    top: "40%" as any,
+    left: "50%" as any,
+    marginLeft: -36,
+    marginTop: -36,
+    width: 72,
+    height: 72,
+    borderRadius: 12,
+    overflow: "hidden",
+    zIndex: 9999,
+  },
+  img: { width: 72, height: 72 },
+});
+
 type NeuralScanOverlayProps = {
   active: boolean;
   onFinished?: () => void;
@@ -1211,6 +1431,8 @@ function AppInner({
   intelState,
   setIntelState,
 }: any) {
+// ─── SPATIAL ENGINE ──────────────────────────────────────────────────────────
+const { setZone: setSpatialZone } = useSpatialZone();
 // -------------------------
 // BILLIONAIRE STATE
 // -------------------------
@@ -1515,7 +1737,20 @@ useEffect(() => {
   });
   const tapSub = Notifications.addNotificationResponseReceivedListener((response) => {
     const data = response.notification.request.content.data as any;
-    if (data?.screen === "watchlist") setTab("watchlist");
+    if (data?.screen === "watchlist") {
+      setTab("watchlist");
+      setSpatialZone("watchlist");
+      if (data?.watchlistId) {
+        setFocusedWatchlistId(data.watchlistId);
+        // Auto-scroll to the focused item after tab transition
+        const idx = (watchlistRef.current || []).findIndex((w: any) => w.id === data.watchlistId);
+        if (idx >= 0) {
+          setTimeout(() => {
+            watchlistScrollRef?.current?.scrollTo?.({ y: Math.max(0, idx * 218 - 16), animated: true });
+          }, 380);
+        }
+      }
+    }
   });
   return () => {
     sub.remove();
@@ -2505,6 +2740,7 @@ useEffect(() => {
 }, [iTutStep, showITutorial]); // eslint-disable-line react-hooks/exhaustive-deps
 
 const [watchlist, setWatchlist] = useState<any[]>([]);
+const [focusedWatchlistId, setFocusedWatchlistId] = useState<string | null>(null);
 // 🔥 STABILITY — declare refs BEFORE any effects use them
 const watchlistRef = useRef<any[]>([]);
 // ===============================
@@ -3034,7 +3270,26 @@ const [priceChangeBanner, setPriceChangeBanner] = useState(null);
   const [authSending, setAuthSending] = useState(false);
   const [authPwVisible, setAuthPwVisible] = useState(false);
   const [authIsRegister, setAuthIsRegister] = useState(false);
+  // Auth button pulse animation — pulses while sending, dims when disabled
+  const authBtnPulse = useRef(new RNAnimated.Value(1)).current;
+  const [authOtpShort, setAuthOtpShort] = useState(true);
   const [showPaywall, setShowPaywall] = useState(false);
+  // Auth button pulse — starts looping while authSending, resets otherwise
+  useEffect(() => {
+    authBtnPulse.stopAnimation();
+    if (authSending) {
+      RNAnimated.loop(
+        RNAnimated.sequence([
+          RNAnimated.timing(authBtnPulse, { toValue: 0.48, duration: 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+          RNAnimated.timing(authBtnPulse, { toValue: 1.0,  duration: 500, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      RNAnimated.timing(authBtnPulse, { toValue: authOtpShort ? 0.42 : 1.0, duration: 120, useNativeDriver: true }).start();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authSending, authOtpShort]);
+
   // ✅ PAYWALL POP (premium: blur + scale + opacity)
 const paywallPop = useRef(new RNAnimated.Value(0)).current;
 
@@ -3138,6 +3393,26 @@ const [_enrich, _setEnrich] = useState(null);
  const [_savingsSynced, _setSavingsSynced] = useState(false);
  // Feature 1: P&L Tracker
  const [plFlips, setPlFlips] = useState<PLFlip[]>([]);
+ const [plBadge, setPlBadge] = useState(false);
+ const lastProfileOpenMsRef = useRef<number>(0);
+ // Net/Gross profit toggle (15% platform fee deduction)
+ const [netProfitEnabled, setNetProfitEnabled] = useState(false);
+ // The Vault — screenshot trophy case
+ interface VaultEntry { id: string; uri: string; name: string; price: number | null; potentialProfit: number | null; timestamp: number }
+ const [vaultEntries, setVaultEntries] = useState<VaultEntry[]>([]);
+ const [vaultModalUri, setVaultModalUri] = useState<string | null>(null);
+ // Vault fly animation
+ const [vaultFly, setVaultFly] = useState<{ key: number; uri: string } | null>(null);
+ const vaultFlyKeyRef = useRef(0);
+ // Gold Pulse: laser turns gold for 3s when a top-tier item is vaulted
+ const [lastVaultIsTopTier, setLastVaultIsTopTier] = useState(false);
+ // Focus Lock (Ghost Scanner)
+ const [focusLocked, setFocusLocked] = useState(false);
+ const stillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+ const focusLockedRef = useRef(false);
+ // Heartbeat haptic during scan
+ const heartbeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+ const heartbeatPhaseRef = useRef<"slow" | "fast">("slow");
  // Feature 2: Haggle Score
  const [haggleResult, setHaggleResult] = useState<HaggleScoreResult | null>(null);
  const [haggleLoading, setHaggleLoading] = useState(false);
@@ -3258,6 +3533,90 @@ useEffect(() => {
 useEffect(() => {
   AsyncStorage.setItem("EVAN_PL_FLIPS_V1", JSON.stringify(plFlips)).catch(() => {});
 }, [plFlips]);
+
+// ── PLTracker badge: load last profile tab open time ──────────────────────────
+useEffect(() => {
+  AsyncStorage.getItem("EVAN_LAST_PROFILE_OPEN").then((v) => {
+    if (v) lastProfileOpenMsRef.current = Number(v);
+  }).catch(() => {});
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+
+// ── PLTracker badge: show when holding flips exist + profile stale >24h ───────
+useEffect(() => {
+  const hasHolding = plFlips.some((f) => f.status === "holding");
+  const stale = Date.now() - lastProfileOpenMsRef.current > 24 * 60 * 60 * 1000;
+  setPlBadge(hasHolding && stale);
+}, [plFlips]);
+
+// ── PLTracker badge: clear when profile tab opened ────────────────────────────
+useEffect(() => {
+  if (tab === "profile") {
+    setPlBadge(false);
+    lastProfileOpenMsRef.current = Date.now();
+    AsyncStorage.setItem("EVAN_LAST_PROFILE_OPEN", String(Date.now())).catch(() => {});
+  }
+}, [tab]);
+
+// ── Vault: load persisted entries on mount ────────────────────────────────────
+useEffect(() => {
+  AsyncStorage.getItem("EVAN_VAULT_V1").then((raw) => {
+    if (raw) { try { setVaultEntries(JSON.parse(raw)); } catch {} }
+  }).catch(() => {});
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+
+// ── Ghost Scanner: Focus Lock via Accelerometer ───────────────────────────────
+useEffect(() => {
+  const isCameraActive = tab === "camera" && !photo && !loadingResults && !!permission?.granted;
+  if (!isCameraActive) {
+    Accelerometer.removeAllListeners();
+    if (stillTimerRef.current) { clearTimeout(stillTimerRef.current); stillTimerRef.current = null; }
+    if (!focusLockedRef.current) setFocusLocked(false);
+    return;
+  }
+  Accelerometer.setUpdateInterval(80);
+  const sub = Accelerometer.addListener(({ x, y, z }) => {
+    const mag = Math.sqrt(x * x + y * y + z * z);
+    const movement = Math.abs(mag - 1.0); // ~1g when completely still
+    if (movement < 0.05) {
+      if (!stillTimerRef.current && !focusLockedRef.current) {
+        stillTimerRef.current = setTimeout(() => {
+          stillTimerRef.current = null;
+          focusLockedRef.current = true;
+          setFocusLocked(true);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          setTimeout(() => { focusLockedRef.current = false; setFocusLocked(false); }, 2200);
+        }, 1200);
+      }
+    } else {
+      if (stillTimerRef.current) { clearTimeout(stillTimerRef.current); stillTimerRef.current = null; }
+      if (!focusLockedRef.current) setFocusLocked(false);
+    }
+  });
+  return () => {
+    sub.remove();
+    if (stillTimerRef.current) { clearTimeout(stillTimerRef.current); stillTimerRef.current = null; }
+  };
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [tab, photo, loadingResults, permission?.granted]);
+
+// ── Heartbeat haptic: rhythmic Light pulse while scanning, crescendo on enrich ─
+useEffect(() => {
+  if (!loadingResults) {
+    if (heartbeatTimerRef.current) clearTimeout(heartbeatTimerRef.current);
+    heartbeatPhaseRef.current = "slow";
+    return;
+  }
+  heartbeatPhaseRef.current = "slow";
+  const tick = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const ms = heartbeatPhaseRef.current === "fast" ? 200 : 750;
+    heartbeatTimerRef.current = setTimeout(tick, ms);
+  };
+  heartbeatTimerRef.current = setTimeout(tick, 900);
+  return () => { if (heartbeatTimerRef.current) clearTimeout(heartbeatTimerRef.current); };
+}, [loadingResults]);
 
 // ── Feature 14: Sync savings profile to server when stats change ──────────────
 useEffect(() => {
@@ -3621,6 +3980,32 @@ const runDailyWatchlistCheck = async ({ force = false, quiet = true } = {}) => {
         setSavedToast(`🎯 Target hit — ${w.title || w.query} · ${money(best)}`);
       }
 
+      // Price Pulse: notify on >15% drop or new all-time low (VALUE FLOOR)
+      const prevBestPulse = toNumber(w.lastBest);
+      if (!targetHit && Number.isFinite(prevBestPulse) && prevBestPulse > 0 && best < prevBestPulse) {
+        const dropPct = (prevBestPulse - best) / prevBestPulse;
+        const histLows = (w.history ?? []).map((h: any) => toNumber(h.best ?? 0)).filter((n: number) => Number.isFinite(n) && n > 0);
+        const allTimeLow = histLows.length > 0 ? Math.min(...histLows) : prevBestPulse;
+        const isNewFloor = best < allTimeLow;
+        if (dropPct >= 0.15 || isNewFloor) {
+          try {
+            await Notifications.scheduleNotificationAsync({
+              content: {
+                title: isNewFloor ? "🔥 New Value Floor!" : "📉 Price Pulse",
+                body: isNewFloor
+                  ? `${w.title || w.query} hit an all-time low: ${money(best)} (was ${money(prevBestPulse)})`
+                  : `${w.title || w.query} dropped ${Math.round(dropPct * 100)}% to ${money(best)}`,
+                data: { screen: "watchlist", watchlistId: w.id, best },
+                sound: true,
+              },
+              trigger: null,
+            });
+          } catch {
+            // non-fatal
+          }
+        }
+      }
+
       setWatchlist((prev) =>
         prev.map((x) => {
           if (x.id !== w.id) return x;
@@ -3725,22 +4110,82 @@ const runFlipScanner = async (category: string) => {
 };
 
 // ── Feature 1: P&L handler functions ─────────────────────────────────────────
+
+// Fire-and-forget server sync — only runs when the user is signed in.
+// Optimistic: local state is already updated before this fires.
+const syncFlipToServer = (flip: PLFlip, uid: string) => {
+  if (!_authJwt || !uid) return;
+  fetch(`${SAFE_API_BASE}/api/pl/record`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${_authJwt}`,
+    },
+    body: JSON.stringify({ userId: uid, flip }),
+  }).catch(() => {});
+};
+
+const handleVaultSave = async (entry: { id: string; tempUri: string; name: string; price: number | null; potentialProfit: number | null }) => {
+  try {
+    const vaultDir = `${FileSystem.documentDirectory}vault/`;
+    await FileSystem.makeDirectoryAsync(vaultDir, { intermediates: true }).catch(() => {});
+    const destUri = `${vaultDir}vault_${entry.id}.png`;
+    await FileSystem.copyAsync({ from: entry.tempUri, to: destUri });
+    const finalEntry: VaultEntry = { id: entry.id, uri: destUri, name: entry.name, price: entry.price, potentialProfit: entry.potentialProfit, timestamp: Date.now() };
+    setVaultEntries(prev => {
+      const next = [finalEntry, ...prev].slice(0, 30);
+      AsyncStorage.setItem("EVAN_VAULT_V1", JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+    // Vault fly particle — thumbnail flies from card to profile tab
+    vaultFlyKeyRef.current += 1;
+    setVaultFly({ key: vaultFlyKeyRef.current, uri: destUri });
+    setTimeout(() => setVaultFly(null), 900);
+    // Gold pulse: laser turns gold when a high-profit item (>$100) is vaulted
+    if ((entry.potentialProfit ?? 0) > 100) {
+      setLastVaultIsTopTier(true);
+      setTimeout(() => setLastVaultIsTopTier(false), 300000); // 5 minutes
+    }
+    // Synchronized chime + haptic win burst
+    SoundEffect.chime();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  } catch {}
+};
+
+const handleOrbPress = () => {
+  heartbeatPhaseRef.current = "fast";
+  // Founder's triple-tap signature
+  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}), 100);
+  setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}), 200);
+  setTimeout(() => { heartbeatPhaseRef.current = "slow"; }, 2000);
+};
+
 const handlePlAdd = (flip: PLFlip) => {
   setPlFlips((prev) => [flip, ...prev]);
+  // Optimistic server sync — UI is already updated, this is background
+  if (userId) syncFlipToServer(flip, userId);
 };
 
 const handlePlDelete = (id: string) => {
   setPlFlips((prev) => prev.filter((f) => f.id !== id));
+  // No server delete endpoint — local removal is sufficient
 };
 
 const handlePlMarkSold = (id: string, soldPrice: number) => {
-  setPlFlips((prev) =>
-    prev.map((f) =>
+  setPlFlips((prev) => {
+    const updated = prev.map((f) =>
       f.id === id
-        ? { ...f, soldPrice, soldAt: Date.now(), status: "sold" as const }
+        ? { ...f, soldPrice, soldAt: Date.now() as any, status: "sold" as const }
         : f
-    )
-  );
+    );
+    // Fire-and-forget sync — runs after updater returns, not during render
+    if (userId && _authJwt) {
+      const soldFlip = updated.find((f) => f.id === id);
+      if (soldFlip) Promise.resolve().then(() => syncFlipToServer(soldFlip, userId!));
+    }
+    return updated;
+  });
 };
 
 // ── Feature 3: Load Local Radar ───────────────────────────────────────────────
@@ -5281,7 +5726,27 @@ if (intelRaw) {
             if (payload.exp && payload.exp > nowSec) {
               _authJwt = jwt;
               setIsSignedIn(true);
-              if (payload.sub) { setUserId(payload.sub); _clientId = payload.sub; }
+              if (payload.sub) {
+                setUserId(payload.sub);
+                _clientId = payload.sub;
+                // Monospace recovery toast — feels like the AI remembered you
+                setSavedToast("[SYSTEM] SESSION RESTORED");
+                // Merge server flips into local state (fire-and-forget)
+                fetch(`${SAFE_API_BASE}/api/pl/flips/${payload.sub}`, {
+                  headers: { "Authorization": `Bearer ${jwt}` },
+                }).then((r) => r.json()).then((d) => {
+                  if (Array.isArray(d?.flips) && d.flips.length) {
+                    setPlFlips((prev: PLFlip[]) => {
+                      const existingIds = new Set(prev.map((f) => f.id));
+                      const fresh = d.flips.filter((f: any) => !existingIds.has(f.id));
+                      if (!fresh.length) return prev;
+                      return [...fresh, ...prev].sort(
+                        (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
+                      );
+                    });
+                  }
+                }).catch(() => {});
+              }
             } else {
               await AsyncStorage.removeItem("evan_jwt_v1");
             }
@@ -6016,9 +6481,18 @@ const searchMarketStream = async (
   for (const rawBase of API_BASE_CANDIDATES) {
     const base = String(rawBase || "").replace(/\/+$/, "");
     try {
+      const streamHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+      };
+      if (_authJwt) {
+        streamHeaders["Authorization"] = `Bearer ${_authJwt}`;
+      } else if (_clientId) {
+        streamHeaders["x-user-id"] = _clientId;
+      }
       const resp = await fetch(`${base}/market/search/stream`, {
         method:  "POST",
-        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+        headers: streamHeaders,
         body,
         signal,
       });
@@ -6030,7 +6504,9 @@ const searchMarketStream = async (
       let buf = "";
       let lastEvent = "";
       let activeScanId: string | null = null; // set from first event
+      let streamComplete = false;
 
+      try {
       while (true) {
         const { done, value } = await readWithTimeout(reader, 15000);
         if (done) break;
@@ -6072,6 +6548,7 @@ const searchMarketStream = async (
                   writePriceCache(params.query, data);
                 }
                 setOfflineCachedAt(null);
+                streamComplete = true; // exit outer loop — don't wait for reader.done
               } else if (lastEvent === "phase" && onPhase) {
                 onPhase(data.phase);
               } else if (lastEvent === "error") {
@@ -6085,10 +6562,24 @@ const searchMarketStream = async (
             lastEvent = "";
           }
         }
+
+        // Break out immediately after complete — don't block on readWithTimeout waiting
+        // for the server to close the TCP connection (React Native reader may hang).
+        if (streamComplete) break;
+      }
+      } finally {
+        try { reader.cancel(); } catch {}
       }
 
       // Stream ended — return final data (or provisional as fallback)
-      return finalData ?? lastProvisional ?? null;
+      // If stream closed with no items (e.g. oracle_timeout → complete with items:[]),
+      // fall through to legacy searchMarket rather than returning an empty truthy object.
+      const streamResult = finalData ?? lastProvisional ?? null;
+      const streamHasItems =
+        (Array.isArray(streamResult?.items) && streamResult.items.length > 0) ||
+        (Array.isArray(streamResult?.results) && streamResult.results.length > 0);
+      if (streamResult && streamHasItems) return streamResult;
+      console.warn("searchMarketStream: stream completed with no items, falling back to legacy search");
 
     } catch (e: any) {
       if (e?.name === "AbortError") throw e;
@@ -6097,7 +6588,7 @@ const searchMarketStream = async (
     }
   }
 
-  // Fallback: if all stream attempts fail, use legacy searchMarket
+  // Fallback: if all stream attempts fail or returned no data, use legacy searchMarket
   console.warn("searchMarketStream: falling back to legacy searchMarket");
   const legacyData = await searchMarket(params, signal);
   if (legacyData) onComplete(legacyData);
@@ -6426,8 +6917,9 @@ const goTab = (next) => {
     // 2) lock opacity at 0 before switching
     try { tabFade.setValue?.(0); } catch {}
 
-    // 3) switch tab
+    // 3) switch tab + spatial zone
     setTab(to);
+    setSpatialZone(to as ZoneKey);
 
     // Feature 9: load relist suggestions when navigating to watchlist
     if (to === "watchlist") {
@@ -7226,7 +7718,7 @@ requestAnimationFrame(() => {
   }
   try {
 
-const visionTimeout = withTimeout(7000, controller);
+const visionTimeout = withTimeout(25000, controller);
 
 // ── Speculative market search — fires concurrently with vision ────────────
 // If user typed an itemHint, we can start fetching prices before vision returns.
@@ -7443,11 +7935,6 @@ if (!visionQuery || !String(visionQuery).trim()) {
 }
 
 if (visionConfidence < CONFIDENCE_THRESHOLD) {
-  setSavedToast("Low confidence — still searching…");
-}
-
-
-if (visionConfidence < CONFIDENCE_THRESHOLD) {
   // ✅ still continue (don’t hard-fail)
   setSavedToast("Low confidence — still searching…");
 }
@@ -7584,9 +8071,17 @@ try {
     combined = cachedMarketItems;
   } else {
     setScanStage("market");
-    setScanStageMeta(`Checking live comps for ${visionQuery}...`);
+    setScanStageMeta("SCANNING MARKET...");
     // Haptic heartbeat: second tick when market search starts
     Haptics.selectionAsync().catch(() => {});
+
+    // Dynamic status injection — keeps user engaged during the search phases
+    const _statusT1 = setTimeout(() => {
+      if (isLiveScan()) setScanStageMeta("INVOKING ORACLE CLOUD...");
+    }, 5000);
+    const _statusT2 = setTimeout(() => {
+      if (isLiveScan()) setScanStageMeta("FINALIZING MARKET SPECTRUM...");
+    }, 9000);
 
     console.log("RUNSCAN -> STARTING MARKET SEARCH", {
       visionQuery,
@@ -7597,7 +8092,9 @@ try {
 
     let _provisionalMarketData: any = null;
     let _provisionalNavigated = false;
-    const marketData: any = await searchMarketStream(
+    let marketData: any;
+    try {
+      marketData = await searchMarketStream(
       {
         query: visionQuery,
         variants: visionVariants,
@@ -7628,8 +8125,9 @@ try {
             : `${provCount} listings found — enriching…`;
           setScanStage("analysis");
           setScanStageMeta(stageMeta);
-          // Haptic heartbeat: third tick when listings land — "Finalizing Price"
+          // Haptic heartbeat: third tick when listings land — crescendo begins
           Haptics.selectionAsync().catch(() => {});
+          heartbeatPhaseRef.current = "fast";
           // Navigate to results early — _provisionalNavigated prevents double navigation
           if (!_provisionalNavigated && tabRef?.current !== "results") {
             _provisionalNavigated = true;
@@ -7645,9 +8143,14 @@ try {
         if (phase === "enriching") {
           setScanStage("analysis");
           setScanStageMeta("Enriching with deeper market data…");
+          heartbeatPhaseRef.current = "fast"; // crescendo: haptic pulse accelerates
         }
       },
     );
+    } finally {
+      clearTimeout(_statusT1);
+      clearTimeout(_statusT2);
+    }
 
     const rawItems = Array.isArray(marketData?.items) ? marketData.items : [];
 
@@ -8001,20 +8504,6 @@ priceScore * 0.12 +
     return Number(a.numericTotal || Infinity) - Number(b.numericTotal || Infinity);
   });
 
-const requiredDealDelta = 0.01;
-
-const _qualifiesSavingsFloor = (item) => {
-  if (!Number.isFinite(scannedPrice) || Number(scannedPrice) <= 0) return true;
-
-  const total = Number(
-    item?.numericTotal ?? item?.totalPrice ?? item?.numericPrice
-  );
-
-  if (!Number.isFinite(total)) return false;
-
-  return total <= Number(scannedPrice) + requiredDealDelta;
-};
-
 const promotedPool = (combined || []).filter(
   (item) => item.__linkVerified !== false
 );
@@ -8064,8 +8553,8 @@ const rankedPool = [
 ]
   .filter(Boolean)
   .sort((a, b) => {
-    const priceA = Number.isFinite(a?.totalPrice) ? a.totalPrice : a?.price ?? Infinity;
-    const priceB = Number.isFinite(b?.totalPrice) ? b.totalPrice : b?.price ?? Infinity;
+    const priceA = Number.isFinite(a?.totalPrice) ? a.totalPrice : (a?.price ?? Infinity);
+    const priceB = Number.isFinite(b?.totalPrice) ? b.totalPrice : (b?.price ?? Infinity);
 
     const simA = Number(a?.__sim || 0);
     const simB = Number(b?.__sim || 0);
@@ -8073,13 +8562,19 @@ const rankedPool = [
     const verifiedA = a?.__linkVerified ? 1 : 0;
     const verifiedB = b?.__linkVerified ? 1 : 0;
 
-    // prioritize cheaper listings
+    // Premium anchors (>2.5x scanned price) always go last — they're context, not deals
+    if (Number.isFinite(scannedPrice)) {
+      const threshold = scannedPrice * 2.5;
+      const aPrem = priceA > threshold;
+      const bPrem = priceB > threshold;
+      if (aPrem !== bPrem) return aPrem ? 1 : -1;
+    }
+
+    // Among non-anchors: cheapest first
     if (priceA !== priceB) return priceA - priceB;
 
-    // prioritize better visual match
+    // Tiebreak: better visual match, then verified link
     if (simA !== simB) return simB - simA;
-
-    // prioritize verified links
     return verifiedB - verifiedA;
   });
 
@@ -8087,7 +8582,6 @@ const top3 = rankedPool.slice(0, 3);
 
 console.log("TOP3 DECISION →", {
   scannedPrice,
-  requiredDealDelta,
   promotionPool: promotionPool.length,
   cheaperExact: cheaperExactMatches.length,
   cheaperRescue: cheaperRescueMatches.length,
@@ -8140,10 +8634,10 @@ if (!isLiveScan()) return;
 setSeeMoreListings(displayPool);
 
 if (top3.length === 0) {
-  const comparableTop3 = displayPool.slice(0, 3);
+  const fallbackTop3 = displayPool.slice(0, 3);
 
-  setResults(comparableTop3);
-  setActiveResult(comparableTop3[0] || null);
+  setResults(fallbackTop3);
+  setActiveResult(fallbackTop3[0] || null);
   setLastScan({
     kind: "no-cheaper",
     confidence: visionConfidence,
@@ -8151,12 +8645,15 @@ if (top3.length === 0) {
     results: displayPool.slice(0, 5),
   });
 
-showUiError(
-  "No promoted deal passed your floor",
-  Number.isFinite(scannedPrice)
-    ? `We found comparable listings, but none were both trustworthy and at least ${money(requiredDealDelta)} cheaper than your entered price of ${money(scannedPrice)}.`
-    : "We found comparable listings, but none were trustworthy enough to promote as the top result."
-);
+  // Only show an error if we truly have nothing to display.
+  // When displayPool has oracle/comparable items, render them silently —
+  // a degraded result is always better than a "no results" failure screen.
+  if (fallbackTop3.length === 0) {
+    showUiError(
+      "No results found",
+      "We couldn't find comparable listings right now. Try rescanning or adjusting the search."
+    );
+  }
 
   stopLoadingSafely(reqId);
   goTab("results");
@@ -8635,7 +9132,7 @@ setIntelState((prev) => {
 } catch (e) {
   if (e?.name === "AbortError") {
     // cancel/hard-timeout path: keep it clean (no crash UI)
-    stopLoadingSafely();
+    stopLoadingSafely(reqId);
     return;
   }
 
@@ -9697,6 +10194,10 @@ useEffect(() => {
 
 // ✅ HARD TAB FADE RECOVERY — prevents “UI disappears” (tabFade stuck at 0)
 useEffect(() => {
+  // ✅ Skip during intentional goTab transitions — goTab owns tabFade and has its own 700ms failsafe.
+  // Intervening here cancels the fade-in animation and causes the flicker.
+  if (tabSwitchingRef.current) return;
+
   // ✅ clamp: never allow the screen to go fully transparent during tab switches
   try {
     tabFade?.stopAnimation?.();
@@ -9704,6 +10205,8 @@ useEffect(() => {
   } catch {}
 
   const id = setTimeout(() => {
+    // Re-check: a goTab may have started during the 60ms delay
+    if (tabSwitchingRef.current) return;
     try {
       tabFade?.stopAnimation?.();
       tabFade?.setValue?.(1);
@@ -9935,10 +10438,11 @@ const _pulseOpacity = loadingPulse.interpolate({
 });
 
 return (
-<GestureHandlerRootView style={{ flex: 1 }}>
+<GestureHandlerRootView style={{ flex: 1, backgroundColor: "transparent" }}>
 <RNAnimated.View
 style={{
   flex: 1,
+  backgroundColor: "transparent",
 transform: [
   {
     scale: uiDepth.interpolate({
@@ -9961,7 +10465,7 @@ transform: [
 ],
 }}
 >
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: "transparent" }}>
       <StatusBar style="light" />
       
       {Boolean(showSplash) ? (
@@ -11203,6 +11707,16 @@ transform: [
         </Pressable>
       </View>
     </View>
+
+    {/* Sentient greeting — time-aware hint below scan pills */}
+    <View
+      pointerEvents="none"
+      style={{ position: "absolute", top: TOP + 136, left: 0, right: 0, alignItems: "center" }}
+    >
+      <Text style={{ color: "rgba(255,255,255,0.28)", fontSize: 11, fontWeight: "500", letterSpacing: 0.4 }}>
+        {getGreeting()}
+      </Text>
+    </View>
   </RNAnimated.View>
 ) : null}
 
@@ -11295,6 +11809,9 @@ onBarcodeScanned={(d) => {
     resizeMode="cover"
   />
 )}
+
+<LaserScanner active={tab === "camera" && !photo && !loadingResults && !!permission?.granted} goldPulse={lastVaultIsTopTier} />
+<FocusLockIndicator visible={focusLocked} />
 
 <NeuralScanOverlay
   active={scanAnimActive}
@@ -11839,6 +12356,9 @@ style={[
       });
     }
   }}
+  onVaultSave={handleVaultSave}
+  onOrbPress={handleOrbPress}
+  isNet={netProfitEnabled}
 />
 
 {/* Feature 8: Set Alert row — visible below results when item is loaded */}
@@ -12475,23 +12995,31 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
 >
 
     {watchlist.map((w, wIdx) => (
-      <WatchlistCard
+      <View
         key={w.id}
-        item={w}
-        index={wIdx}
-        tabVisible={tab === "watchlist"}
-        onRecheck={() => {
-          hapticSelect();
-          runDailyWatchlistCheck({ force: true, quiet: false });
-          setSavedToast("Checking…");
-        }}
-        onRemove={() => {
-          hapticSelect();
-          setWatchlist((prev) => prev.filter((x) => x.id !== w.id));
-          setSavedToast("Removed");
-        }}
-        onVisitScan={handleVisitScan}
-      />
+        style={focusedWatchlistId && focusedWatchlistId !== w.id
+          ? { opacity: 0.42, transform: [{ scale: 0.98 }] }
+          : undefined}
+      >
+        <WatchlistCard
+          item={w}
+          index={wIdx}
+          tabVisible={tab === "watchlist"}
+          focused={focusedWatchlistId === w.id}
+          onClearFocus={() => setFocusedWatchlistId(null)}
+          onRecheck={() => {
+            hapticSelect();
+            runDailyWatchlistCheck({ force: true, quiet: false });
+            setSavedToast("Checking…");
+          }}
+          onRemove={() => {
+            hapticSelect();
+            setWatchlist((prev) => prev.filter((x) => x.id !== w.id));
+            setSavedToast("Removed");
+          }}
+          onVisitScan={handleVisitScan}
+        />
+      </View>
     ))}
 
     {/* Feature 9: Smart Sell Suggestions */}
@@ -12769,7 +13297,63 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
   onAdd={handlePlAdd}
   onDelete={handlePlDelete}
   onMarkSold={handlePlMarkSold}
+  isNet={netProfitEnabled}
+  onToggleNet={() => setNetProfitEnabled(v => !v)}
 />
+
+{/* The Vault — screenshot trophy case */}
+{vaultEntries.length > 0 ? (() => {
+  const vaultValue = vaultEntries.reduce((s, e) => s + (e.potentialProfit ?? 0), 0);
+  const thumbSize = Math.floor((Dimensions.get("window").width - 40 - 32 - 8) / 3);
+  return (
+    <View style={{ marginTop: 20 }}>
+      {/* Header */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "rgba(180,140,255,0.10)", paddingHorizontal: 9, paddingVertical: 4, borderRadius: 99, borderWidth: 1, borderColor: "rgba(180,140,255,0.25)" }}>
+          <Ionicons name="albums-outline" size={12} color="rgba(210,185,255,0.9)" />
+          <Text style={{ color: "rgba(210,185,255,0.9)", fontSize: 11, fontWeight: "800", letterSpacing: 0.5 }}>THE VAULT</Text>
+        </View>
+        {vaultValue > 0 ? (
+          <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, fontWeight: "600", marginLeft: "auto" }}>
+            {`+$${vaultValue.toFixed(0)} potential`}
+          </Text>
+        ) : null}
+      </View>
+      {/* Grid */}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+        {vaultEntries.map((entry) => (
+          <Pressable
+            key={entry.id}
+            onPress={() => setVaultModalUri(entry.uri)}
+            style={({ pressed }) => [{ width: thumbSize, height: thumbSize, borderRadius: 12, overflow: "hidden", opacity: pressed ? 0.8 : 1 }]}
+          >
+            <Image source={{ uri: entry.uri }} style={{ width: thumbSize, height: thumbSize }} resizeMode="cover" />
+            <BlurView intensity={38} tint="dark" style={StyleSheet.absoluteFillObject} />
+            <View style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: 5 }}>
+              <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 9, fontWeight: "800", numberOfLines: 1 } as any} numberOfLines={1}>{entry.name}</Text>
+              {entry.price != null ? <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 8, fontWeight: "600" }}>${Number(entry.price).toFixed(0)}</Text> : null}
+            </View>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+})() : null}
+
+{/* Vault full-screen viewer */}
+{vaultModalUri ? (
+  <Modal visible transparent animationType="fade" onRequestClose={() => setVaultModalUri(null)}>
+    <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.95)", alignItems: "center", justifyContent: "center" }} onPress={() => setVaultModalUri(null)}>
+      <Image source={{ uri: vaultModalUri }} style={{ width: Dimensions.get("window").width - 40, height: Dimensions.get("window").height * 0.65, borderRadius: 20 }} resizeMode="contain" />
+      <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, marginTop: 16, fontWeight: "600" }}>Tap to close</Text>
+    </Pressable>
+  </Modal>
+) : null}
+
+{/* Vault fly micro-animation — thumbnail particle flies from card to profile tab */}
+{vaultFly ? (
+  <VaultFlyParticle key={vaultFly.key} uri={vaultFly.uri} />
+) : null}
 
           <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: "700", letterSpacing: 1.1, textTransform: "uppercase", marginTop: 24, marginBottom: 10, paddingHorizontal: 2 }}>Account</Text>
           <View style={{ borderRadius: 22, borderWidth: 1, borderColor: "rgba(255,255,255,0.10)", backgroundColor: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
@@ -13857,10 +14441,22 @@ safeOpenUrl(activeResult.buyLink, activeResult.itemName || "Listing" );
           </View>
         </View>
       </Modal>
-      {/* PROFILE MODAL: SUBSCRIPTION */}
-
-<Modal
+      {/* PROFILE MODAL: SUBSCRIPTION — new SubscriptionModal */}
+<SubscriptionModal
   visible={profileModal === "subscription"}
+  onClose={() => setProfileModal(null)}
+  onPurchased={(isPro) => {
+    if (isPro) {
+      setIsPro(true);
+      setIsSignedIn(true);
+    }
+    setProfileModal(null);
+  }}
+/>
+
+{/* PROFILE MODAL: SUBSCRIPTION — LEGACY (hidden, kept for reference) */}
+<Modal
+  visible={false}
   animationType="fade"
   presentationStyle="overFullScreen"
   transparent
@@ -13945,27 +14541,8 @@ safeOpenUrl(activeResult.buyLink, activeResult.itemName || "Listing" );
     alignItems: "flex-start",
   }}
 >
-  {/* Monthly */}
-  <Text
-    style={{
-      color: "white",
-      fontWeight: "900",
-      fontSize: 30,
-      letterSpacing: -0.8,
-      lineHeight: 32,
-    }}
-  >
-    ${PRO_MONTHLY_PRICE.toFixed(2)}
-    <Text
-      style={{
-        fontSize: 14,
-        color: "rgba(255,255,255,0.70)",
-        fontWeight: "800",
-      }}
-    >
-      {" "} / mo
-    </Text>
-  </Text>
+  {/* Monthly — jackpot golden glow */}
+  <JackpotPrice price={PRO_MONTHLY_PRICE} />
 
   <Text
     style={{
@@ -14207,82 +14784,19 @@ const store =
   </View>
 </Modal>
 
-{/* PAYWALL MODAL */}
-<Modal
+{/* PAYWALL MODAL — routes directly to SubscriptionModal */}
+<SubscriptionModal
   visible={showPaywall}
-  animationType="fade"
-  presentationStyle="overFullScreen"
-  transparent
-  onRequestClose={() => setShowPaywall(false)}
->
-  <View style={styles.modalBackdrop}>
-    {/* ✅ Blur background (premium) */}
-    <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFillObject} />
-    <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.18)" }]} />
-
-    {/* ✅ Scale + opacity pop */}
-    <RNAnimated.View
-      style={{
-        width: "100%",
-        opacity: paywallPop,
-        transform: [
-          {
-            scale: paywallPop.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0.96, 1],
-            }),
-          },
-        ],
-      }}
-    >
-      <View style={styles.modalCard}>
-        <Text style={styles.modalTitle}>You've reached your daily limit</Text>
-        <Text style={styles.modalDesc}>
-          {`You get ${FREE_SCAN_LIMIT_FALLBACK} free scans per day.${
-            scanResetAt
-              ? `\nResets at ${new Date(scanResetAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`
-              : "\nCome back tomorrow for more."
-          }`}
-        </Text>
-
-        <View style={styles.paywallBox}>
-          <View style={styles.inlineRow}>
-            <Ionicons name="sparkles-outline" size={18} color="white" />
-            <Text style={styles.paywallTitle}>
-              Pro — ${PRO_MONTHLY_PRICE.toFixed(2)}/month
-            </Text>
-          </View>
-          <Text style={styles.paywallSub}>
-            Unlimited scans · price alerts · watchlist sync
-          </Text>
-        </View>
-
-        <Pressable
-          onPress={() => {
-            hapticSelect();
-            setShowPaywall(false);
-            setProfileModal("subscription");
-          }}
-          style={styles.modalPrimary}
-        >
-          <Text style={styles.modalPrimaryText}>
-            Upgrade for unlimited scans
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => {
-            hapticSelect();
-            setShowPaywall(false);
-          }}
-          style={styles.modalSecondary}
-        >
-          <Text style={styles.modalSecondaryText}>Come back tomorrow</Text>
-        </Pressable>
-      </View>
-    </RNAnimated.View>
-  </View>
-</Modal>
+  onClose={() => setShowPaywall(false)}
+  onPurchased={(isPro) => {
+    if (isPro) {
+      setIsPro(true);
+      setIsSignedIn(true);
+    }
+    setShowPaywall(false);
+  }}
+  initialPlan="plus"
+/>
 
       {/* PROFILE MODAL: REVIEW */}
 <Modal
@@ -14335,45 +14849,11 @@ onPress={() => {
           </View>
         </View>
       </Modal>
-{/* PROFILE MODAL: HOW WE'RE DIFFERENT */}
-<Modal
+{/* PROFILE MODAL: HOW WE’RE DIFFERENT — Singularity Pipeline infographic */}
+<SingularityPipelineModal
   visible={profileModal === "different"}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
-  presentationStyle="overFullScreen" 
-  transparent
-  onRequestClose={() => setProfileModal(null)}
->
-  <View style={styles.modalBackdrop}>
-    <View style={styles.modalCard}>
-      <View style={styles.modalTopRow}>
-        <Text style={styles.modalTitle}>How Evan AI is different</Text>
-        <Pressable
-          onPress={() => { hapticSelect(); setProfileModal(null); }}
-          style={styles.backPill}
-        >
-          <Ionicons name="close" size={16} color="white" />
-          <Text style={styles.backText}>Close</Text>
-        </Pressable>
-      </View>
-      <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
-        <Text style={styles.modalDesc}>
-          Evan AI prioritizes thrift, resale, and niche marketplaces first — and ranks results by value, not ads.
-        </Text>
-        <Text style={styles.modalDesc}>• Niche-first identification (vintage / weird / collector items)</Text>
-        <Text style={styles.modalDesc}>• Resale-first search (eBay, Etsy, resale platforms)</Text>
-        <Text style={styles.modalDesc}>• Confidence shown honestly (no forced certainty)</Text>
-        <Text style={styles.modalDesc}>• Value-first ranking (price + condition + shipping)</Text>
-        <Text style={styles.modalDesc}>• Parts / labels / maker’s marks supported via scan modes</Text>
-      </ScrollView>
-      <Pressable
-        style={styles.modalPrimary}
-        onPress={() => { hapticSelect(); setProfileModal(null); }}
-      >
-        <Text style={styles.modalPrimaryText}>Done</Text>
-      </Pressable>
-    </View>
-  </View>
-</Modal>
+  onClose={() => setProfileModal(null)}
+/>
       {/* PROFILE MODAL: TERMS */}
 <Modal
   visible={profileModal === "terms"}
@@ -15106,14 +15586,22 @@ const pick = await ImagePicker.launchImageLibraryAsync({
             </Text>
           </View>
 
-          {/* Password input */}
+          {/* Password input — red border on auth error */}
           <View style={{ position: "relative" }}>
             <TextInput
               value={authOtp}
-              onChangeText={(t) => { setAuthOtp(t); setAuthError(""); }}
+              onChangeText={(t) => {
+                setAuthOtp(t);
+                setAuthError("");
+                setAuthOtpShort(t.length < 6);
+              }}
               placeholder="Password"
               placeholderTextColor="rgba(255,255,255,0.28)"
-              style={[styles.authInput, { paddingRight: 48 }]}
+              style={[
+                styles.authInput,
+                { paddingRight: 48 },
+                authError ? { borderColor: "rgba(255,70,70,0.70)", borderWidth: 1.5 } : {},
+              ]}
               secureTextEntry={!authPwVisible}
               autoFocus
             />
@@ -15132,6 +15620,7 @@ const pick = await ImagePicker.launchImageLibraryAsync({
             </View>
           ) : null}
 
+          <RNAnimated.View style={{ opacity: authBtnPulse }}>
           <Pressable
             disabled={authSending || authOtp.length < 6}
             onPress={async () => {
@@ -15150,6 +15639,7 @@ const pick = await ImagePicker.launchImageLibraryAsync({
                 );
                 const data: any = await res.json();
                 if (!res.ok) {
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
                   if (data?.error === "email_taken") {
                     setAuthError("Email already in use — sign in instead");
                     setAuthIsRegister(false);
@@ -15165,25 +15655,66 @@ const pick = await ImagePicker.launchImageLibraryAsync({
                 await AsyncStorage.setItem("evan_jwt_v1", data.token);
                 if (data.userId) setUserId(data.userId);
                 setIsSignedIn(true);
+
+                // ── Data bridge: guest → user ───────────────────────────────
+                if (data.userId && data.token) {
+                  if (authIsRegister && plFlips.length > 0) {
+                    // NEW account: push all local guest flips to the user's server record
+                    setSavedToast("Syncing your intelligence…");
+                    const token = data.token;
+                    const uid   = data.userId;
+                    ;(async () => {
+                      for (const flip of [...plFlips].reverse()) { // oldest first
+                        try {
+                          await fetch(`${API_URL.replace(/\/+$/, "")}/api/pl/record`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+                            body: JSON.stringify({ userId: uid, flip }),
+                          });
+                        } catch { /* non-fatal */ }
+                      }
+                    })().catch(() => {});
+                  } else if (!authIsRegister) {
+                    // RETURNING user: fetch their server flips and merge in
+                    fetch(`${API_URL.replace(/\/+$/, "")}/api/pl/flips/${data.userId}`, {
+                      headers: { "Authorization": `Bearer ${data.token}` },
+                    }).then((r) => r.json()).then((d) => {
+                      if (Array.isArray(d?.flips) && d.flips.length) {
+                        setPlFlips((prev: PLFlip[]) => {
+                          const existingIds = new Set(prev.map((f) => f.id));
+                          const fresh = d.flips.filter((f: any) => !existingIds.has(f.id));
+                          if (!fresh.length) return prev;
+                          return [...fresh, ...prev].sort(
+                            (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
+                          );
+                        });
+                      }
+                    }).catch(() => {});
+                  }
+                }
+
                 setAuthStep("email"); setAuthEmail(""); setAuthOtp("");
                 setAuthError(""); setAuthSending(false); setAuthPwVisible(false); setAuthIsRegister(false);
+                setAuthOtpShort(true);
                 setAuthModalOpen(false);
                 setSavedToast(authIsRegister ? "Account created ✓" : "Signed in ✓");
               } catch (_e: any) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
                 setAuthError("Network error — check your connection");
               } finally {
                 setAuthSending(false);
               }
             }}
-            style={[styles.modalPrimary, { marginTop: 14, opacity: (authSending || authOtp.length < 6) ? 0.45 : 1 }]}
+            style={[styles.modalPrimary, { marginTop: 14 }]}
           >
             <Text style={styles.modalPrimaryText}>
               {authSending ? (authIsRegister ? "Creating…" : "Signing in…") : (authIsRegister ? "Create account" : "Sign in")}
             </Text>
           </Pressable>
+          </RNAnimated.View>
 
           <Pressable
-            onPress={() => { hapticSelect(); setAuthIsRegister((v) => !v); setAuthOtp(""); setAuthError(""); }}
+            onPress={() => { hapticSelect(); setAuthIsRegister((v) => !v); setAuthOtp(""); setAuthError(""); setAuthOtpShort(true); }}
             style={[styles.modalSecondary, { marginTop: 8 }]}
           >
             <Text style={styles.modalSecondaryText}>
@@ -15437,6 +15968,7 @@ style={[
       <TabButton
         active={tab === "profile"}
         icon="settings-sharp"
+        dot={plBadge}
         onPress={() => goTab("profile")}
       />
     </RNAnimated.View>
@@ -16171,8 +16703,18 @@ function IconButton({ icon, onPress }) {
     </Pressable>
   );
 }
-function TabButton({ active, icon, onPress, badge = 0 }) {
+function TabButton({ active, icon, onPress, badge = 0, dot = false }) {
   const show = Number(badge) > 0;
+  const dotAnim = useRef(new RNAnimated.Value(0.4)).current;
+  useEffect(() => {
+    if (!dot) { dotAnim.setValue(0.4); return; }
+    const loop = RNAnimated.loop(RNAnimated.sequence([
+      RNAnimated.timing(dotAnim, { toValue: 1.0, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      RNAnimated.timing(dotAnim, { toValue: 0.4, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [dot]);
   return (
     <Pressable
       onPress={onPress}
@@ -16187,7 +16729,7 @@ function TabButton({ active, icon, onPress, badge = 0 }) {
         size={26}
         color={active ? "white" : "rgba(255,255,255,0.65)"}
       />
-      {show ? (
+      {show && !dot ? (
         <View
           pointerEvents="none"
           style={{
@@ -16207,6 +16749,21 @@ function TabButton({ active, icon, onPress, badge = 0 }) {
             {Math.min(99, Number(badge))}
           </Text>
         </View>
+      ) : null}
+      {dot ? (
+        <RNAnimated.View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 10,
+            right: 18,
+            width: 8,
+            height: 8,
+            borderRadius: 4,
+            backgroundColor: "#50ff96",
+            opacity: dotAnim,
+          }}
+        />
       ) : null}
     </Pressable>
   );
@@ -19717,7 +20274,7 @@ watchEmptyText: {
 
 tabFull: {
   ...StyleSheet.absoluteFillObject,
-  backgroundColor: TOK.C.bg,
+  backgroundColor: "transparent",
 },
 
 watchRow: {
