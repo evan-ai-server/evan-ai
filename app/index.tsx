@@ -1432,7 +1432,10 @@ function AppInner({
   setIntelState,
 }: any) {
 // ─── SPATIAL ENGINE ──────────────────────────────────────────────────────────
-const { setZone: setSpatialZone } = useSpatialZone();
+const {
+  setZone: setSpatialZone, setVerdict: setSpatialVerdict, setLaserActive: setSpatialLaser,
+  setArchiveItems, inspectedArchiveId, setInspectedArchiveId,
+} = useSpatialZone();
 // -------------------------
 // BILLIONAIRE STATE
 // -------------------------
@@ -3254,6 +3257,32 @@ const [priceChangeBanner, setPriceChangeBanner] = useState(null);
   const [history, setHistory] = useState([]);
   const _HISTORY_STORAGE_KEY = "evanai-history";
   const SAVINGS_STORAGE_KEY = "evanai-savings";
+
+  // ── Sync history → SpatialContext for 3D Archive shards ──
+  useEffect(() => {
+    if (!Array.isArray(history)) return;
+    setArchiveItems(history.map((h: any) => ({ id: h.id ?? String(h.scannedAt ?? ""), title: h.title || "Scan" })));
+  }, [history, setArchiveItems]);
+
+  // ── Handle archive shard inspection → load result + navigate ──
+  useEffect(() => {
+    if (!inspectedArchiveId) return;
+    const match = (history as any[]).find((h: any) => (h.id ?? String(h.scannedAt ?? "")) === inspectedArchiveId);
+    setInspectedArchiveId(null);
+    if (!match?.resultCard) return;
+    setActiveResult(match.resultCard);
+    setResults(match.resultCard.alternatives || []);
+    setLoadingResults(false);
+    setLoadingPhotoUri(match.uri || null);
+    setLastScan({
+      kind: "history",
+      confidence: match.resultCard.visionConfidence ?? 0,
+      query: match.resultCard.visionQuery ?? null,
+      results: match.resultCard.alternatives || [],
+    });
+    goTab("results");
+  }, [inspectedArchiveId]);
+
   // Profile modals
   // null | "subscription" | "payments" | "review" | "terms" | "privacy"
   const [profileModal, setProfileModal] = useState(null);
@@ -4368,6 +4397,8 @@ const runBarcodeLookup = async (code: string) => {
   setSeeMoreListings([]);
   setLastScan(null);
   setResultModalOpen(false);
+  setSpatialVerdict(null);  // Clear previous verdict
+  setSpatialLaser(true);    // Neon laser ON
   goTab("results");
 
   // Feature 6: instant UPC lookup (<1s) — show partial result immediately
@@ -4584,6 +4615,11 @@ intuitionLine: buildIntuitionLine({
 
     setResults(top3);
     setActiveResult(card);
+    // Spatial FX: set verdict lighting based on buy score
+    try {
+      const vStr = String(card?.buyVerdict || "").toUpperCase();
+      setSpatialVerdict(/GREAT|GOOD|FLIP/.test(vStr) ? "buy" : "pass");
+    } catch {}
     try {
   const acb = Number(card?.alreadyCheaperBy || 0);
   if (Number.isFinite(acb) && acb > 0.01) {
@@ -6917,9 +6953,9 @@ const goTab = (next) => {
     // 2) lock opacity at 0 before switching
     try { tabFade.setValue?.(0); } catch {}
 
-    // 3) switch tab + spatial zone
+    // 3) switch tab + spatial zone (history → archive zone for 3D shards)
     setTab(to);
-    setSpatialZone(to as ZoneKey);
+    setSpatialZone((to === "history" ? "archive" : to) as ZoneKey);
 
     // Feature 9: load relist suggestions when navigating to watchlist
     if (to === "watchlist") {
@@ -7479,6 +7515,7 @@ const stopLoadingSafely = (reqId?: number) => {
   setLoadingResults(false);
   setShowRetryWhileLoading(false);
   setSlowNetwork(false);
+  setSpatialLaser(false); // Neon laser OFF — scan pipeline complete
 
   setScanStage("idle");
   setScanStageMeta("");
@@ -7703,6 +7740,8 @@ const hardStopTimer = setTimeout(() => {
   setResultModalOpen(false);
   setScanStage("vision");
   setScanStageMeta("Identifying item...");
+  setSpatialVerdict(null);  // Clear previous verdict
+  setSpatialLaser(true);    // Neon laser ON during scan pipeline
 
 // ✅ go to results immediately, but ONLY after loading state is already on
 requestAnimationFrame(() => {
@@ -7973,6 +8012,11 @@ if (scanCacheRef.current.has(cacheKey)) {
 
       setResults(cachedTop3);
       setActiveResult(cachedCard);
+      // Spatial FX: verdict lighting for cached result
+      try {
+        const vStr = String(cachedCard?.buyVerdict || "").toUpperCase();
+        setSpatialVerdict(/GREAT|GOOD|FLIP/.test(vStr) ? "buy" : "pass");
+      } catch {}
       setLastScan(cached?.lastScan || null);
       goTab("results");
 
@@ -8906,6 +8950,11 @@ if (countScan && !scanLockRef.current) {
 
 setResults(top3);
 setActiveResult(card);
+// Spatial FX: verdict lighting
+try {
+  const vStr = String(card?.buyVerdict || "").toUpperCase();
+  setSpatialVerdict(/GREAT|GOOD|FLIP/.test(vStr) ? "buy" : "pass");
+} catch {}
 
 // Track for Flip Fatigue + Rivalry + Dead Stock
 if (card?.category) trackCategoryScan(card.category);
@@ -12775,10 +12824,10 @@ style={[
   zIndex: tab === "history" ? 30 : -1,
 },
   ]}
-pointerEvents={tab === "history" && tabInteractable ? "auto" : "none"}
+pointerEvents={tab === "history" && tabInteractable ? "box-none" : "none"}
 >
-  <View style={styles.page}>
-          <Text style={styles.pageTitle}>History</Text>
+  <View style={[styles.page, { backgroundColor: "transparent" }]} pointerEvents="box-none">
+          <Text style={styles.pageTitle}>Archive</Text>
           <View style={styles.savingsBox}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <Text style={styles.savingsTitle}>
