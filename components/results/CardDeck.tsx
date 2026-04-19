@@ -15,7 +15,8 @@ import {
   Text,
   StyleSheet,
   Animated as RNAnimated,
-  Easing,
+  Easing as RNEasing,
+  Platform,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Reanimated, {
@@ -28,9 +29,12 @@ import Reanimated, {
   SharedValue,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
-import { C, SP, R, TY, CARD, SCREEN, MO } from "../design/DS";
+import { C, SP, R, TY, CARD, SCREEN, MO, EASE_PANTHERE } from "../design/DS";
 import { ResultCard, CardData } from "./ResultCard";
 import { openProductLink } from "../utils/openProductLink";
+
+const IS_ANDROID = Platform.OS === "android";
+const panthereRN = RNEasing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
 
 const clampVal = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -44,6 +48,8 @@ interface CardDeckProps {
   onSnapToIndex?: (index: number) => void;
   onToggleWatchlist?: (card: CardData) => void;
   onShare?: (card: CardData) => void;
+  onVaultSave?: (entry: any) => void;
+  isNet?: boolean;
 }
 
 const snapHaptic  = () => { try { Haptics.selectionAsync(); } catch {} };
@@ -56,12 +62,16 @@ interface AnimCardProps {
   activeIndex: SharedValue<number>;
   deckEntrance: SharedValue<number>;
   heroPrice: number | null;
+  scannedPrice: number | null;
+  isLowest: boolean;
   isHero: boolean;
   isWatchlisted: boolean;
   onPress?: () => void;
   onZoomImage?: (uri: string) => void;
   onToggleWatchlist?: () => void;
   onShare?: () => void;
+  onVaultSave?: (entry: any) => void;
+  isNet?: boolean;
 }
 
 function AnimCard({
@@ -70,12 +80,16 @@ function AnimCard({
   activeIndex,
   deckEntrance,
   heroPrice,
+  scannedPrice,
+  isLowest,
   isHero,
   isWatchlisted,
   onPress,
   onZoomImage,
   onToggleWatchlist,
   onShare,
+  onVaultSave,
+  isNet,
 }: AnimCardProps) {
   const animStyle = useAnimatedStyle(() => {
     const relPos = index - activeIndex.value;
@@ -103,20 +117,19 @@ function AnimCard({
       Extrapolation.CLAMP,
     );
 
-    // Entrance: staggered spring per card (each card 80ms after previous)
-    // We bake the stagger into the entrance value by shifting the input range
-    const staggerOffset = index * 0.15; // fraction of the shared value range
-    const entranceStart = Math.min(staggerOffset, 0.9);
-    const entranceEnd   = Math.min(entranceStart + 0.6, 1.0);
+    // Entrance: 50ms stagger per card — cascade effect (hero → alt1 → alt2…)
+    const staggerOffset = index * 0.20; // 0.20 per card → full cascade across 0.8 of the range
+    const entranceStart = Math.min(staggerOffset, 0.85);
+    const entranceEnd   = Math.min(entranceStart + 0.55, 1.0);
     const entranceY = interpolate(
       deckEntrance.value,
       [entranceStart, entranceEnd],
-      [40 + index * 10, 0],
+      [52 + index * 14, 0],
       Extrapolation.CLAMP,
     );
     const entranceOp = interpolate(
       deckEntrance.value,
-      [entranceStart, Math.min(entranceStart + 0.5, 1.0)],
+      [entranceStart, Math.min(entranceStart + 0.45, 1.0)],
       [0, 1],
       Extrapolation.CLAMP,
     );
@@ -136,16 +149,25 @@ function AnimCard({
   });
 
   return (
-    <Reanimated.View style={[styles.cardWrapper, animStyle as any]}>
+    <Reanimated.View
+      style={[styles.cardWrapper, animStyle as any]}
+      renderToHardwareTextureAndroid={IS_ANDROID}
+      shouldRasterizeIOS={!IS_ANDROID}
+      needsOffscreenAlphaCompositing={IS_ANDROID}
+    >
       <ResultCard
         data={data}
         isHero={isHero}
         heroPrice={isHero ? null : heroPrice}
+        scannedPrice={scannedPrice}
+        isLowest={isLowest}
         isWatchlisted={isWatchlisted}
         onPress={onPress}
         onZoomImage={onZoomImage}
         onToggleWatchlist={onToggleWatchlist}
         onShare={onShare}
+        onVaultSave={onVaultSave}
+        isNet={isNet}
       />
     </Reanimated.View>
   );
@@ -171,7 +193,13 @@ function AnimDot({ index, activeIndex }: { index: number; activeIndex: SharedVal
     const alpha   = interpolate(dist, [0, 1],         [0.92, 0.35],       Extrapolation.CLAMP);
     return { opacity, width, backgroundColor: `rgba(255,255,255,${alpha})` } as any;
   });
-  return <Reanimated.View style={[styles.dot, s as any]} />;
+  return (
+    <Reanimated.View
+      style={[styles.dot, s as any]}
+      renderToHardwareTextureAndroid={IS_ANDROID}
+      shouldRasterizeIOS={!IS_ANDROID}
+    />
+  );
 }
 
 // ─── Main CardDeck ────────────────────────────────────────────────────────────
@@ -184,7 +212,13 @@ export function CardDeck({
   onSnapToIndex,
   onToggleWatchlist,
   onShare,
+  onVaultSave,
+  isNet,
 }: CardDeckProps) {
+
+  const _scannedPrice = Number.isFinite(Number(activeResult?.scannedPrice))
+    ? Number(activeResult.scannedPrice)
+    : null;
 
   const cards: CardData[] = React.useMemo(() => {
     const heroCard: CardData = {
@@ -219,7 +253,8 @@ export function CardDeck({
       localComps: activeResult?.localComps ?? null,
     };
 
-    const alts: CardData[] = (results || [])
+    const anchorThreshold = _scannedPrice != null ? _scannedPrice * 2.5 : Infinity;
+    const rawAlts: CardData[] = (results || [])
       .slice(1, 5)   // up to 4 alternatives → total 5 cards
       .map((r: any) => ({
         itemName: r?.itemName || r?.title,
@@ -229,17 +264,31 @@ export function CardDeck({
         image:    r?.image    || r?.thumbnail,
       }));
 
+    // Sort: non-premium anchors first, premium anchors (>2.5x scanned) last
+    const alts = [...rawAlts].sort((a, b) => {
+      const pa = Number(a.price ?? Infinity);
+      const pb = Number(b.price ?? Infinity);
+      const aIsPrem = pa > anchorThreshold;
+      const bIsPrem = pb > anchorThreshold;
+      if (aIsPrem !== bIsPrem) return aIsPrem ? 1 : -1;
+      return 0;
+    });
+
     return [heroCard, ...alts];
-  }, [activeResult, results]);
+  }, [activeResult, results, _scannedPrice]);
 
   const cardCount  = cards.length;
   const altCount   = cardCount - 1;
   const heroPrice  = Number.isFinite(Number(cards[0]?.price)) ? Number(cards[0].price) : null;
 
+  // Lowest price across all cards — used to badge VALUE FLOOR
+  const allPrices = cards.map((c) => Number(c.price ?? Infinity)).filter(Number.isFinite);
+  const lowestPrice = allPrices.length ? Math.min(...allPrices) : null;
+
   const activeIndex  = useSharedValue(0);
   const startIndex   = useSharedValue(0);
   const deckEntrance = useSharedValue(0);
-  const [snappedIndex, setSnappedIndex] = useState(0);
+  const [_snappedIndex, setSnappedIndex] = useState(0);
 
   // Swipe hint fade-in: appears after 600ms
   const swipeHintOpacity = useRef(new RNAnimated.Value(0)).current;
@@ -248,23 +297,23 @@ export function CardDeck({
     activeIndex.value  = 0;
     setSnappedIndex(0);
     deckEntrance.value = 0;
-    // Use a longer, softer spring so per-card stagger plays out naturally
-    deckEntrance.value = withSpring(1, { mass: 1.0, damping: 22, stiffness: 120 });
+    // Softer spring → longer travel → stagger feels like a cascade waterfall
+    deckEntrance.value = withSpring(1, { mass: 1.3, damping: 24, stiffness: 100 });
 
-    // Swipe hint fades in after 600ms
+    // Swipe hint fades in after 600ms — Panthere curve (heavy → silk)
     swipeHintOpacity.setValue(0);
     const hint = RNAnimated.sequence([
       RNAnimated.delay(600),
-      RNAnimated.spring(swipeHintOpacity, {
+      RNAnimated.timing(swipeHintOpacity, {
         toValue: 1,
-        damping: 22,
-        stiffness: 160,
-        mass: 0.9,
+        duration: 420,
+        easing: panthereRN,
         useNativeDriver: true,
       }),
     ]);
     hint.start();
     return () => { try { hint.stop(); } catch {} };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeResult]);
 
   const handleSnap = useCallback((idx: number) => {
@@ -323,17 +372,27 @@ export function CardDeck({
     return watchlistQueries.some((wq) => wq.trim().toLowerCase() === q);
   }, [watchlistQueries]);
 
+  const counterEntranceStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(deckEntrance.value, [0, 1], [0, 1], Extrapolation.CLAMP),
+    transform: [{ translateY: interpolate(deckEntrance.value, [0, 1], [6, 0], Extrapolation.CLAMP) }] as any,
+  }));
+
   return (
     <View style={styles.deckOuter}>
       {/* ── Alternatives counter header ─────────────────────── */}
       {altCount > 0 ? (
         <View style={styles.counterRow}>
           <View style={styles.counterBadge}>
-            <Reanimated.View style={useAnimatedStyle(() => ({
-              opacity: interpolate(deckEntrance.value, [0, 1], [0, 1], Extrapolation.CLAMP),
-              transform: [{ translateY: interpolate(deckEntrance.value, [0, 1], [6, 0], Extrapolation.CLAMP) }] as any,
-            }))}>
-              <Text style={styles.counterText}>
+            <Reanimated.View
+              style={counterEntranceStyle}
+              renderToHardwareTextureAndroid={IS_ANDROID}
+              shouldRasterizeIOS={!IS_ANDROID}
+            >
+              <Text
+                style={styles.counterText}
+                allowFontScaling={false}
+                numberOfLines={1}
+              >
                 {altCount === 1
                   ? "Found 1 cheaper alternative"
                   : `Found ${altCount} cheaper alternatives`}
@@ -347,22 +406,30 @@ export function CardDeck({
       {/* ── Card stack ──────────────────────────────────────── */}
       <GestureDetector gesture={pan}>
         <View style={styles.deckContainer}>
-          {cards.map((card, idx) => (
-            <AnimCard
-              key={idx}
-              data={card}
-              index={idx}
-              activeIndex={activeIndex}
-              deckEntrance={deckEntrance}
-              heroPrice={heroPrice}
-              isHero={idx === 0}
-              isWatchlisted={isWatchlisted(card)}
-              onPress={() => handleCardPress(idx)}
-              onZoomImage={onZoomImage}
-              onToggleWatchlist={() => onToggleWatchlist?.(card)}
-              onShare={() => onShare?.(card)}
-            />
-          ))}
+          {cards.map((card, idx) => {
+            const cardPrice = Number.isFinite(Number(card.price)) ? Number(card.price) : null;
+            const cardIsLowest = lowestPrice != null && cardPrice != null && cardPrice === lowestPrice;
+            return (
+              <AnimCard
+                key={idx}
+                data={card}
+                index={idx}
+                activeIndex={activeIndex}
+                deckEntrance={deckEntrance}
+                heroPrice={heroPrice}
+                scannedPrice={_scannedPrice}
+                isLowest={cardIsLowest}
+                isHero={idx === 0}
+                isWatchlisted={isWatchlisted(card)}
+                onPress={() => handleCardPress(idx)}
+                onZoomImage={onZoomImage}
+                onToggleWatchlist={() => onToggleWatchlist?.(card)}
+                onShare={() => onShare?.(card)}
+                onVaultSave={onVaultSave}
+                isNet={isNet}
+              />
+            );
+          })}
         </View>
       </GestureDetector>
 
@@ -370,7 +437,11 @@ export function CardDeck({
       <DotIndicator count={cardCount} activeIndex={activeIndex} />
 
       {cardCount > 1 ? (
-        <RNAnimated.Text style={[styles.swipeHint, { opacity: swipeHintOpacity }]}>
+        <RNAnimated.Text
+          style={[styles.swipeHint, { opacity: swipeHintOpacity }]}
+          allowFontScaling={false}
+          numberOfLines={1}
+        >
           swipe to compare · swipe right to save
         </RNAnimated.Text>
       ) : null}

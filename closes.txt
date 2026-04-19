@@ -1,0 +1,19 @@
+3563:    </Animated.View>
+3564:</Animated.View>
+3869:  </Animated.View>
+3997:</Animated.View>
+4387:</Animated.View>   {/* closes hero card */}
+4393:</Animated.View>
+4397:</Animated.View>   {/* closes results tab */}
+4489:      </Animated.View>
+4657:</Animated.View>
+4660:</Animated.View> 
+4842:              </Animated.View>
+4846:      </Animated.View>
+5883:      </Animated.View>
+5966:  </Animated.View>
+6340:</Animated.View>
+6641:          </Animated.View>
+6684:    </Animated.View>
+6808:        </Animated.View>
+7164:</Animated.View>

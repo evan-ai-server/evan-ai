@@ -31,6 +31,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { Linking } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C, R, SP, TY, MO, SH } from "../design/DS";
+import { useSpatialZone } from "../spatial/SpatialContext";
 
 const IOS = Platform.OS === "ios";
 const { width: PAGE_W } = Dimensions.get("window");
@@ -440,6 +441,7 @@ function FinalScreen({ onStartScanning, onExploreTutorial, cameraGranted, onRequ
 
 export function OnboardingFlow({ cameraPermissionGranted, onComplete }: OnboardingFlowProps) {
   const insets = useSafeAreaInsets();
+  const { triggerWarp } = useSpatialZone();
 
   // Camera permission — owned here so FinalScreen can re-request without prop drilling
   const [camPermission, requestCamPermission] = useCameraPermissions();
@@ -545,17 +547,21 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
   const handleComplete = useCallback((goTutorial: boolean) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 
+    // Kick off hyper-warp in the 3D layer — visible as this UI fades out
+    triggerWarp();
+
     // Merge partial answers with safe defaults — downstream agents never see undefined.
     const safeAnswers: SurveyAnswers = { ...SAFE_DEFAULTS, ...answers };
 
+    // Extended to 520ms so the warp effect is visible through the fading layer
     RNAnimated.timing(flowOpacity, {
-      toValue: 0, duration: 380,
+      toValue: 0, duration: 520,
       easing: Easing.inOut(Easing.ease),
       useNativeDriver: true,
     }).start(() => {
       onComplete(safeAnswers, goTutorial);
     });
-  }, [answers, flowOpacity, onComplete]);
+  }, [answers, flowOpacity, onComplete, triggerWarp]);
 
   // ── Camera re-request (Final screen) ───────────────────────────────────────
   const handleRequestCamera = useCallback(async () => {

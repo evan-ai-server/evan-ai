@@ -2,24 +2,31 @@
  * ResultsDock — glass-frosted fixed action bar anchored to the bottom of the results screen.
  * Contains all primary + secondary actions. Rises in with spring entrance.
  */
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   Animated as RNAnimated,
   Easing,
+  Platform,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { C, SP, R, TY, SH, fmtMoney } from "../design/DS";
+import { C, SP, R, TY, SH, fmtMoney, EASE_PANTHERE, SINGULARITY } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
+import { DecisionSheet } from "./DecisionSheet";
+
+const IS_ANDROID = Platform.OS === "android";
+const panthere = Easing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
 
 interface ResultsDockProps {
   activeResult: any;
   /** The currently selected card (may differ from activeResult when swiped) */
   currentCard?: any;
+  userId?: string | null;
+  apiBase?: string;
   onOpenListing: () => void;
   onNewScan: () => void;
   onTrack: () => void;
@@ -34,6 +41,8 @@ interface ResultsDockProps {
 export function ResultsDock({
   activeResult,
   currentCard,
+  userId,
+  apiBase = "http://192.168.1.227:3001",
   onOpenListing,
   onNewScan,
   onTrack,
@@ -45,6 +54,7 @@ export function ResultsDock({
   onAutoList,
 }: ResultsDockProps) {
   const insets = useSafeAreaInsets();
+  const [decisionOpen, setDecisionOpen] = useState(false);
 
   // Entrance animation: dock rises from bottom
   const translateY = useRef(new RNAnimated.Value(80)).current;
@@ -56,31 +66,33 @@ export function ResultsDock({
       RNAnimated.timing(dotPulse, { toValue: 0.85, duration: 1100, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       RNAnimated.timing(dotPulse, { toValue: 0.35, duration: 1100, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
     ])).start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     RNAnimated.parallel([
       RNAnimated.timing(opacity, {
         toValue: 1,
-        duration: 340,
+        duration: SINGULARITY.duration,
         delay: 120,
-        easing: Easing.out(Easing.cubic),
+        easing: panthere,
         useNativeDriver: true,
       }),
-      RNAnimated.spring(translateY, {
+      RNAnimated.timing(translateY, {
         toValue: 0,
-        damping: 26,
-        stiffness: 200,
-        mass: 1.0,
+        duration: SINGULARITY.duration,
+        delay: 120,
+        easing: panthere,
         useNativeDriver: true,
       }),
     ]).start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Price intelligence line
   const card        = currentCard || activeResult;
   const price       = Number.isFinite(Number(card?.price)) ? Number(card.price) : null;
-  const paid        = Number.isFinite(Number(activeResult?.scannedPrice)) ? Number(activeResult.scannedPrice) : null;
+  const _paid        = Number.isFinite(Number(activeResult?.scannedPrice)) ? Number(activeResult.scannedPrice) : null;
   const saved       = Number.isFinite(Number(activeResult?.savedAmount)) ? Number(activeResult.savedAmount) : null;
   const hasSaved    = saved != null && saved > 0;
   const cheaperPct  = Number.isFinite(Number(activeResult?.cheaperPct)) ? Number(activeResult.cheaperPct) : null;
@@ -94,6 +106,9 @@ export function ResultsDock({
         { opacity, transform: [{ translateY }] },
         { paddingBottom: Math.max(insets.bottom, SP.md) + SP.sm },
       ]}
+      renderToHardwareTextureAndroid={IS_ANDROID}
+      shouldRasterizeIOS={!IS_ANDROID}
+      needsOffscreenAlphaCompositing={IS_ANDROID}
     >
       <BlurView intensity={72} tint="dark" style={StyleSheet.absoluteFillObject} />
       <View style={styles.dockOverlay} />
@@ -103,15 +118,23 @@ export function ResultsDock({
         <View style={styles.intelStrip}>
           {hasSaved ? (
             <>
-              <RNAnimated.View style={[styles.intelDot, { opacity: dotPulse }]} />
-              <Text style={styles.intelText}>
+              <RNAnimated.View
+                style={[styles.intelDot, { opacity: dotPulse }]}
+                renderToHardwareTextureAndroid={IS_ANDROID}
+                shouldRasterizeIOS={!IS_ANDROID}
+              />
+              <Text style={styles.intelText} allowFontScaling={false} numberOfLines={1}>
                 Save {fmtMoney(saved)}{cheaperPct != null ? ` · ${Math.round(cheaperPct)}% below market` : " vs what you paid"}
               </Text>
             </>
           ) : price != null ? (
             <>
-              <RNAnimated.View style={[styles.intelDot, { opacity: dotPulse }]} />
-              <Text style={styles.intelText}>
+              <RNAnimated.View
+                style={[styles.intelDot, { opacity: dotPulse }]}
+                renderToHardwareTextureAndroid={IS_ANDROID}
+                shouldRasterizeIOS={!IS_ANDROID}
+              />
+              <Text style={styles.intelText} allowFontScaling={false} numberOfLines={1}>
                 Best price found: {fmtMoney(price)}{totalMatches > 0 ? ` · ${totalMatches} listings checked` : ""}
               </Text>
             </>
@@ -123,17 +146,25 @@ export function ResultsDock({
       <View style={styles.primaryRow}>
         <PressableScale onPress={onOpenListing} style={styles.openBtn} scale={0.96} haptic>
           <Ionicons name="open-outline" size={17} color="#000" />
-          <Text style={styles.openText}>{store ? `View on ${store}` : "View listing"}</Text>
+          <Text style={styles.openText} allowFontScaling={false} numberOfLines={1}>
+            {store ? `View on ${store}` : "View listing"}
+          </Text>
         </PressableScale>
 
         <PressableScale onPress={onNewScan} style={styles.newScanBtn} scale={0.96} haptic>
           <Ionicons name="camera-outline" size={17} color={C.text} />
-          <Text style={styles.newScanText}>New scan</Text>
+          <Text style={styles.newScanText} allowFontScaling={false} numberOfLines={1}>New scan</Text>
         </PressableScale>
       </View>
 
-      {/* Secondary row: Ask AI · Track · Copy · Profit · Details */}
+      {/* Secondary row: Bought · Ask AI · Track · Copy · Profit · Details */}
       <View style={styles.secondaryRow}>
+        <ActionChip
+          icon="bag-check-outline"
+          label="Bought it"
+          onPress={() => setDecisionOpen(true)}
+          highlight
+        />
         {onAskAI ? (
           <ActionChip icon="sparkles" label="Ask AI" onPress={onAskAI} highlight />
         ) : null}
@@ -152,6 +183,16 @@ export function ResultsDock({
           <ActionChip icon="information-circle-outline" label="Details" onPress={onDetails} />
         ) : null}
       </View>
+
+      {/* Decision + source capture sheet */}
+      <DecisionSheet
+        visible={decisionOpen}
+        scanId={activeResult?.scanId ?? null}
+        userId={userId ?? null}
+        itemName={activeResult?.itemName ?? null}
+        apiBase={apiBase}
+        onClose={() => setDecisionOpen(false)}
+      />
     </RNAnimated.View>
   );
 }
@@ -175,7 +216,13 @@ function ActionChip({
       haptic
     >
       <Ionicons name={icon as any} size={15} color={highlight ? "rgba(255,255,255,0.9)" : C.text2} />
-      <Text style={[styles.chipText, highlight && styles.chipTextHighlight]}>{label}</Text>
+      <Text
+        style={[styles.chipText, highlight && styles.chipTextHighlight]}
+        allowFontScaling={false}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
     </PressableScale>
   );
 }

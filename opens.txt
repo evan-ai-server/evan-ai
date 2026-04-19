@@ -1,0 +1,21 @@
+3514:  <Animated.View
+3552:    <Animated.View
+3568:<Animated.View
+3632:      <Animated.View
+3808:      <Animated.View
+3854:  <Animated.View
+4001:<Animated.View
+4186:<Animated.View
+4400:      <Animated.View
+4492:<Animated.View
+4662:      <Animated.View
+4827:              <Animated.View
+5849:      <Animated.View
+5936:  <Animated.View
+6622:          <Animated.View
+6673:    <Animated.View style={{ transform: [{ rotate }] }}>
+6778:        <Animated.View style={[styles.confFill, { width: fillW }]}>
+6779:          <Animated.View
+6787:          <Animated.View
+6794:          <Animated.View
+6801:          <Animated.View

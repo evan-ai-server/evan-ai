@@ -79,8 +79,7 @@
         }
       ],
       "react-native-vision-camera",
-      "react-native-purchases",
-      "./plugins/withEvanWidget",
+"./plugins/withEvanWidget",
       "expo-sqlite"
     ],
     "extra": {

@@ -1,0 +1,4671 @@
+import "react-native-reanimated";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  AppState,
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  Pressable,
+  Animated,
+  Easing,
+  Image,
+  Platform, 
+  Modal,
+  ScrollView,
+  Linking,
+  Keyboard,
+} from "react-native";
+      
+import {
+  GestureHandlerRootView,
+  GestureDetector,
+  Gesture,
+} from "react-native-gesture-handler";
+
+import Reanimated, {
+  useSharedValue,
+  useAnimatedProps,
+  clamp,
+  withTiming,
+} from "react-native-reanimated";
+
+import { CameraView, useCameraPermissions } from "expo-camera";
+import * as ImagePicker from "expo-image-picker";
+
+import { Ionicons, FontAwesome } from "@expo/vector-icons";
+
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+import * as ImageManipulator from "expo-image-manipulator";
+
+const MAX_SCANS = 6;
+const SCANS_USED_KEY = "scans_used_v1";
+
+
+// -------------------------
+// CONFIG
+// -------------------------
+const STORAGE_KEY = "EVANAI_APP_STATE_V2";
+
+const API_BASE = __DEV__
+  ? "http://192.168.1.227:3001"
+  : "https://YOUR_DOMAIN_HERE";
+
+// Try a few common bases automatically (simulator / emulator / LAN)
+const API_BASE_CANDIDATES = __DEV__
+  ? [
+      API_BASE,                 // your current
+      "http://localhost:3001",  // iOS sim only
+      "http://127.0.0.1:3001",  // iOS sim only
+      "http://10.0.2.2:3001",   // Android emulator
+    ]
+  : [API_BASE];
+const smoothConfidence = (c) => {
+  if (c >= 0.92) return Math.min(0.98, c);
+  if (c >= 0.85) return c - 0.03;
+  if (c >= 0.7) return c - 0.06;
+  return c;
+};
+
+const CONFIDENCE_THRESHOLD = 0.85;
+const CACHE_TTL = 1000 * 60 * 60 * 24; // 24 hours
+
+// Free tier (DO NOT CHANGE)
+const FREE_LIMIT = 6;
+
+// ✅ Free cycle reset window (30 days)
+const FREE_CYCLE_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Monetization (LOCKED)
+const PRO_MONTHLY_PRICE = 1.49;
+
+// -------------------------
+// ✅ HAPTICS (SAFE OPTIONAL)
+// -------------------------
+let ExpoHaptics = null;
+try {
+  // eslint-disable-next-line global-require
+  ExpoHaptics = require("expo-haptics");
+} catch {}
+
+const hapticSelect = () => {
+  try {
+    ExpoHaptics?.selectionAsync?.();
+  } catch {}
+};
+const hapticShutter = () => {
+  try {
+    ExpoHaptics?.impactAsync?.(ExpoHaptics.ImpactFeedbackStyle.Medium);
+  } catch {}
+};
+// ✅ NEW: tick when Retry appears
+const hapticTick = () => {
+  try {
+    ExpoHaptics?.impactAsync?.(ExpoHaptics.ImpactFeedbackStyle.Light);
+  } catch {}
+};
+
+// -------------------------
+// ✅ OPTIONAL CLIPBOARD (SAFE)
+// -------------------------
+let ExpoClipboard = null;
+try {
+  // eslint-disable-next-line global-require
+  ExpoClipboard = require("expo-clipboard");
+} catch {}
+
+const copyText = async (text) => {
+  try {
+    const t = String(text ?? "");
+    if (ExpoClipboard?.setStringAsync) await ExpoClipboard.setStringAsync(t);
+  } catch {}
+};
+
+// -------------------------
+// ✅ LOGOS (remote PNG so no missing asset crashes)
+// -------------------------
+const LOGO_URIS = {
+  ebay: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/EBay_logo.svg/320px-EBay_logo.svg.png",
+  google:
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Google_%22G%22_Logo.svg/256px-Google_%22G%22_Logo.svg.png",
+  nike: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Logo_NIKE.svg/320px-Logo_NIKE.svg.png",
+};
+
+// -------------------------
+// ✅ FIX #1 (FLASHING CAMERA):
+// DO NOT create Animated Camera component inside App().
+// If you do, it can remount on every render and look like "reloading/flashing".
+// -------------------------
+const AnimatedCameraView = Reanimated.createAnimatedComponent(CameraView);
+
+  function StarRating({ value = 0, size = 14 }) {
+  const v = Math.max(0, Math.min(5, Number(value) || 0));
+  const full = Math.floor(v);
+  const half = v - full >= 0.5;
+
+  return (
+    <React.Fragment>
+      {Array.from({ length: 5 }).map((_, i) => {
+        const idx = i + 1;
+        const name =
+          idx <= full ? "star" : half && idx === full + 1 ? "star-half-full" : "star-o";
+        return <FontAwesome key={i} name={name as any} size={size} color="#F5C542" />;
+      })}
+    </React.Fragment>
+  );
+}
+
+export default function App() {
+const scanCacheRef = useRef<
+  Map<
+    string,
+    {
+      results: NormalizedListing[];
+      timestamp: number;
+    }
+  >
+>(new Map());
+  const cameraRef = useRef(null);
+
+  // ✅ Saved toast (MUST live inside App)
+  const [savedToast, setSavedToast] = useState(null);
+  const toastAnim = useRef(new Animated.Value(0)).current;
+
+  // Tabs: "history" | "camera" | "results" | "profile"
+  const [tab, setTab] = useState("camera");
+  const pendingTabRef = useRef(null);
+
+const [zoomUri, setZoomUri] = useState(null);
+const zoomAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (zoomUri) {
+      zoomAnim.setValue(0);
+      Animated.spring(zoomAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 8,
+        tension: 70,
+      }).start();
+    }
+  }, [zoomUri]);
+
+  // Splash screen
+  const [showSplash, setShowSplash] = useState(true);
+  const splashOpacity = useRef(new Animated.Value(1)).current;
+  const logoScale = useRef(new Animated.Value(0.9)).current;
+  const dotY = useRef(new Animated.Value(0)).current;
+  const splashDots = useRef(new Animated.Value(0)).current;
+  const [splashDotCount, setSplashDotCount] = useState(1);
+
+  // ✅ FIX #2 (FLASHING CAMERA):
+  // splashDots loop was running forever + listener was updating state constantly,
+  // causing nonstop re-renders which can make CameraView look like it’s “flashing”.
+  const splashDotsListenerIdRef = useRef(null);
+
+  // Camera permission
+  const [permission, requestPermission] = useCameraPermissions();
+
+  // Camera state
+  const [photo, setPhoto] = useState(null);
+  const [cameraReady, setCameraReady] = useState(false);
+
+  // Results
+  const [results, setResults] = useState([]);
+  const [loadingResults, setLoadingResults] = useState(false);
+  const [showRetryWhileLoading, setShowRetryWhileLoading] = useState(false);
+  const [loadingDots, setLoadingDots] = useState(".");
+  const [loadingTick, setLoadingTick] = useState(0);
+
+  // ✅ NEW: animated retry reveal (fade + slight scale)
+  const retryReveal = useRef(new Animated.Value(0)).current;
+
+  // ✅ Animate card entry (main + top3)
+  const resultEntry = useRef(new Animated.Value(0)).current;
+
+  // ✅ Confidence badge animation
+  const confPop = useRef(new Animated.Value(0)).current;  // scale
+  const confGlow = useRef(new Animated.Value(0)).current; // subtle pulse
+
+  // ✅ See more modal
+  const [seeMoreOpen, setSeeMoreOpen] = useState(false);
+  const [seeMoreListings, setSeeMoreListings] = useState([]);
+
+  // ✅ Niche feature: Haggle Mode
+  const [haggleOpen, setHaggleOpen] = useState(false);
+  const [haggleLines, setHaggleLines] = useState([]);
+
+  // ✅ Monthly free pass pill explainer (tappable pill -> mini GUI)
+  const [freePassInfoOpen, setFreePassInfoOpen] = useState(false);
+
+async function prepareImage(uri) {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: 1024 } }],
+    {
+      compress: 0.85,
+      format: ImageManipulator.SaveFormat.JPEG,
+    }
+  );
+  return result.uri;
+}
+
+  // Scan session (for retry / cancel without recount)
+  // { photoUri, scannedPrice, counted, startedAt }
+  const scanSessionRef = useRef(null);
+  const scanTokenRef = useRef(0);
+  const scanAbortRef = useRef(null);
+
+  // Demo scan limit + Pro
+  const [scansUsed, setScansUsed] = useState(0);
+  const [isPro, setIsPro] = useState(false);
+
+  // ✅ Free cycle start (30 days reset)
+  const [cycleStartMs, setCycleStartMs] = useState(Date.now());
+
+  // Camera UI
+  const [cameraFacing, setCameraFacing] = useState("back");
+  const [torchOn, setTorchOn] = useState(false);
+
+  // Keyboard height
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  // Login placeholder
+  const [isSignedIn, setIsSignedIn] = useState(false);
+
+  // History
+  const [history, setHistory] = useState([]);
+
+  // Profile modals
+  // null | "subscription" | "payments" | "review" | "terms" | "privacy"
+  const [profileModal, setProfileModal] = useState(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authInput, setAuthInput] = useState("");
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [previewImageUri, setPreviewImageUri] = useState(null);
+  const previewAnim = useRef(new Animated.Value(0)).current;
+
+  // Savings + price input
+  const [scanPriceInput, setScanPriceInput] = useState("");
+  const [savingsTotal, setSavingsTotal] = useState(0);
+
+  // Hide preview buttons AFTER user submits (presses Use Photo)
+  const [priceSubmitted, setPriceSubmitted] = useState(false);
+
+  // Active result
+  const [activeResult, setActiveResult] = useState(null);
+  const [resultModalOpen, setResultModalOpen] = useState(false);
+
+  // last scan status for Results screen
+  const [lastScan, setLastScan] = useState(null);
+
+const hasUnlimited = isPro;
+const isFreeLimitReached = !hasUnlimited && scansUsed >= FREE_LIMIT;
+
+  // Animations
+  const snapScale = useRef(new Animated.Value(1)).current;
+  const ringScale = useRef(new Animated.Value(0)).current;
+  const ringOpacity = useRef(new Animated.Value(0)).current;
+
+  const buttonsY = useRef(new Animated.Value(90)).current;
+  const buttonsOpacity = useRef(new Animated.Value(0)).current;
+
+  const sway = useRef(new Animated.Value(0)).current;
+  const tabFade = useRef(new Animated.Value(1)).current;
+
+  // Help overlay
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpY = useRef(new Animated.Value(14)).current;
+  const helpOpacity = useRef(new Animated.Value(0)).current;
+
+  // Flash mask
+  const flashMaskOpacity = useRef(new Animated.Value(0)).current;
+  const flashMaskTimer = useRef(null);
+  const flashMidTimer = useRef(null);
+  const flipTimer = useRef(null);
+
+  // Splash animation (FIXED: loops stop + listener removed once splash ends)
+  useEffect(() => {
+    if (!showSplash) return;
+
+    Animated.parallel([
+      Animated.timing(splashOpacity, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.spring(logoScale, {
+        toValue: 1,
+        friction: 6,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    const dotLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(dotY, {
+          toValue: -6,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+        Animated.timing(dotY, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    dotLoop.start();
+
+    const dotsLoop = Animated.loop(
+      Animated.timing(splashDots, {
+        toValue: 3,
+        duration: 1200,
+        useNativeDriver: false,
+      })
+    );
+    dotsLoop.start();
+
+    // listener ONLY during splash
+    try {
+      const id = splashDots.addListener(({ value }) => {
+        const v = Math.max(1, Math.min(3, Math.round(value)));
+        setSplashDotCount(v);
+      });
+      splashDotsListenerIdRef.current = id;
+    } catch {}
+
+    const timer = setTimeout(() => {
+      Animated.timing(splashOpacity, {
+        toValue: 0,
+        duration: 500,
+        useNativeDriver: true,
+      }).start(() => setShowSplash(false));
+    }, 2200);
+
+    return () => {
+      clearTimeout(timer);
+
+      try {
+        dotLoop.stop();
+      } catch {}
+      try {
+        dotsLoop.stop();
+      } catch {}
+
+      try {
+        if (splashDotsListenerIdRef.current != null) {
+          splashDots.removeListener(splashDotsListenerIdRef.current);
+          splashDotsListenerIdRef.current = null;
+        }
+      } catch {}
+    };
+  }, [showSplash, splashOpacity, logoScale, dotY, splashDots]);
+
+  // Torch rule
+  useEffect(() => {
+    if (tab !== "camera" && torchOn) setTorchOn(false);
+  }, [tab, torchOn]);
+
+  // Keyboard listeners
+  useEffect(() => {
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvt, (e) => {
+      const h = e?.endCoordinates?.height ?? 0;
+      setKeyboardHeight(h);
+    });
+
+    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const flashMask = (holdMs = 140, onMidSwap) => {
+    if (flashMaskTimer.current) clearTimeout(flashMaskTimer.current);
+    if (flashMidTimer.current) clearTimeout(flashMidTimer.current);
+
+    flashMaskOpacity.stopAnimation();
+    flashMaskOpacity.setValue(0);
+
+    Animated.timing(flashMaskOpacity, {
+      toValue: 1,
+      duration: 70,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start(() => {
+      if (typeof onMidSwap === "function") {
+        flashMidTimer.current = setTimeout(onMidSwap, 65);
+      }
+
+      flashMaskTimer.current = setTimeout(() => {
+        Animated.timing(flashMaskOpacity, {
+          toValue: 0,
+          duration: 200,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+      }, holdMs);
+    });
+  };
+
+  const closeAllOverlays = () => {
+    setProfileModal(null);
+    setAuthModalOpen(false);
+    setHelpOpen(false);
+    setShowPaywall(false);
+    setResultModalOpen(false);
+    setSeeMoreOpen(false);
+    setHaggleOpen(false);
+    setFreePassInfoOpen(false);
+  };
+
+  // ZOOM (stable)
+  // -------------------------
+  const zoom = useSharedValue(0);
+  const zoomStart = useSharedValue(0);
+
+  const cameraAnimatedProps = useAnimatedProps(() => ({ zoom: zoom.value }));
+
+  const snapZoomWorklet = () => {
+    "worklet";
+    const targets = [0, 0.5, 1];
+    let best = targets[0];
+    for (let i = 1; i < targets.length; i++) {
+      if (Math.abs(targets[i] - zoom.value) < Math.abs(best - zoom.value)) {
+        best = targets[i];
+      }
+    }
+    zoom.value = withTiming(best, { duration: 140 });
+  };
+
+  const zoomHudOpacity = useRef(new Animated.Value(0)).current;
+  const zoomHudY = useRef(new Animated.Value(8)).current;
+  const zoomHudTimer = useRef(null);
+  const [zoomHudText, setZoomHudText] = useState("1.0×");
+
+  const hideZoomHud = () => {
+    if (zoomHudTimer.current) clearTimeout(zoomHudTimer.current);
+    zoomHudTimer.current = null;
+
+    Animated.parallel([
+      Animated.timing(zoomHudOpacity, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.timing(zoomHudY, {
+        toValue: 8,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  const showZoomHud = (text) => {
+    if (photo || cameraFacing !== "back") return;
+    if (zoomHudTimer.current) clearTimeout(zoomHudTimer.current);
+
+    setZoomHudText(text);
+    zoomHudOpacity.setValue(0);
+    zoomHudY.setValue(8);
+
+    Animated.parallel([
+      Animated.timing(zoomHudOpacity, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.timing(zoomHudY, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      zoomHudTimer.current = setTimeout(hideZoomHud, 1400);
+    });
+  };
+
+  const setZoomLevel = (level) => {
+    if (!photo && cameraFacing === "back") hapticSelect();
+    const map = { 1: 0, 2: 0.5, 3: 1 };
+    const z = map[level] ?? 0;
+    zoom.value = withTiming(z, { duration: 140 });
+    showZoomHud(`${(1 + z * 2).toFixed(1)}×`);
+  };
+
+  const pinch = Gesture.Pinch()
+    .enabled(!photo && cameraFacing === "back")
+    .onBegin(() => {
+      zoomStart.value = zoom.value;
+    })
+    .onUpdate((e) => {
+      zoom.value = clamp(zoomStart.value * e.scale, 0, 1);
+    })
+    .onEnd(snapZoomWorklet);
+
+  useEffect(() => {
+    if (photo) hideZoomHud();
+  }, [photo]);
+
+  useEffect(() => {
+    if (tab !== "camera") hideZoomHud();
+  }, [tab]);
+
+  useEffect(() => {
+    return () => {
+      if (flashMaskTimer.current) clearTimeout(flashMaskTimer.current);
+      if (flashMidTimer.current) clearTimeout(flashMidTimer.current);
+      if (zoomHudTimer.current) clearTimeout(zoomHudTimer.current);
+      if (flipTimer.current) clearTimeout(flipTimer.current);
+      if (scanAbortRef.current) scanAbortRef.current.abort();
+
+      // safety: remove splash listener if somehow still attached
+      try {
+        if (splashDotsListenerIdRef.current != null) {
+          splashDots.removeListener(splashDotsListenerIdRef.current);
+          splashDotsListenerIdRef.current = null;
+        }
+      } catch {}
+    };
+  }, [splashDots]);
+// -------------------------
+// ✅ SIMPLE IN-MEMORY CACHES
+// -------------------------
+const VISION_CACHE = new Map(); // key: imageHash -> { query, confidence, ts }
+const SERP_CACHE = new Map();   // key: query -> { items, ts }
+
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+const isFresh = (entry) =>
+  entry && Date.now() - entry.ts < CACHE_TTL_MS;
+
+const hashImageUri = (uri) => {
+  // stable-enough hash without heavy crypto
+  let h = 0;
+  for (let i = 0; i < uri.length; i++) {
+    h = (h << 5) - h + uri.charCodeAt(i);
+    h |= 0;
+  }
+  return String(h);
+};
+
+const withTimeout = (ms, controller) => {
+  const t = setTimeout(() => controller.abort(), ms);
+  return {
+    signal: controller.signal,
+    cancel: () => clearTimeout(t),
+  };
+};
+
+  // -------------------------
+  // Helpers
+  // -------------------------
+const analyzePhotoToQuery = async (photoUri, signal) => {
+  if (!photoUri || typeof photoUri !== "string") {
+    console.warn("analyzePhotoToQuery invalid photoUri");
+    return { query: null, confidence: 0 };
+  }
+const cacheKey = hashImageUri(photoUri);
+const cached = VISION_CACHE.get(cacheKey);
+
+if (cached && isFresh(cached)) {
+  console.log("🧠 VISION CACHE HIT");
+  return {
+    query: cached.query,
+    confidence: cached.confidence,
+  };
+}
+  // Prepare image once
+  let preparedUri = photoUri;
+  try {
+    preparedUri = await prepareImage(photoUri);
+  } catch (e) {
+    console.warn("prepareImage failed, using original uri", e);
+    preparedUri = photoUri;
+  }
+
+  // Build multipart once
+  const makeForm = () => {
+    const form = new FormData();
+    form.append("image", {
+      uri: preparedUri,
+      name: "scan.jpg",
+      type: "image/jpeg",
+    });
+    return form;
+  };
+
+  const endpoints = ["/vision/analyze", "/api/vision/analyze"];
+
+  let lastStatus = null;
+
+  // 1) Find a working base quickly (health check)
+  for (const base of API_BASE_CANDIDATES) {
+    try {
+      const health = await fetch(`${base}/health`, { method: "GET", signal });
+      if (!health.ok) continue;
+
+      // 2) Try both vision endpoints on that base
+      for (const ep of endpoints) {
+        try {
+          const res = await fetch(`${base}${ep}`, {
+            method: "POST",
+            body: makeForm(),
+            signal,
+          });
+
+          lastStatus = res.status;
+
+          if (!res.ok) {
+            console.warn("Vision non-200 response:", res.status, "at", `${base}${ep}`);
+            continue;
+          }
+
+          const data = await res.json();
+          const q = typeof data?.query === "string" ? data.query : null;
+          const c = typeof data?.confidence === "number" ? data.confidence : 0;
+
+          console.log("✅ VISION HIT:", `${base}${ep}`, "=>", q, c);
+
+          return { query: q, confidence: c };
+        } catch (e) {
+          if (e?.name === "AbortError") throw e;
+          console.warn("Vision request failed at", `${base}${ep}`, e);
+        }
+      }
+    } catch (e) {
+      if (e?.name === "AbortError") throw e;
+      // ignore: base not reachable from device
+    }
+  }
+
+  console.warn("Vision failed on all endpoints. Last status:", lastStatus);
+  return { query: null, confidence: 0 };
+};
+const toNumber = (v) => {
+    const n = parseFloat(String(v ?? "").replace(/[^0-9.]/g, ""));
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const money = (n) => (Number.isFinite(n) ? `$${n.toFixed(2)}` : "—");
+  const percent = (n) => (Number.isFinite(n) ? `${Math.round(n)}%` : "—");
+
+  const pickCheapest = (arr) => {
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    let best = null;
+    let bestP = null;
+    for (const item of arr) {
+      const p = toNumber(item?.price);
+      if (p == null) continue;
+      if (!best || (bestP != null && p < bestP) || bestP == null) {
+        best = item;
+        bestP = p;
+      }
+    }
+    return best;
+  };
+
+  const buildMarketStats = (marketPrice) => {
+    if (!Number.isFinite(marketPrice)) {
+      return {
+        historicalLow: null,
+        historicalHigh: null,
+        avgMarket: null,
+        estimatedResale: null,
+      };
+    }
+    const historicalLow = marketPrice * 0.85;
+    const historicalHigh = marketPrice * 1.18;
+    const avgMarket = marketPrice * 1.05;
+    const estimatedResale = avgMarket * 0.9;
+    return { historicalLow, historicalHigh, avgMarket, estimatedResale };
+  };
+
+  const flipScore = ({ scannedPrice, cheapestPrice, estimatedResale }) => {
+    if (!Number.isFinite(scannedPrice) || !Number.isFinite(cheapestPrice))
+      return "—";
+    const cheaperPct = ((scannedPrice - cheapestPrice) / scannedPrice) * 100;
+    const resaleEdge =
+      Number.isFinite(estimatedResale) && estimatedResale > cheapestPrice * 1.15;
+
+    if (cheaperPct >= 30 && resaleEdge) return "A";
+    if (cheaperPct >= 20) return "B";
+    if (cheaperPct >= 10) return "C";
+    return "D";
+  };
+
+
+// Load persisted state ONCE
+useEffect(() => {
+  (async () => {
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw);
+
+      // cycle start
+      const loadedCycleStart = Number.isFinite(parsed?.cycleStartMs)
+        ? parsed.cycleStartMs
+        : Date.now();
+      setCycleStartMs(loadedCycleStart);
+
+      // scans used
+      let loadedScans = Number.isFinite(parsed?.scansUsed) ? parsed.scansUsed : 0;
+
+      // ✅ reset free scans if 30 days passed
+      const now = Date.now();
+      if (now - loadedCycleStart >= FREE_CYCLE_MS) {
+        loadedScans = 0;
+        setCycleStartMs(now);
+      }
+
+      setScansUsed(loadedScans);
+      setIsPro(!!parsed?.isPro);
+      setHistory(Array.isArray(parsed?.history) ? parsed.history : []);
+      setIsSignedIn(!!parsed?.isSignedIn);
+      setSavingsTotal(
+        Number.isFinite(parsed?.savingsTotal) ? parsed.savingsTotal : 0
+      );
+
+      if (parsed?.activeResult) setActiveResult(parsed.activeResult);
+      if (parsed?.lastScan) setLastScan(parsed.lastScan);
+    } catch (e) {
+      console.log("Failed to load persisted state:", e);
+
+      // Safe defaults
+      setScansUsed(0);
+      setIsPro(false);
+      setHistory([]);
+      setIsSignedIn(false);
+      setSavingsTotal(0);
+      setActiveResult(null);
+      setLastScan(null);
+      setCycleStartMs(Date.now());
+    }
+  })();
+}, []);
+
+  // -----------------------------------
+  // Marketplace fetches (MODULAR)
+  // -----------------------------------
+  const fetchEbayResults = async (query, signal) => {
+    try {
+      const res = await fetch(
+        `${API_BASE}/search/ebay?q=${encodeURIComponent(query)}`,
+        { signal }
+      );
+      return await res.json();
+    } catch (e) {
+      if (e?.name === "AbortError") throw e;
+      console.error("eBay fetch failed", e);
+      return [];
+    }
+  };
+
+  // ✅ SerpAPI results (via your backend)
+  // Server should return array of listings or {items: []} etc.
+const searchSerp = async (query, signal) => {
+  try {
+    const res = await fetch(`${API_BASE}/market/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+      signal,
+    });
+
+    const data = await res.json();
+    if (Array.isArray(data?.items)) return data.items;
+    return [];
+  } catch (e) {
+    if (e?.name === "AbortError") throw e;
+    console.error("Serp fetch failed", e);
+    return [];
+  }
+};
+
+// Etsy disabled for now (stub)
+  return [];
+};
+const searchEtsy = async (_query, _signal) => {
+  return [];
+};
+
+  // ✅ keep free cycle reset fresh (runs occasionally)
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now();
+      if (now - cycleStartMs >= FREE_CYCLE_MS) {
+        setScansUsed(0);
+        setCycleStartMs(now);
+      }
+    }, 60000);
+    return () => clearInterval(t);
+  }, [cycleStartMs]);
+
+  // Dots animation (kept, pairs well with ring spinner)
+  useEffect(() => {
+    if (!loadingResults) {
+      setLoadingDots(".");
+      return;
+    }
+    const interval = setInterval(() => {
+      setLoadingDots((prev) => (prev.length === 3 ? "." : prev + "."));
+    }, 520);
+    return () => clearInterval(interval);
+  }, [loadingResults]);
+
+  // ✅ Loading timers: retry appears after 2s, smart copy ticks
+  useEffect(() => {
+    if (!loadingResults) {
+      setShowRetryWhileLoading(false);
+      setLoadingTick(0);
+      retryReveal.setValue(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    setShowRetryWhileLoading(false);
+    retryReveal.setValue(0);
+
+    const retryTimer = setTimeout(() => {
+      setShowRetryWhileLoading(true);
+      hapticTick();
+
+      Animated.timing(retryReveal, {
+        toValue: 1,
+        duration: 240,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }, 2000);
+
+    const tickInterval = setInterval(() => {
+      setLoadingTick(Date.now() - startedAt);
+    }, 420);
+
+    return () => {
+      clearTimeout(retryTimer);
+      clearInterval(tickInterval);
+    };
+  }, [loadingResults, retryReveal]);
+
+  // ✅ animate card entry when activeResult appears
+  useEffect(() => {
+    if (!activeResult || loadingResults) return;
+    resultEntry.stopAnimation();
+    resultEntry.setValue(0);
+    Animated.timing(resultEntry, {
+      toValue: 1,
+      duration: 420,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [activeResult, loadingResults, resultEntry]);
+
+  // Heal old saved state
+  useEffect(() => {
+    if (isPro && !isSignedIn) setIsSignedIn(true);
+  }, [isPro, isSignedIn]);
+
+  // Persist whenever these change
+  useEffect(() => {
+    (async () => {
+      try {
+        const payload = {
+          scansUsed,
+          cycleStartMs,
+          isPro,
+          history,
+          isSignedIn,
+          savingsTotal,
+          activeResult,
+          lastScan,
+        };
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      } catch (e) {}
+    })();
+  }, [
+    scansUsed,
+    cycleStartMs,
+    isPro,
+    history,
+    isSignedIn,
+    savingsTotal,
+    activeResult,
+    lastScan,
+  ]);
+
+  // Instruction sway loop
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(sway, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(sway, {
+          toValue: 0,
+          duration: 1400,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [sway]);
+
+  const swayRotate = sway.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["-2deg", "2deg"],
+  });
+
+  // Smooth tab switch
+  const goTab = (next) => {
+    if (next === tab) return;
+
+    closeAllOverlays();
+    hapticSelect();
+
+    if (next === "camera") flashMask(140);
+
+    pendingTabRef.current = next;
+
+    Animated.timing(tabFade, {
+      toValue: 0,
+      duration: 170,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start(() => {
+      setTab(pendingTabRef.current);
+      pendingTabRef.current = null;
+
+      Animated.timing(tabFade, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+  };
+
+  // Camera roll picker
+  const pickFromRoll = async () => {
+    if (isFreeLimitReached) {
+      setShowPaywall(true);
+      return;
+    }
+
+    hapticSelect();
+
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.92, // slightly higher for Vision accuracy (no UI change)
+      allowsEditing: true,
+      aspect: [4, 5],
+    });
+
+    if (!result.canceled && result.assets && result.assets[0]?.uri) {
+      setPhoto({ uri: result.assets[0].uri });
+      setScanPriceInput("");
+      setPriceSubmitted(false);
+      animateUseRetryIn();
+    }
+  };
+
+  // Flip camera
+  const flipCamera = () => {
+    hideZoomHud();
+    if (torchOn) setTorchOn(false);
+    flashMask(220);
+    if (flipTimer.current) clearTimeout(flipTimer.current);
+    flipTimer.current = setTimeout(() => {
+      setCameraFacing((prev) => (prev === "back" ? "front" : "back"));
+    }, 120);
+  };
+
+  // Snap ring burst (not a flash)
+  const playSnapRing = () => {
+    ringScale.setValue(0.6);
+    ringOpacity.setValue(0);
+
+    Animated.parallel([
+      Animated.timing(ringOpacity, {
+        toValue: 1,
+        duration: 70,
+        useNativeDriver: true,
+      }),
+      Animated.timing(ringScale, {
+        toValue: 1.35,
+        duration: 220,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(ringOpacity, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  const animateUseRetryIn = () => {
+    buttonsY.setValue(90);
+    buttonsOpacity.setValue(0);
+
+    Animated.parallel([
+      Animated.timing(buttonsY, {
+        toValue: 0,
+        duration: 520,
+        easing: Easing.out(Easing.exp),
+        useNativeDriver: true,
+      }),
+      Animated.timing(buttonsOpacity, {
+        toValue: 1,
+        duration: 380,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  // Take photo
+  const takePhoto = async () => {
+    if (!cameraRef.current) return;
+
+    if (isFreeLimitReached) {
+      setShowPaywall(true);
+      return;
+    }
+
+    hideZoomHud();
+    hapticShutter();
+    playSnapRing();
+
+    Animated.sequence([
+      Animated.timing(snapScale, {
+        toValue: 0.92,
+        duration: 70,
+        useNativeDriver: true,
+      }),
+      Animated.timing(snapScale, {
+        toValue: 1.0,
+        duration: 70,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    const pic = await cameraRef.current.takePictureAsync({
+      quality: 0.92, // slightly higher for Vision accuracy (no UI change)
+      skipProcessing: Platform.OS === "android",
+    });
+
+    setPhoto(pic);
+    setScanPriceInput("");
+    setPriceSubmitted(false);
+    animateUseRetryIn();
+  };
+
+  const reset = () => {
+    hapticSelect();
+    setPhoto(null);
+    setScanPriceInput("");
+    setPriceSubmitted(false);
+    Keyboard.dismiss();
+  };
+
+  const getLoadingCopy = () => {
+    const ms = loadingTick;
+    if (ms < 2200) return "Finding the cheapest match";
+    if (ms < 6200) return "Checking more listings";
+    return "Still working — marketplaces can be slow";
+  };
+
+  // ✅ Cancel scan: abort + invalidate token + go back safely
+  const cancelActiveScan = () => {
+    hapticSelect();
+
+    try {
+      if (scanAbortRef.current) scanAbortRef.current.abort();
+    } catch {}
+    scanAbortRef.current = null;
+
+    // invalidate any pending scan writes
+    scanTokenRef.current += 1;
+
+    setLoadingResults(false);
+    setShowRetryWhileLoading(false);
+
+    goTab("camera");
+  };
+
+  const normalizeListings = (raw, market, fallbackSource, query) => {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((it) => {
+        const title =
+          it?.title ||
+          it?.name ||
+          it?.productTitle ||
+          it?.snippet ||
+          it?.product_title ||
+          query;
+
+        const price =
+          it?.price ??
+          it?.extracted_price ??
+          it?.price_value ??
+          it?.value ??
+          it?.salePrice ??
+          it?.current_price ??
+          null;
+
+        const url =
+          it?.url ||
+          it?.link ||
+          it?.product_link ||
+          it?.itemWebUrl ||
+          it?.viewItemURL ||
+          it?.viewItemURLForNaturalSearch ||
+          it?.permalink ||
+          null;
+
+        const image =
+          it?.image ||
+          it?.thumbnail ||
+          it?.thumbnail_url ||
+          it?.imageUrl ||
+          it?.img ||
+          null;
+
+        const rating =
+          it?.rating ??
+          it?.stars ??
+          it?.review_rating ??
+          it?.reviews_rating ??
+          it?.reviews ??
+          null;
+
+        const source = it?.source || fallbackSource;
+
+        const numericPrice = toNumber(price);
+
+        return {
+          ...it,
+          title,
+          price,
+          url,
+          image,
+          rating,
+          source,
+          __market: market, // "ebay" | "serp"
+          numericPrice,
+        };
+      })
+      .filter((x) => x?.title && x?.url && Number.isFinite(x?.numericPrice));
+  };
+
+  const showSavedToast = (amount) => {
+  if (!Number.isFinite(amount) || amount <= 0) return;
+
+  const msg = `saved ${money(amount)}`;
+  setSavedToast(msg);
+
+  toastAnim.setValue(0);
+  Animated.sequence([
+    Animated.spring(toastAnim, { toValue: 1, useNativeDriver: true, friction: 7, tension: 90 }),
+    Animated.delay(900),
+    Animated.timing(toastAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+  ]).start(() => setSavedToast(null));
+};
+const openHistoryPreview = (uri) => {
+  setPreviewImageUri(uri);
+  previewAnim.setValue(0);
+  Animated.timing(previewAnim, {
+    toValue: 1,
+    duration: 220,
+    useNativeDriver: true,
+  }).start();
+};
+
+const closeHistoryPreview = () => {
+  Animated.timing(previewAnim, {
+    toValue: 0,
+    duration: 180,
+    useNativeDriver: true,
+  }).start(() => {
+    setPreviewImageUri(null);
+  });
+};
+
+const runScan = async ({ photoUri, scannedPrice, countScan }) => {
+// count scan ONLY once per session for non-unlimited users
+if (!isPro && scansUsed >= FREE_LIMIT) {
+  setShowPaywall(true);
+  setLoadingResults(false);
+  return;
+}
+
+if (countScan) {
+  // ✅ Unlimited only if subscribed (day pass removed)
+  const unlimitedNow = isPro;
+
+  if (!unlimitedNow) {
+    setScansUsed((p) => Math.min(FREE_LIMIT, p + 1));
+  }
+
+  // mark session counted
+  scanSessionRef.current = {
+    ...(scanSessionRef.current || {}),
+    photoUri,
+    scannedPrice,
+    counted: true,
+    startedAt: Date.now(),
+  };
+}
+
+
+const token = (scanTokenRef.current += 1);
+
+if (!cameraReady) {
+  console.log("Camera not ready — blocking scan");
+  return;
+}
+
+// abort previous scan, start a new controller
+try {
+  if (scanAbortRef.current) scanAbortRef.current.abort();
+} catch {}
+
+const controller = new AbortController();
+scanAbortRef.current = controller;
+
+// ⏱️ hard timeouts
+const visionTimeout = withTimeout(7000, controller); // vision max 7s
+
+setLoadingResults(true);
+setActiveResult(null);
+setResults([]);
+setLastScan(null);
+setSeeMoreListings([]);
+
+// go to results while searching
+goTab("results");
+
+try {
+  // 1) Vision
+  const { query, confidence } = await analyzePhotoToQuery(
+    photoUri,
+    visionTimeout.signal
+  );
+  visionTimeout.cancel?.();
+
+  // ⏱ hard timeout for marketplaces (prevents infinite spinner)
+  const marketController = new AbortController();
+  const marketTimer = setTimeout(
+    () => marketController.abort(),
+    12000
+  ); // 12s max
+
+  const [ebayRes, serpRes, etsyRes] = await Promise.allSettled([
+    fetchEbayResults(query, marketController.signal),
+    searchSerp(query, marketController.signal),
+    searchEtsy(query, marketController.signal),
+  ]);
+
+  const ebayRaw = ebayRes.status === "fulfilled" ? ebayRes.value : [];
+  const serpRaw = serpRes.status === "fulfilled" ? serpRes.value : [];
+  const etsyRaw = etsyRes.status === "fulfilled" ? etsyRes.value : [];
+
+  clearTimeout(marketTimer);
+
+  const cacheKey = query?.toLowerCase().trim();
+
+if (cacheKey && scanCacheRef.current.has(cacheKey)) {
+  const cached = scanCacheRef.current.get(cacheKey)!;
+
+  if (Date.now() - cached.timestamp <= CACHE_TTL) {
+    console.log("⚡ CACHE HIT:", cacheKey);
+
+    setResults(cached.results);
+    setActiveResult(cached.results[0] ?? null);
+
+setLastScan({
+      kind: "cached",
+      confidence,
+      query,
+    });
+    setLoadingResults(false);
+    return;
+}
+  // expired cache
+  scanCacheRef.current.delete(cacheKey);
+}
+
+// race safety: ignore stale responses
+if (token !== scanTokenRef.current) return;
+
+const thriftBias =
+  /vintage|used|retro|original|made in usa|single stitch/i.test(query);
+
+if (thriftBias) {
+  console.log("🧵 THRIFT/VINTAGE BIAS APPLIED");
+}
+
+if (!query || confidence < CONFIDENCE_THRESHOLD) {
+  setResults([]);
+  setActiveResult(null);
+
+  setLastScan({
+    kind: "low_confidence",
+    confidence: Number.isFinite(confidence) ? confidence : 0,
+    query: null,
+  });
+
+  const now = new Date();
+  setHistory((prev) => [
+    {
+      id: `${now.getTime()}`,
+      uri: photoUri,
+      title: "Scan (low confidence)",
+      subtitle:
+        confidence < 0.25
+          ? "No recognizable branding or features detected"
+          : "Try better lighting, angle, or logo visibility",
+      timestamp: now.toLocaleString(),
+      resultCard: null,
+    },
+    ...prev,
+  ]);
+
+  setLoadingResults(false);
+  return;
+}
+
+} catch (e) {
+  console.error("❌ Scan pipeline error:", e);
+
+  setResults([]);
+  setActiveResult(null);
+  setLastScan({
+    kind: "error",
+    confidence: 0,
+    query: null,
+  });
+
+  setLoadingResults(false);
+  return;
+}
+
+  /vintage|used|retro|original|made in usa|single stitch/i.test(query);
+
+if (thriftBias) {
+  console.log("🧵 THRIFT/VINTAGE BIAS APPLIED");
+}
+
+const shippingCost = (item) => {
+  if (typeof item.shipping === "number") return item.shipping;
+  if (typeof item.shippingCost === "number") return item.shippingCost;
+  return 0;
+};
+
+const conditionWeight = (condition) => {
+  if (!condition) return 0.6;
+  const c = condition.toLowerCase();
+  if (c.includes("new")) return 0;
+  if (c.includes("like new")) return 0.1;
+  if (c.includes("excellent")) return 0.2;
+  if (c.includes("good")) return 0.4;
+  return 0.6;
+};
+      if (token !== scanTokenRef.current) return;
+
+      const ebayResults = normalizeListings(ebayRaw, "ebay", "eBay", query);
+      const serpResults = normalizeListings(serpRaw, "serp", "Google", query);
+      // ✅ combine + sort + top3 (DON'T THROW AWAY RESULTS)
+const etsyResults = normalizeListings(etsyRaw, "etsy", "Etsy", query);
+const combined = [...ebayResults, ...serpResults, ...etsyResults];
+
+combined.sort((a, b) => {
+  const confidencePenalty = (1 - confidence) * 2;
+
+  const aTotal =
+    a.numericPrice +
+    shippingCost(a) +
+    conditionWeight(a.condition) +
+    confidencePenalty;
+
+  const bTotal =
+    b.numericPrice +
+    shippingCost(b) +
+    conditionWeight(b.condition) +
+    confidencePenalty;
+
+  return aTotal - bTotal;
+});
+
+setActiveResult(combined[0] ?? null);
+setResults(combined.slice(0, 3));
+
+if (cacheKey) {
+  scanCacheRef.current.set(cacheKey, {
+    results: combined.slice(0, 3),
+    timestamp: Date.now(),
+  });
+}
+
+setLastScan({
+  kind: "success",
+  confidence,
+  query,
+});
+
+const top3 = combined.slice(0, 3);
+  combined.reduce((sum, i) => sum + i.numericPrice, 0) /
+  combined.length;
+
+  combined.length
+    ? combined.reduce(
+        (sum, i) => sum + (i.numericPrice || 0),
+        0
+      ) / combined.length
+    : 0;
+const avgPrice =
+  combined.length
+    ? combined.reduce(
+        (sum, i) => sum + (i.numericPrice || 0),
+        0
+      ) / combined.length
+    : 0;
+
+const savings =
+  avgPrice && top3[0]
+    ? Math.max(0, avgPrice - top3[0].numericPrice)
+    : 0;
+
+const allForModal = combined.slice(0, 60);
+
+setSeeMoreListings(allForModal);
+setResults(top3);
+if (cacheKey) {
+  scanCacheRef.current.set(cacheKey, {
+    results: top3,
+    timestamp: Date.now(),
+  });
+}
+setActiveResult(top3[0] ?? null);
+
+setLoadingResults(false);
+
+
+if (top3.length === 0) {
+  setResults([]);
+  setActiveResult(null);
+
+  setLastScan({
+    kind: "low_confidence",
+    confidence: Number.isFinite(confidence) ? confidence : 0,
+    query: null,
+    title: confidence < 0.25 ? "Couldn’t identify item" : "No listings found",
+savings: Number(savings.toFixed(2)),
+    subtitle:
+      confidence < 0.25
+        ? "No recognizable branding or features detected"
+        : "Try a clearer photo or a different angle",
+  });
+
+  const now = new Date();
+  setHistory((prev) => [
+    {
+      id: `${now.getTime()}`,
+      uri: photoUri,
+      subtitle:
+        confidence < 0.25
+          ? "No recognizable branding or features detected"
+          : "No listings returned — try a clearer photo",
+      timestamp: now.toLocaleString(),
+      resultCard: null,
+    },
+    ...prev,
+  ]);
+
+  setLoadingResults(false);
+return;
+}
+
+      const cheapest = top3[0];
+
+      // kept for debug parity
+      const cheapestEbay = pickCheapest(ebayResults);
+      const cheapestSerp = pickCheapest(serpResults);
+      const priceEbay = toNumber(cheapestEbay?.price);
+      const priceSerp = toNumber(cheapestSerp?.price);
+
+      const store =
+        cheapest.__market === "ebay"
+          ? "eBay"
+          : cheapest?.source || "Google";
+
+      const cheapestPrice = toNumber(cheapest.price);
+
+      const cheaperPctRaw =
+        Number.isFinite(cheapestPrice) && scannedPrice > 0
+          ? ((scannedPrice - cheapestPrice) / scannedPrice) * 100
+          : null;
+      const cheaperPct = Number.isFinite(cheaperPctRaw)
+        ? Math.max(0, cheaperPctRaw)
+        : null;
+
+const savedAmount = Number.isFinite(cheapestPrice)
+  ? Math.max(0, scannedPrice - cheapestPrice)
+  : 0;
+
+      const stats = buildMarketStats(cheapestPrice);
+      const flip = flipScore({
+        scannedPrice,
+        cheapestPrice,
+        estimatedResale: stats.estimatedResale,
+      });
+
+      const card = {
+        itemName: cheapest.title || query,
+        store: store || "Marketplace",
+        price: cheapestPrice,
+        rating:
+          typeof cheapest.rating === "number"
+            ? cheapest.rating
+            : cheapest.rating ?? 4.6,
+        discountPct: cheapest.discountPct ?? null,
+        cheaperPct,
+        buyLink: cheapest.url,
+        image: cheapest.image || null,
+        scannedPrice,
+        savedAmount,
+        historicalLow: stats.historicalLow,
+        historicalHigh: stats.historicalHigh,
+        avgMarket: stats.avgMarket,
+        estimatedResale: stats.estimatedResale,
+        flipPotential: flip,
+        visionConfidence: smoothConfidence(confidence),
+        visionQuery: query,
+        alternatives: top3,
+        totalMatches: combined.length,
+        _debug: { priceEbay, priceSerp },
+      };
+
+      setActiveResult(card);
+
+setLastScan({
+  kind: "success",
+  confidence: Number.isFinite(confidence) ? confidence : 0.92,
+  query,
+});
+
+      showSavedToast(savedAmount);
+      setSavingsTotal((t) => t + savedAmount);
+
+      const now = new Date();
+      setHistory((prev) => [
+        {
+          id: `${now.getTime()}`,
+          uri: photoUri,
+          title: card.itemName,
+          timestamp: now.toLocaleString(),
+          resultCard: card,
+        },
+        ...prev,
+      ]);
+
+      setLoadingResults(false);
+    }
+
+  // Use Photo = the real “SCAN”
+  const handleUsePhoto = async () => {
+    if (!photo?.uri) return;
+
+    const scannedPrice = toNumber(scanPriceInput);
+    if (!Number.isFinite(scannedPrice) || scannedPrice <= 0) return;
+
+    if (isFreeLimitReached) {
+      setShowPaywall(true);
+      return;
+    }
+
+    hapticSelect();
+    setPriceSubmitted(true);
+    Keyboard.dismiss();
+
+    scanSessionRef.current = {
+      photoUri: photo.uri,
+      scannedPrice,
+      counted: false,
+      startedAt: Date.now(),
+    };
+
+    setPhoto(null);
+    setScanPriceInput("");
+    setPriceSubmitted(false);
+
+    runScan({
+      photoUri: scanSessionRef.current.photoUri,
+      scannedPrice,
+      countScan: true,
+    });
+  };
+
+  // ✅ Retry same scan (never counts again)
+  const retrySameScan = () => {
+    const session = scanSessionRef.current;
+
+    if (!session?.photoUri || !Number.isFinite(session?.scannedPrice)) {
+      return;
+    }
+
+    hapticSelect();
+
+    runScan({
+      photoUri: session.photoUri,
+      scannedPrice: session.scannedPrice,
+      countScan: false,
+    });
+  };
+
+  // Help overlay
+  const openHelp = () => {
+    hapticSelect();
+    setHelpOpen(true);
+    helpY.setValue(14);
+    helpOpacity.setValue(0);
+
+    Animated.parallel([
+      Animated.timing(helpOpacity, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+      Animated.timing(helpY, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  const closeHelp = () => {
+    Animated.parallel([
+      Animated.timing(helpOpacity, {
+        toValue: 0,
+        duration: 140,
+        useNativeDriver: true,
+      }),
+      Animated.timing(helpY, {
+        toValue: 14,
+        duration: 140,
+        useNativeDriver: true,
+      }),
+    ]).start(() => setHelpOpen(false));
+  };
+
+  // --- Permission screens ---
+if (!permission) {
+  return null;
+}
+
+if (!permission.granted) {
+  return (
+    <View style={[styles.black, styles.center]}>
+      <Text style={styles.permissionText}>
+        Camera access is required
+      </Text>
+
+      <Pressable
+        onPress={requestPermission}
+        style={styles.permissionBtn}
+      >
+        <Text style={styles.permissionBtnText}>
+          Enable Camera
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+  const cameraPointerEvents = tab === "camera" ? "auto" : "none";
+
+  const demoLabel = isPro
+    ? "PRO"
+    : `MONTHLY FREE PASS · ${Math.min(scansUsed, FREE_LIMIT)}/${FREE_LIMIT}`;
+
+  const scanPriceNum = toNumber(scanPriceInput);
+  const canUsePhoto = Number.isFinite(scanPriceNum) && scanPriceNum > 0;
+
+  const previewBottom = keyboardHeight > 0 ? keyboardHeight + 18 : 170;
+
+  const hideTabBar = !!photo || tab === "results";
+
+const tierLabel = isPro ? "Pro" : "Free";
+  const statusLabel = isSignedIn
+    ? `Signed in · ${tierLabel}`
+    : `Not signed in · ${tierLabel}`;
+
+  const loadingPhotoUri = scanSessionRef.current?.photoUri || null;
+
+  const retryScale = retryReveal.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.96, 1],
+  });
+
+  const nikeLikely = /nike|jordan|air\s?force|air\s?max/i.test(
+    `${activeResult?.itemName || ""} ${activeResult?.visionQuery || ""}`
+  );
+
+  const seeMoreLabel =
+    (seeMoreListings?.length || 0) >= 10
+      ? "See more (10+)"
+      : `See more (${seeMoreListings?.length || 0})`;
+
+const renderSmallResultCard = (item, idx) => {
+  if (!item) return null;
+
+  const store = item.__market === "ebay" ? "eBay" : item?.source || "Google";
+  const price = toNumber(item.price);
+  const rating =
+    typeof item.rating === "number" ? item.rating : item.rating ?? null;
+  const img = item.image || null;
+  const url = item.url || null;
+
+  return (
+    <Pressable
+      key={`${item?.url || idx}`}
+      onPress={() => url && Linking.openURL(url)}
+      style={({ pressed }) => [
+        styles.miniCard,
+        pressed && { opacity: 0.92, transform: [{ scale: 0.995 }] },
+      ]}
+    >
+      <View style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
+        {img ? (
+          <Pressable onPress={() => setZoomUri(img)}>
+            <Image source={{ uri: img }} style={styles.miniImg} />
+          </Pressable>
+        ) : (
+          <View style={styles.miniImgFallback}>
+            <Ionicons
+              name="image-outline"
+              size={18}
+              color="rgba(255,255,255,0.65)"
+            />
+          </View>
+        )}
+
+        <View style={{ flex: 1 }}>
+          <Text style={styles.miniTitle} numberOfLines={2}>
+            {item.title || "Listing"}
+          </Text>
+
+          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6 }}>
+            <Text style={styles.miniMeta}>
+              {money(price)} · {store}
+            </Text>
+
+            {rating != null && (
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  marginLeft: 10,
+                }}
+              >
+                <Ionicons
+                  name="star"
+                  size={13}
+                  color="rgba(255,255,255,0.85)"
+                />
+                <Text style={styles.miniMeta}> {rating}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        <Ionicons
+          name="open-outline"
+          size={18}
+          color="rgba(255,255,255,0.85)"
+        />
+      </View>
+    </Pressable>
+  );
+};
+
+  return (
+    <GestureHandlerRootView style={styles.container}>
+      {showSplash ? (
+        <SplashScreen
+          opacity={splashOpacity}
+          scale={logoScale}
+          dotY={dotY}
+          dotCount={splashDotCount}
+        />
+      ) : null}
+      {/* ✅ FREE PASS INFO MODAL (tapping the pill opens this) */}
+      <Modal
+        visible={freePassInfoOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFreePassInfoOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Monthly free pass</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setFreePassInfoOpen(false);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              You get {FREE_LIMIT} free scans every 30 days. You’ve used{" "}
+              {Math.min(scansUsed, FREE_LIMIT)}/{FREE_LIMIT}.
+            </Text>
+
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                setFreePassInfoOpen(false);
+                setProfileModal("subscription");
+              }}
+              style={styles.modalPrimary}
+            >
+              <Text style={styles.modalPrimaryText}>Visit subscription</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                setFreePassInfoOpen(false);
+              }}
+              style={styles.modalSecondary}
+            >
+              <Text style={styles.modalSecondaryText}>Not now</Text>
+            </Pressable>
+
+            <View style={{ marginTop: 12 }}>
+              <Text style={styles.modalFoot}>
+                Billing handled by the App Store. Cancel anytime in Apple ID settings.
+              </Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* CAMERA SCREEN */}
+      <Animated.View
+        style={[
+          styles.full,
+          {
+            opacity: tab === "camera" ? tabFade : 0,
+            display: tab === "camera" ? "flex" : "none",
+          },
+        ]}
+        pointerEvents={cameraPointerEvents}
+      >
+        <GestureDetector gesture={pinch}>
+          <View style={{ flex: 1 }}>
+            {/* CAMERA FEED */}
+{tab === "camera" && (
+  <AnimatedCameraView
+    ref={cameraRef}
+    style={styles.camera}
+    facing={cameraFacing}
+    animatedProps={cameraAnimatedProps}
+    enableTorch={torchOn}
+    onCameraReady={() => setCameraReady(true)}
+  />
+)}
+
+            {/* Mask covers camera feed only */}
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFillObject,
+                {
+                  backgroundColor: "black",
+                  opacity: flashMaskOpacity,
+                  zIndex: 2,
+                },
+              ]}
+            />
+
+            {/* UI Overlay */}
+            <View
+              style={[StyleSheet.absoluteFillObject, { zIndex: 3 }]}
+              pointerEvents="box-none"
+            >
+              {/* ✅ FIX: pill is now tappable and opens the mini GUI */}
+              <Pressable
+                onPress={() => {
+                  // Only show explainer when not Pro; keep UI identical otherwise.
+                  if (!isPro) {
+                    hapticSelect();
+                    setFreePassInfoOpen(true);
+                  }
+                }}
+                style={styles.demoPill}
+              >
+                <Text style={styles.demoText}>{demoLabel}</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setTorchOn((p) => !p)}
+                style={styles.torchBtn}
+              >
+                <Ionicons
+                  name={torchOn ? "flash" : "flash-off"}
+                  size={22}
+                  color="white"
+                />
+              </Pressable>
+
+              <View style={styles.frame} />
+
+              {/* ZOOM HUD */}
+              {!photo && cameraFacing === "back" ? (
+                <Animated.View
+                  pointerEvents="box-none"
+                  style={{
+                    position: "absolute",
+                    top: 74,
+                    alignSelf: "center",
+                    alignItems: "center",
+                    transform: [{ translateY: zoomHudY }],
+                    opacity: zoomHudOpacity,
+                  }}
+                >
+                  <View style={styles.zoomHudPill}>
+                    <Text style={styles.zoomHudText}>{zoomHudText}</Text>
+                  </View>
+                </Animated.View>
+              ) : null}
+
+              {/* SNAP ZOOM BUTTONS */}
+              {!photo && cameraFacing === "back" ? (
+                <View style={styles.zoomRow}>
+                  <Pressable
+                    style={styles.zoomBtn}
+                    onPress={() => setZoomLevel(1)}
+                  > 
+                    <Text style={styles.zoomBtnText}>1×</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.zoomBtn}
+                    onPress={() => setZoomLevel(2)}
+                  >
+                    <Text style={styles.zoomBtnText}>2×</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.zoomBtn}
+                    onPress={() => setZoomLevel(3)}
+                  >
+                    <Text style={styles.zoomBtnText}>3×</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
+              <Animated.Text
+                style={[
+                  styles.instruction,
+                  { transform: [{ rotate: swayRotate }] },
+                ]}
+              >
+                Frame the item 🚀
+              </Animated.Text>
+
+              {/* ACTION CONTROLS */}
+              {!photo ? (
+                <View style={styles.captureRow}>
+                  <IconButton icon="images-sharp" onPress={pickFromRoll} />
+                  <View style={styles.snapStack}>
+                    <View style={styles.snapOuterRing} />
+                    <Animated.View
+                      style={[
+                        styles.snapBurstRing,
+                        {
+                          opacity: ringOpacity,
+                          transform: [{ scale: ringScale }],
+                        },
+                      ]}
+                    />
+                    <Pressable
+                      onPress={takePhoto}
+                      onPressIn={() =>
+                        Animated.spring(snapScale, {
+                          toValue: 1.06,
+                          useNativeDriver: true,
+                        }).start()
+                      }
+                      onPressOut={() =>
+                        Animated.spring(snapScale, {
+                          toValue: 1,
+                          useNativeDriver: true,
+                        }).start()
+                      }
+                      style={({ pressed }) => [
+                        styles.snapPressable,
+                        pressed && { opacity: 0.96 },
+                      ]}
+                    >
+                      <Animated.View
+                        style={[
+                          styles.snapButton,
+                          { transform: [{ scale: snapScale }] },
+                        ]}
+                      />
+                    </Pressable>
+                  </View>
+                  <IconButton icon="camera-reverse-sharp" onPress={flipCamera} />
+                </View>
+              ) : null}
+
+              {/* PREVIEW */}
+              {photo ? (
+                <View style={styles.previewOverlay}>
+                  <Image
+                    source={{ uri: photo.uri }}
+                    style={styles.previewImage}
+                  />
+
+                  {/* Buttons ABOVE input + always above keyboard */}
+                  <View
+                    style={{
+                      position: "absolute",
+                      bottom: previewBottom,
+                      width: "100%",
+                      paddingHorizontal: 18,
+                    }}
+                  >
+                    {/* ACTION BUTTONS — disappear after submit */}
+                    {!priceSubmitted && !loadingResults ? (
+                      <View style={styles.previewBtnsRow}>
+                        <Pressable
+                          onPress={reset}
+                          style={({ pressed }) => [
+                            styles.transparentBtn,
+                            pressed && styles.illuminate,
+                          ]}
+                        >
+                          <View style={styles.inlineRow}>
+                            <Ionicons name="refresh" size={16} color="white" />
+                            <Text style={styles.transparentBtnText}>
+                              Retake
+                            </Text>
+                          </View>
+                        </Pressable>
+
+                        <Pressable
+                          onPress={() => {
+                            if (!canUsePhoto) return;
+                            handleUsePhoto();
+                          }}
+                          style={({ pressed }) => [
+                            styles.primaryBtn,
+                            pressed && canUsePhoto && styles.illuminatePrimary,
+                            !canUsePhoto && { opacity: 0.45 },
+                          ]}
+                        >
+                          <View style={styles.inlineRow}>
+                            <Ionicons name="search" size={16} color="white" />
+                            <Text style={styles.primaryBtnText}>
+                              Find cheaper
+                            </Text>
+                          </View>
+                        </Pressable>
+                      </View>
+              ) : (
+  <View style={{ marginBottom: 14 }}>
+    <Text style={styles.mutedStrong}>
+      {loadingResults ? "Searching…" : ""}
+    </Text>
+
+    <Text style={styles.modalFoot}>
+      Billing handled by the App Store. Cancel anytime in Apple ID settings.
+    </Text>
+  </View>
+)}
+
+                    {/* PRICE INPUT */}
+                    <Text style={styles.priceLabel}>Price you’re paying</Text>
+
+                    <TextInput
+                      value={scanPriceInput}
+                      onChangeText={setScanPriceInput}
+                      placeholder="$"
+                      placeholderTextColor="rgba(255,255,255,0.4)"
+                      keyboardType="numeric"
+                      style={styles.priceInput}
+                      onFocus={() => setPriceSubmitted(false)}
+                      editable={!loadingResults}
+                      returnKeyType="done"
+                      onSubmitEditing={() => Keyboard.dismiss()}
+                    />
+
+                    <Text style={styles.previewHint}>
+                      We’ll show the cheapest match and what you’d save.
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        </GestureDetector>
+      </Animated.View>
+
+      {/* RESULTS SCREEN */}
+      <Animated.View
+        style={[
+          styles.full,
+          {
+            opacity: tab === "results" ? tabFade : 0,
+            display: tab === "results" ? "flex" : "none",
+          },
+        ]}
+        pointerEvents={tab === "results" ? "auto" : "none"}
+      >
+        <View style={styles.page}>
+          <View style={styles.resultsHeaderRow}>
+            <Text style={styles.pageTitle}>Results</Text>
+
+            <Pressable
+              onPress={() => goTab("camera")}
+              style={({ pressed }) => [
+                styles.signInBtn,
+                pressed && styles.tabPressed,
+              ]}
+            >
+              <Ionicons name="camera-outline" size={18} color="white" />
+              <Text style={styles.signInText}>New scan</Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.resultsSubcopy}>
+            Top 3 cheapest matches — plus your savings.
+          </Text>
+
+          {/* LOADING */}
+          {loadingResults ? (
+            <View style={styles.loadingStage}>
+              {/* blurred photo background */}
+              {loadingPhotoUri ? (
+                <View style={StyleSheet.absoluteFillObject}>
+                  <Image
+                    source={{ uri: loadingPhotoUri }}
+                    style={StyleSheet.absoluteFillObject}
+                    resizeMode="cover"
+                    blurRadius={14}
+                  />
+                  <View
+                    style={[
+                      StyleSheet.absoluteFillObject,
+                      { backgroundColor: "rgba(0,0,0,0.35)" },
+                    ]}
+                  />
+                  <View
+                    style={[
+                      StyleSheet.absoluteFillObject,
+                      { backgroundColor: "rgba(0,0,0,0.45)" },
+                    ]}
+                  />
+                  <View
+                    style={[
+                      StyleSheet.absoluteFillObject,
+                      { backgroundColor: "rgba(0,0,0,0.25)" },
+                    ]}
+                  />
+                </View>
+              ) : null}
+
+              {/* foreground */}
+              <View style={styles.loadingCard}>
+                <RingSpinner size={44} />
+
+                <Text style={styles.loadingTitle}>
+                  {getLoadingCopy()}
+                  {loadingDots}
+                </Text>
+
+                <Text style={styles.loadingHint}>
+                  Searching the web for cheaper matches.
+                </Text>
+
+                {loadingTick > 9000 ? (
+                  <Text style={styles.loadingSlow}>
+                    Network slow? Retry won’t use a scan.
+                  </Text>
+                ) : null}
+
+                <View style={styles.loadingBtnsRow}>
+                  <Pressable
+                    onPress={cancelActiveScan}
+                    style={({ pressed }) => [
+                      styles.secondaryActionBtn,
+                      pressed && styles.tabPressed,
+                    ]}
+                  >
+                    <Ionicons
+                      name="close-circle-outline"
+                      size={18}
+                      color="white"
+                    />
+                    <Text style={styles.secondaryActionText}>Cancel</Text>
+                  </Pressable>
+
+                  <Animated.View
+                    style={{
+                      opacity: retryReveal,
+                      transform: [{ scale: retryScale }],
+                    }}
+                    pointerEvents={showRetryWhileLoading ? "auto" : "none"}
+                  >
+                    <Pressable
+                      onPress={retrySameScan}
+                      style={({ pressed }) => [
+                        styles.primaryActionBtn,
+                        pressed && styles.illuminatePrimary,
+                      ]}
+                    >
+                      <Ionicons name="refresh" size={18} color="white" />
+                      <Text style={styles.primaryActionText}>Retry</Text>
+                    </Pressable>
+                  </Animated.View>
+
+                  {!showRetryWhileLoading ? <View style={{ width: 96 }} /> : null}
+                </View>
+              </View>
+            </View>
+          ) : activeResult ? (
+            <Animated.View
+              style={{
+                opacity: resultEntry,
+                transform: [
+                  {
+                    translateY: resultEntry.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [14, 0],
+                    }),
+                  },
+                ],
+              }}
+            >
+              <Pressable
+                onPress={() => {
+                  if (activeResult.buyLink)
+                    Linking.openURL(activeResult.buyLink);
+                }}
+                style={({ pressed }) => [
+                  styles.resultCard,
+                  pressed && { opacity: 0.92, transform: [{ scale: 0.995 }] },
+                ]}
+              >
+                {activeResult.image ? (
+                  <Image
+                    source={{ uri: activeResult.image }}
+                    style={styles.heroImg}
+                  />
+                ) : null}
+
+                <Text style={styles.resultTitle}>{activeResult.itemName}</Text>
+
+                <View style={styles.logoRow}>
+                  <LogoChip
+                    uri={LOGO_URIS.ebay}
+                    label="eBay"
+                    dim={activeResult.store !== "eBay"}
+                  />
+                  <LogoChip
+                    uri={LOGO_URIS.google}
+                    label="Google"
+                    dim={activeResult.store === "eBay"}
+                  />
+                  <LogoChip
+                    uri={LOGO_URIS.nike}
+                    label="Nike"
+                    dim={!nikeLikely}
+                  />
+                </View>
+
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    marginTop: 8,
+                  }}
+                >
+                  <Text style={styles.resultMeta}>
+                    {money(activeResult.price)} · {activeResult.store} ·{" "}
+                  </Text>
+                  <Ionicons
+                    name="star"
+                    size={14}
+                    color="rgba(255,255,255,0.85)"
+                  />
+                  <Text style={styles.resultMeta}> {activeResult.rating}</Text>
+                </View>
+
+                <ConfidenceBar value={activeResult.visionConfidence} />
+
+                <View style={{ marginTop: 14 }}>
+                  <Text style={styles.savedBig}>
+                    Saved {money(activeResult.savedAmount)}
+                  </Text>
+                  <Text style={styles.savedSmall}>
+                    {percent(activeResult.cheaperPct)} cheaper than{" "}
+                    {money(activeResult.scannedPrice)}
+                  </Text>
+                </View>
+
+                <View style={styles.marketBox}>
+                  <Text style={styles.marketTitle}>Market snapshot</Text>
+
+                  <Text style={styles.marketLine}>
+                    Range: {money(activeResult.historicalLow)} –{" "}
+                    {money(activeResult.historicalHigh)}
+                  </Text>
+                  <Text style={styles.marketLine}>
+                    Avg: {money(activeResult.avgMarket)}
+                  </Text>
+                  <Text style={styles.marketLine}>
+                    Resale est.: {money(activeResult.estimatedResale)}
+                  </Text>
+                  <Text style={styles.marketLine}>
+                    Flip grade: {activeResult.flipPotential}
+                  </Text>
+                </View>
+
+                <View style={styles.resultActionsRow}>
+                  {seeMoreListings?.length > 0 ? (
+                    <Pressable
+                      onPress={() => {
+                        hapticSelect();
+                        setSeeMoreOpen(true);
+                      }}
+                      style={({ pressed }) => [
+                        styles.smallActionBtn,
+                        pressed && styles.tabPressed,
+                      ]}
+                    >
+                      <Ionicons name="list-outline" size={16} color="white" />
+                      <Text style={styles.smallActionText}>{seeMoreLabel}</Text>
+                    </Pressable>
+                  ) : null}
+
+                  <Pressable
+                    onPress={() => {
+                      hapticSelect();
+                      const saved = Number.isFinite(activeResult?.savedAmount)
+                        ? activeResult.savedAmount
+                        : 0;
+
+                      const scripts = [
+                        `hey, i found the same item for ${money(
+                          activeResult?.price
+                        )} — could you do ${money(
+                          Math.max(
+                            0.01,
+                            (activeResult?.scannedPrice || 0) - saved / 2
+                          )
+                        )} today?`,
+                        `would you take ${money(
+                          Math.max(
+                            0.01,
+                            (activeResult?.scannedPrice || 0) - saved
+                          )
+                        )}? i can pay right now.`,
+                        `i’m ready to buy — if you can match ${money(
+                          activeResult?.price
+                        )} i’ll take it immediately.`,
+                      ];
+
+                      setHaggleLines(scripts);
+                      setHaggleOpen(true);
+                    }}
+                    style={({ pressed }) => [
+                      styles.smallActionBtn,
+                      pressed && styles.tabPressed,
+                    ]}
+                  >
+                    <Ionicons
+                      name="chatbubble-ellipses-outline"
+                      size={16}
+                      color="white"
+                    />
+                    <Text style={styles.smallActionText}>Haggle mode</Text>
+                  </Pressable>
+                </View>
+
+                <Text style={styles.tapHint}>Tap to open listing</Text>
+              </Pressable>
+
+              {Array.isArray(results) && results.length > 1 ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={styles.sectionTitle}>More top matches</Text>
+                  {results
+                    .slice(1, 3)
+                    .map((it, idx) => renderSmallResultCard(it, idx))}
+                </View>
+              ) : null}
+            </Animated.View>
+          ) : (
+            <View style={styles.emptyCard}>
+              {lastScan?.kind === "low_confidence" ? (
+                <>
+<Text style={styles.emptyTitle}>
+                    Couldn’t confidently identify this item
+</Text>
+
+<Text style={styles.emptySub}>
+  Try a clearer photo, better lighting, or a closer angle.
+</Text>
+<Text style={styles.emptyTitle}>Try a clearer photo</Text>
+                  <Text style={styles.emptyBody}>
+                    Get closer to the logo/model text and avoid glare. That
+                    usually fixes it.
+                  </Text>
+                  <ConfidenceBar value={lastScan?.confidence ?? 0} />
+                </>
+              ) : lastScan?.kind === "error" ? (
+                <>
+                  <Text style={styles.emptyTitle}>Scan didn’t finish</Text>
+                  <Text style={styles.emptyBody}>
+                    Retry the same photo, or start a new scan.
+                  </Text>
+                </>
+              ) : lastScan?.kind === "no_match" ? (
+                <>
+                  <Text style={styles.emptyTitle}>No cheaper match found</Text>
+                  <Text style={styles.emptyBody}>
+                    Try a different angle or include branding in the shot.
+                  </Text>
+                  {Number.isFinite(lastScan?.confidence) ? (
+                    <ConfidenceBar value={lastScan?.confidence ?? 0} />
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <Text style={styles.emptyTitle}>No results yet</Text>
+                  <Text style={styles.emptyBody}>
+                    Scan an item to compare prices instantly.
+                  </Text>
+                </>
+              )}
+
+              <View style={{ marginTop: 14 }}>
+                <Pressable onPress={retrySameScan} style={styles.modalPrimary}>
+                  <View style={styles.inlineRow}>
+                    <Ionicons name="refresh" size={16} color="white" />
+                    <Text style={styles.modalPrimaryText}>Retry same scan</Text>
+                  </View>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => goTab("camera")}
+                  style={styles.modalPrimary}
+                >
+                  <View style={styles.inlineRow}>
+                    <Ionicons name="camera-outline" size={16} color="white" />
+                    <Text style={styles.modalPrimaryText}>New scan</Text>
+                  </View>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => goTab("history")}
+                  style={styles.modalSecondary}
+                >
+                  <Text style={styles.modalSecondaryText}>View history</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
+          <View style={{ marginTop: 14 }}>
+            <Pressable
+              onPress={() => goTab("history")}
+              style={styles.profileBtn}
+            >
+              <View style={styles.inlineRow}>
+                <Ionicons name="time-outline" size={18} color="white" />
+                <Text style={styles.profileBtnText}>History</Text>
+              </View>
+            </Pressable>
+          </View>
+        </View>
+      </Animated.View>
+
+      {/* HISTORY */}
+      <Animated.View
+        style={[
+          styles.full,
+          {
+            opacity: tab === "history" ? tabFade : 0,
+            display: tab === "history" ? "flex" : "none",
+          },
+        ]}
+        pointerEvents={tab === "history" ? "auto" : "none"}
+      >
+        <View style={styles.page}>
+          <Text style={styles.pageTitle}>History</Text>
+
+          <View style={styles.savingsBox}>
+            <Text style={styles.savingsTitle}>
+              Total saved: {money(savingsTotal)}
+            </Text>
+            <Text style={styles.savingsSub}>Savings across your scans.</Text>
+
+            {!hasUnlimited ? (
+              <Text style={styles.savingsSubStrong}>
+                Free scans reset every 30 days.
+              </Text>
+            ) : null}
+
+            </View>
+
+          {history.length === 0 ? (
+            <Text style={styles.muted}>No scans yet.</Text>
+          ) : (
+            <Animated.ScrollView
+              style={{ marginTop: 8 }}
+              contentContainerStyle={{ paddingBottom: 140 }}
+              showsVerticalScrollIndicator={false}
+            >
+{history.map((h) => (
+  <Pressable
+    key={h.id}
+    onPress={() => {
+      if (h?.resultCard) {
+        setActiveResult(h.resultCard);
+        setResultModalOpen(true);
+      }
+    }}
+    style={({ pressed }) => [
+      styles.historyRow,
+      pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
+    ]}
+  >
+    <Pressable
+      onPress={(e) => {
+        e.stopPropagation();
+        openHistoryPreview(h.uri);
+      }}
+      hitSlop={6}
+    >
+      <Image
+        source={{ uri: h.uri }}
+        style={styles.historyThumb}
+      />
+    </Pressable>
+
+    <View style={{ flex: 1 }}>
+      <Text style={styles.historyTitle}>{h.title}</Text>
+      <Text style={styles.historyTime}>{h.timestamp}</Text>
+    </View>
+  </Pressable>
+
+              ))}
+            </Animated.ScrollView>
+          )}
+        </View>
+      </Animated.View>
+
+      {/* PROFILE */}
+      <Animated.View
+        style={[
+          styles.full,
+          {
+            opacity: tab === "profile" ? tabFade : 0,
+            display: tab === "profile" ? "flex" : "none",
+          },
+        ]}
+        pointerEvents={tab === "profile" ? "auto" : "none"}
+      >
+        <View style={styles.page}>
+          <View style={styles.profileHeaderRow}>
+            <View>
+              <Text style={styles.pageTitle}>Profile</Text>
+              <Text style={styles.subStatus}>{statusLabel}</Text>
+            </View>
+
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                if (isSignedIn) {
+                  setIsSignedIn(false);
+                  setIsPro(false);
+                  setShowPaywall(false);
+                } else {
+                  setAuthModalOpen(true);
+                }
+              }}
+              style={({ pressed }) => [
+                styles.signInBtn,
+                pressed && styles.tabPressed,
+              ]}
+            >
+              <Ionicons name="person-circle-outline" size={18} color="white" />
+              <Text style={styles.signInText}>
+                {isSignedIn ? "Sign out" : "Sign in"}
+              </Text>
+            </Pressable>
+          </View>
+
+          <Pressable
+            style={styles.profileBtn}
+            onPress={() => {
+              hapticSelect();
+              if (!isSignedIn) {
+                setAuthModalOpen(true);
+                return;
+              }
+              setProfileModal("subscription");
+            }}
+          >
+            <View style={styles.inlineRow}>
+              <Ionicons name="sparkles-outline" size={18} color="white" />
+              <Text style={styles.profileBtnText}>Subscription</Text>
+            </View>
+          </Pressable>
+
+          <Pressable
+            style={styles.profileBtn}
+            onPress={() => {
+              hapticSelect();
+              setProfileModal("payments");
+            }}
+          >
+            <View style={styles.inlineRow}>
+              <Ionicons name="card-outline" size={18} color="white" />
+              <Text style={styles.profileBtnText}>Payment methods</Text>
+            </View>
+          </Pressable>
+
+          <Pressable style={styles.profileBtn} onPress={openHelp}>
+            <View style={styles.inlineRow}>
+              <Ionicons name="help-circle-outline" size={18} color="white" />
+              <Text style={styles.profileBtnText}>Help</Text>
+            </View>
+          </Pressable>
+
+          <Pressable
+            style={styles.profileBtn}
+            onPress={() => {
+              hapticSelect();
+              setProfileModal("review");
+            }}
+          >
+            <View style={styles.inlineRow}>
+              <Ionicons name="star-outline" size={18} color="white" />
+              <Text style={styles.profileBtnText}>Leave a review</Text>
+            </View>
+          </Pressable>
+
+          <Pressable
+            style={styles.profileBtn}
+            onPress={() => {
+              hapticSelect();
+              setProfileModal("terms");
+            }}
+          >
+            <View style={styles.inlineRow}>
+              <Ionicons name="document-text-outline" size={18} color="white" />
+              <Text style={styles.profileBtnText}>Terms of Service</Text>
+            </View>
+          </Pressable>
+
+          {helpOpen ? (
+            <Pressable style={styles.helpBackdrop} onPress={closeHelp}>
+              <Animated.View
+                style={[
+                  styles.helpBox,
+                  { opacity: helpOpacity, transform: [{ translateY: helpY }] },
+                ]}
+              >
+                <Text style={styles.helpTitle}>Quick tips</Text>
+                <Text style={styles.helpItem}>• Fill the frame with the item.</Text>
+                <Text style={styles.helpItem}>
+                  • Use strong lighting (avoid glare).
+                </Text>
+                <Text style={styles.helpItem}>
+                  • Include branding/model text if possible.
+                </Text>
+                <Text style={styles.helpHint}>Tap anywhere to close</Text>
+              </Animated.View>
+            </Pressable>
+          ) : null}
+        </View>
+      </Animated.View>
+
+      {/* ✅ SEE MORE MODAL */}
+      <Modal
+        visible={seeMoreOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSeeMoreOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>More matches</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setSeeMoreOpen(false);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              Tap a listing to open it. (This won’t use another scan.)
+            </Text>
+
+            <ScrollView
+              style={{ maxHeight: 420 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {(seeMoreListings || []).slice(0, 40).map((it, idx) => {
+                const store =
+                  it.__market === "ebay" ? "eBay" : it?.source || "Google";
+                return (
+                  <Pressable
+                    key={`${it?.url || idx}`}
+                    onPress={() => {
+                      const u = it?.url;
+                      if (u) Linking.openURL(u);
+                    }}
+                    style={({ pressed }) => [
+                      styles.listingRow,
+                      pressed && { opacity: 0.9, transform: [{ scale: 0.995 }] },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.listingTitle} numberOfLines={2}>
+                        {it?.title || "Listing"}
+                      </Text>
+                      <Text style={styles.listingMeta}>
+                        {money(toNumber(it?.price))} · {store}
+                      </Text>
+                    </View>
+
+                    <Ionicons
+                      name="open-outline"
+                      size={18}
+                      color="rgba(255,255,255,0.85)"
+                    />
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ✅ HAGGLE MODE MODAL */}
+      <Modal
+        visible={haggleOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setHaggleOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Haggle mode</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setHaggleOpen(false);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              Quick scripts you can say in-store. Tap to copy.
+            </Text>
+
+            <View style={{ gap: 10 }}>
+              {(haggleLines || []).map((line, i) => (
+                <Pressable
+                  key={`${i}`}
+                  onPress={() => {
+                    hapticSelect();
+                    copyText(line);
+                  }}
+                  style={({ pressed }) => [
+                    styles.haggleRow,
+                    pressed && { opacity: 0.9, transform: [{ scale: 0.995 }] },
+                  ]}
+                >
+                  <Text style={styles.haggleText}>{line}</Text>
+                  <Ionicons
+                    name="copy-outline"
+                    size={18}
+                    color="rgba(255,255,255,0.85)"
+                  />
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={styles.modalFoot}>
+              (Copy uses expo-clipboard if installed. If not, nothing breaks.)
+            </Text>
+          </View>
+        </View>
+      </Modal>
+
+      {/* RESULT MODAL (reopen from history) */}
+      <Modal
+        visible={resultModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setResultModalOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Cheapest exact match</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setResultModalOpen(false);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+
+            {activeResult ? (
+              <>
+                <Text style={{ color: "white", fontWeight: "900", fontSize: 16 }}>
+                  {activeResult.itemName}
+                </Text>
+
+                <View
+                  style={{ flexDirection: "row", alignItems: "center", marginTop: 6 }}
+                >
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                    }}
+                  >
+                    {money(activeResult.price)} · {activeResult.store} ·{" "}
+                  </Text>
+                  <Ionicons name="star" size={14} color="rgba(255,255,255,0.85)" />
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                    }}
+                  >
+                    {" "}
+                    {activeResult.rating}
+                  </Text>
+                </View>
+
+                <ConfidenceBar value={activeResult.visionConfidence ?? 0} />
+
+                <View style={{ marginTop: 12 }}>
+                  <Text style={{ color: "white", fontWeight: "900" }}>
+                    Saved {money(activeResult.savedAmount)}
+                  </Text>
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                      marginTop: 2,
+                    }}
+                  >
+                    {percent(activeResult.cheaperPct)} cheaper than{" "}
+                    {money(activeResult.scannedPrice)}
+                  </Text>
+                </View>
+
+                <View
+                  style={{
+                    marginTop: 12,
+                    paddingTop: 10,
+                    borderTopWidth: 1,
+                    borderTopColor: "rgba(255,255,255,0.10)",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.9)",
+                      fontWeight: "900",
+                      marginBottom: 6,
+                    }}
+                  >
+                    Market snapshot
+                  </Text>
+                  <Text style={{ color: "rgba(255,255,255,0.75)", fontWeight: "700" }}>
+                    Range: {money(activeResult.historicalLow)} –{" "}
+                    {money(activeResult.historicalHigh)}
+                  </Text>
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                      marginTop: 2,
+                    }}
+                  >
+                    Avg: {money(activeResult.avgMarket)}
+                  </Text>
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                      marginTop: 2,
+                    }}
+                  >
+                    Resale est.: {money(activeResult.estimatedResale)}
+                  </Text>
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.75)",
+                      fontWeight: "700",
+                      marginTop: 2,
+                    }}
+                  >
+                    Flip grade: {activeResult.flipPotential}
+                  </Text>
+                </View>
+
+                <Pressable
+                  onPress={() => {
+                    if (activeResult.buyLink) Linking.openURL(activeResult.buyLink);
+                  }}
+                  style={[styles.modalPrimary, { marginTop: 14 }]}
+                >
+                  <View style={styles.inlineRow}>
+                    <Ionicons name="open-outline" size={16} color="white" />
+                    <Text style={styles.modalPrimaryText}>Open listing</Text>
+                  </View>
+                </Pressable>
+              </>
+            ) : (
+              <Text style={styles.modalDesc}>No result found.</Text>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* PROFILE MODAL: SUBSCRIPTION */}
+      <Modal
+        visible={profileModal === "subscription"}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setProfileModal(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Unlimited scans</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setProfileModal(null);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              You’ve saved {money(savingsTotal)} so far. Choose what fits your shopping.
+            </Text>
+
+            <View style={styles.priceBox}>
+              <Text style={styles.priceBig}>${PRO_MONTHLY_PRICE.toFixed(2)}</Text>
+              <Text style={styles.priceSmall}>
+                $1.49/month · Unlimited scans {"\n"}cheaper than a coffee btw ;)
+              </Text>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              Pays for itself the first time we save you $4.
+            </Text>
+
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                setIsSignedIn(true);
+                setIsPro(true);
+                setProfileModal(null);
+              }}
+              style={styles.modalPrimary}
+            >
+              <Text style={styles.modalPrimaryText}>
+                Go Pro — ${PRO_MONTHLY_PRICE.toFixed(2)}/mo
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                setProfileModal(null);
+              }}
+              style={styles.modalSecondary}
+            >
+              <Text style={styles.modalSecondaryText}>Not now</Text>
+            </Pressable>
+              <Text style={styles.modalFoot}>
+                Billing handled by the App Store. Cancel anytime in Apple ID settings.
+              </Text>
+          </View>
+        </View>
+      </Modal>
+
+      {/* PROFILE MODAL: PAYMENTS */}
+      <Modal
+        visible={profileModal === "payments"}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setProfileModal(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Payment methods</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setProfileModal(null);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.payRow}>
+              <View style={{ marginRight: 10 }}>
+                <PayPill icon="card" label="Credit / Debit" />
+              </View>
+              <View style={{ marginRight: 10 }}>
+                <PayPill icon="logo-apple" label="Apple Pay" />
+              </View>
+              <PayPill icon="logo-paypal" label="PayPal" />
+            </View>
+
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                setProfileModal("subscription");
+              }}
+              style={styles.modalPrimary}
+            >
+              <Text style={styles.modalPrimaryText}>Manage subscription</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* PAYWALL MODAL */}
+      <Modal
+        visible={showPaywall}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPaywall(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Free scans used ({FREE_LIMIT})</Text>
+
+            <Text style={styles.modalDesc}>
+              You get 6 free scans every 30 days. Upgrade for unlimited access.
+            </Text>
+
+            <View style={styles.paywallBox}>
+              <View style={styles.inlineRow}>
+                <Ionicons name="sparkles-outline" size={18} color="white" />
+                <Text style={styles.paywallTitle}>
+                  Pro — ${PRO_MONTHLY_PRICE.toFixed(2)}/month
+                </Text>
+              </View>
+              <Text style={styles.paywallSub}>
+                Unlimited scans always. Cheaper than coffee btw ;)
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                setShowPaywall(false);
+                setProfileModal("subscription");
+              }}
+              style={styles.modalPrimary}
+            >
+              <Text style={styles.modalPrimaryText}>
+                Go Pro — ${PRO_MONTHLY_PRICE.toFixed(2)}/mo
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                setShowPaywall(false);
+              }}
+              style={styles.modalSecondary}
+            >
+              <Text style={styles.modalSecondaryText}>Not now</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* PROFILE MODAL: REVIEW */}
+      <Modal
+        visible={profileModal === "review"}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setProfileModal(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Leave a review</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setProfileModal(null);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              If Evan AI saved you money, a quick review helps a ton.
+            </Text>
+
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                setProfileModal(null);
+                Linking.openURL(
+                  "https://apps.apple.com/app/idYOUR_APP_ID?action=write-review"
+                );
+              }}
+              style={styles.modalPrimary}
+            >
+              <Text style={styles.modalPrimaryText}>Write a review</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                hapticSelect();
+                setProfileModal(null);
+              }}
+              style={styles.modalSecondary}
+            >
+              <Text style={styles.modalSecondaryText}>Later</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* PROFILE MODAL: TERMS */}
+      <Modal
+        visible={profileModal === "terms"}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setProfileModal(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Terms of Service</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setProfileModal(null);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalDesc}>
+                Welcome to Evan AI. By accessing or using the app, you agree to these Terms of Service (“Terms”).
+                If you do not agree, do not use Evan AI.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                1. What Evan AI Does
+              </Text>
+              <Text style={styles.modalDesc}>
+                Evan AI helps you identify items and find potentially cheaper alternatives by linking to third-party
+                marketplaces (such as Google Shopping and eBay). Evan AI does not sell items and is not responsible
+                for third-party listings, pricing, availability, shipping, returns, or seller behavior.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                2. Eligibility & Accounts
+              </Text>
+              <Text style={styles.modalDesc}>
+                You must follow applicable laws and the App Store rules. You are responsible for activity that occurs
+                under your account or device, including maintaining the confidentiality of any login method you use.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                3. Free Scans & Subscription
+              </Text>
+              <Text style={styles.modalDesc}>
+                Evan AI may offer a limited number of free scans. If you upgrade to Pro, you may receive unlimited scans
+                and additional features. Subscription pricing, renewal, cancellation, and refunds are handled by the App Store.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                4. User Content (Photos)
+              </Text>
+              <Text style={styles.modalDesc}>
+                You may upload or capture photos for the purpose of item identification. You confirm you have the right to
+                use the content you submit. Do not submit content that is illegal, harmful, or violates someone else’s rights.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                5. Accuracy & Disclaimers
+              </Text>
+              <Text style={styles.modalDesc}>
+                Evan AI provides results “as is” and “as available.” We do not guarantee that identification results or price
+                comparisons are accurate, complete, or current. Prices and listings change frequently and may differ by
+                location, size, condition, shipping, or seller.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                6. Limitation of Liability
+              </Text>
+              <Text style={styles.modalDesc}>
+                To the maximum extent permitted by law, Evan AI and its creators will not be liable for any indirect,
+                incidental, special, consequential, or punitive damages, or any loss of profits or data, arising from your use
+                of the app or third-party links.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>7. Changes</Text>
+              <Text style={styles.modalDesc}>
+                We may update these Terms from time to time. Continuing to use Evan AI after changes means you accept the updated Terms.
+              </Text>
+
+              <Text style={styles.modalFoot}>Last updated: {new Date().getFullYear()}</Text>
+            </ScrollView>
+
+            <Pressable
+              style={styles.profileBtn}
+              onPress={() => {
+                hapticSelect();
+                setProfileModal("privacy");
+              }}
+            >
+              <Text style={styles.profileBtnText}>Privacy Policy</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.modalPrimary}
+              onPress={() => {
+                hapticSelect();
+                setProfileModal(null);
+              }}
+            >
+              <Text style={styles.modalPrimaryText}>Accept</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* PROFILE MODAL: PRIVACY */}
+      <Modal
+        visible={profileModal === "privacy"}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setProfileModal(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <Text style={styles.modalTitle}>Privacy Policy</Text>
+              <Pressable
+                onPress={() => {
+                  hapticSelect();
+                  setProfileModal(null);
+                }}
+                style={styles.backPill}
+              >
+                <Ionicons name="close" size={16} color="white" />
+                <Text style={styles.backText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalDesc}>
+                This Privacy Policy explains how Evan AI handles information when you use the app.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                1. Information You Provide
+              </Text>
+              <Text style={styles.modalDesc}>
+                • Photos you capture or select for item identification{"\n"}• Optional account identifiers you enter (such as email/phone for sign-in placeholder)
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                2. How We Use Information
+              </Text>
+              <Text style={styles.modalDesc}>
+                We use your photo inputs to identify an item and display results. We use basic app state (like scan count and pro status) to operate the app experience on your device.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                3. Third-Party Services & Links
+              </Text>
+              <Text style={styles.modalDesc}>
+                Evan AI may link you to third-party marketplaces. When you tap a link, you are subject to that third party’s privacy policy and terms. Evan AI is not responsible for third-party practices.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>
+                4. Data Storage & Retention
+              </Text>
+              <Text style={styles.modalDesc}>
+                Evan AI stores basic app state locally on your device (for example, scan counts and history thumbnails). We do not sell your personal information. If we add cloud features later, this policy will be updated.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>5. Security</Text>
+              <Text style={styles.modalDesc}>
+                We take reasonable steps to protect information, but no method of transmission or storage is 100% secure.
+              </Text>
+
+              <Text style={[styles.modalTitle, { fontSize: 14, marginBottom: 6 }]}>6. Your Choices</Text>
+              <Text style={styles.modalDesc}>
+                You can stop using Evan AI at any time. You may also clear local app data by removing the app or clearing storage.
+              </Text>
+
+              <Text style={styles.modalFoot}>Last updated: {new Date().getFullYear()}</Text>
+            </ScrollView>
+
+            <Pressable
+              style={styles.modalPrimary}
+              onPress={() => {
+                hapticSelect();
+                setProfileModal(null);
+              }}
+            >
+              <Text style={styles.modalPrimaryText}>Done</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+{/* AUTH MODAL */}
+<Modal
+  visible={authModalOpen}
+  transparent
+  animationType="fade"
+  onRequestClose={() => setAuthModalOpen(false)}
+>
+  <View style={styles.modalBackdrop}>
+    <View style={styles.modalCard}>
+      <Text style={styles.modalTitle}>Sign in</Text>
+
+      <Text style={styles.modalDesc}>
+        Enter an email or phone number to continue.
+      </Text>
+
+      <TextInput
+        value={authInput}
+        onChangeText={setAuthInput}
+        placeholder="Email or phone"
+        placeholderTextColor="rgba(255,255,255,0.4)"
+        style={styles.authInput}
+        autoCapitalize="none"
+        keyboardType="default"
+      />
+
+      <Pressable
+        onPress={() => {
+          hapticSelect();
+          if (!authInput.trim()) return;
+          setIsSignedIn(true);
+          setAuthInput("");
+          setAuthModalOpen(false);
+        }}
+        style={styles.modalPrimary}
+      >
+        <Text style={styles.modalPrimaryText}>Continue</Text>
+      </Pressable>
+
+      <Pressable
+        onPress={() => {
+          hapticSelect();
+          setAuthInput("");
+          setAuthModalOpen(false);
+        }}
+        style={styles.modalSecondary}
+      >
+        <Text style={styles.modalSecondaryText}>Cancel</Text>
+      </Pressable>
+    </View>
+  </View>
+</Modal>
+
+{/* IMAGE ZOOM MODAL */}
+{zoomUri ? (
+  <Modal visible transparent animationType="fade">
+    <Pressable
+      style={{
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.85)",
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+      onPress={() => setZoomUri(null)}
+    >
+      <Animated.View
+        style={{
+          width: "92%",
+          aspectRatio: 1,
+          transform: [
+            {
+              scale: zoomAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.92, 1],
+              }),
+            },
+          ],
+          opacity: zoomAnim,
+        }}
+      >
+        <Image
+          source={{ uri: zoomUri }}
+          style={{ width: "100%", height: "100%", borderRadius: 18 }}
+          resizeMode="contain"
+        />
+
+        <View
+          style={{
+            position: "absolute",
+            bottom: 14,
+            left: 0,
+            right: 0,
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: "rgba(255,255,255,0.85)", fontSize: 13 }}>
+            tap anywhere to exit
+          </Text>
+        </View>
+      </Animated.View>
+    </Pressable>
+  </Modal>
+) : null}
+
+{/* ✅ SAVED TOAST — RIGHT HERE */}
+{savedToast ? (
+  <Animated.View
+    pointerEvents="none"
+    style={{
+      position: "absolute",
+      bottom: 110,
+      alignSelf: "center",
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 18,
+      backgroundColor: "rgba(255,255,255,0.92)",
+      transform: [
+        {
+          translateY: toastAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [12, 0],
+          }),
+        },
+        {
+          scale: toastAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.96, 1],
+          }),
+        },
+      ],
+      opacity: toastAnim,
+    }}
+  >
+    <Text style={{ color: "black", fontWeight: "900" }}>
+      {savedToast}
+    </Text>
+  </Animated.View>
+) : null}
+
+{/* HISTORY IMAGE PREVIEW MODAL */}
+<Modal
+  visible={!!previewImageUri}
+  transparent
+  animationType="fade"
+  onRequestClose={closeHistoryPreview}
+>
+  <Pressable
+    style={{
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.85)",
+      justifyContent: "center",
+      alignItems: "center",
+    }}
+    onPress={closeHistoryPreview}
+  >
+    <Animated.Image
+      source={{ uri: previewImageUri }}
+      resizeMode="contain"
+      style={{
+        width: "90%",
+        height: "70%",
+        transform: [
+          {
+            scale: previewAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.95, 1],
+            }),
+          },
+        ],
+        opacity: previewAnim,
+      }}
+    />
+
+    <Animated.Text
+      style={{
+        marginTop: 20,
+        color: "rgba(255,255,255,0.7)",
+        fontSize: 13,
+        letterSpacing: 0.5,
+        opacity: previewAnim,
+      }}
+    >
+      tap anywhere to exit
+    </Animated.Text>
+  </Pressable>
+</Modal>
+
+ {/* TAB BAR (hidden on preview + results) */}
+{!hideTabBar ? (
+  <View style={styles.tabBar}>
+    <TabButton
+      active={tab === "history"}
+      icon="time-sharp"
+      onPress={() => goTab("history")}
+    />
+    <TabButton
+      active={tab === "camera"}
+      icon="camera-sharp"
+      onPress={() => goTab("camera")}
+    />
+    <TabButton
+      active={tab === "profile"}
+      icon="settings-sharp"
+      onPress={() => goTab("profile")}
+    />
+  </View>
+) : null}
+  );
+}
+</GestureHandlerRootView>
+  );
+
+
+// -------------------------
+// COMPONENTS
+// -------------------------
+function IconButton({ icon, onPress }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.iconBtn,
+        pressed && styles.iconBtnPressed,
+      ]}
+    >
+      <Ionicons name={icon} size={26} color="white" />
+    </Pressable>
+  );
+}
+
+function TabButton({ active, icon, onPress }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.tabBtn,
+        active && styles.tabActive,
+        pressed && styles.tabPressed,
+      ]}
+    >
+      <Ionicons
+        name={icon}
+        size={26}
+        color={active ? "white" : "rgba(255,255,255,0.65)"}
+      />
+    </Pressable>
+  );
+}
+function PayPill({ icon, label }) {
+  return (
+    <View style={styles.payPill}>
+      <Ionicons name={icon} size={18} color="white" />
+      <Text style={styles.payPillText}>{label}</Text>
+    </View>
+  );
+}
+
+function LogoChip({ uri, label, dim = false }) {
+  return (
+    <View style={[styles.logoChip, dim && { opacity: 0.35 }]}>
+      <Image source={{ uri }} style={styles.logoImg} resizeMode="contain" />
+      <Text style={styles.logoText}>{label}</Text>
+    </View>
+  );
+}
+
+// ✅ Premium rotating ring spinner
+function RingSpinner({ size = 42 }) {
+  const rot = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    rot.setValue(0);
+    const loop = Animated.loop(
+      Animated.timing(rot, {
+        toValue: 1,
+        duration: 950,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [rot]);
+
+  const rotate = rot.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
+  return (
+    <Animated.View style={{ transform: [{ rotate }] }}>
+      <View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          borderWidth: 3,
+          borderColor: "rgba(255,255,255,0.18)",
+          borderTopColor: "rgba(255,255,255,0.9)",
+        }}
+      />
+    </Animated.View>
+  );
+}
+
+// Liquid confidence bar
+function ConfidenceBar({ value = 0 }) {
+  const clamped = Math.max(0, Math.min(1, Number(value) || 0));
+  const pct = Math.round(clamped * 100);
+
+  const progress = useRef(new Animated.Value(0)).current;
+  const sheen = useRef(new Animated.Value(0)).current;
+  const bubble1 = useRef(new Animated.Value(0)).current;
+  const bubble2 = useRef(new Animated.Value(0)).current;
+  const bubble3 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(progress, {
+      toValue: clamped,
+      duration: 650,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [clamped, progress]);
+
+  useEffect(() => {
+    sheen.setValue(0);
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(sheen, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sheen, {
+          toValue: 0,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [sheen]);
+
+  useEffect(() => {
+    const mkBubble = (v, delay) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(v, {
+            toValue: -6,
+            duration: 900,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(v, {
+            toValue: 0,
+            duration: 900,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ])
+      );
+
+    const l1 = mkBubble(bubble1, 0);
+    const l2 = mkBubble(bubble2, 140);
+    const l3 = mkBubble(bubble3, 260);
+
+    l1.start();
+    l2.start();
+    l3.start();
+    return () => {
+      l1.stop();
+      l2.stop();
+      l3.stop();
+    };
+  }, [bubble1, bubble2, bubble3]);
+
+  const fillW = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0%", "100%"],
+  });
+
+  const sheenX = sheen.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-80, 260],
+  });
+
+  return (
+    <View style={{ marginTop: 12 }}>
+      <Text style={styles.confLabel}>Confidence</Text>
+
+      <View style={styles.confOuter}>
+        <Animated.View style={[styles.confFill, { width: fillW }]}>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.confSheen,
+              { transform: [{ translateX: sheenX }, { rotate: "18deg" }] },
+            ]}
+          />
+
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.confBubble,
+              { left: 18, top: 7, transform: [{ translateY: bubble1 }] },
+            ]}
+          />
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.confBubble,
+              { left: 44, top: 11, transform: [{ translateY: bubble2 }] },
+            ]}
+          />
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.confBubble,
+              { left: 76, top: 6, transform: [{ translateY: bubble3 }] },
+            ]}
+          />
+        </Animated.View>
+
+        <View pointerEvents="none" style={styles.confTextWrap}>
+          <Text style={styles.confText}>{pct}%</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function SplashScreen({ opacity, scale, dotY, dotCount = 1 }) {
+  const loadingText = ".".repeat(Math.max(1, Math.min(3, dotCount)));
+
+  return (
+    <Animated.View
+      style={[
+        StyleSheet.absoluteFillObject,
+        {
+          backgroundColor: "black",
+          alignItems: "center",
+          justifyContent: "center",
+          opacity,
+          zIndex: 999,
+        },
+      ]}
+    >
+      <Animated.View
+        style={{
+          flexDirection: "row",
+          alignItems: "flex-end",
+          transform: [{ scale }],
+        }}
+      >
+        <Text style={{ color: "white", fontSize: 36, fontWeight: "900" }}>
+          EVAN A
+        </Text>
+
+        <View style={{ marginHorizontal: 2 }}>
+          <Animated.Text
+            style={{
+              color: "white",
+              fontSize: 36,
+              fontWeight: "900",
+              transform: [{ translateY: dotY }],
+            }}
+          >
+            I
+          </Animated.Text>
+        </View>
+      </Animated.View>
+
+      <Text
+        style={{
+          position: "absolute",
+          bottom: 60,
+          color: "rgba(255,255,255,0.7)",
+          fontWeight: "700",
+        }}
+      >
+        loading{loadingText}
+      </Text>
+    </Animated.View>
+  );
+}
+
+// -------------------------
+// ✅ KEEP YOUR EXISTING styles object BELOW THIS LINE UNCHANGED
+// -------------------------
+// const styles = StyleSheet.create({ ... })
+
+// -------------------------
+// STYLES
+// -------------------------
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "black" },
+  full: { ...StyleSheet.absoluteFillObject },
+  black: { flex: 1, backgroundColor: "black" },
+  center: { alignItems: "center", justifyContent: "center" },
+
+  camera: { flex: 1, backgroundColor: "black" },
+
+  permissionText: {
+    color: "white",
+    fontSize: 16,
+    marginBottom: 12,
+    fontWeight: "600",
+  },
+  permissionBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+  },
+  permissionBtnText: { color: "white", fontWeight: "700" },
+
+  demoPill: {
+    position: "absolute",
+    top: 50,
+    left: 20,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 18,
+    zIndex: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  demoText: { color: "white", fontWeight: "700" },
+
+  torchBtn: {
+    position: "absolute",
+    top: 50,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.55)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+
+  frame: {
+    position: "absolute",
+    top: "20%",
+    alignSelf: "center",
+    width: "86%",
+    height: "46%",
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.55)",
+  },
+
+  instruction: {
+    position: "absolute",
+    top: "68%",
+    alignSelf: "center",
+    color: "white",
+    fontSize: 18,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+
+  zoomHudPill: {
+    backgroundColor: "rgba(0,0,0,0.55)",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  zoomHudText: { color: "white", fontWeight: "900", fontSize: 16 },
+
+  zoomRow: {
+    position: "absolute",
+    top: 122,
+    alignSelf: "center",
+    flexDirection: "row",
+    gap: 10,
+  },
+  zoomBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: "rgba(0,0,0,0.40)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+  },
+  zoomBtnText: { color: "white", fontWeight: "900" },
+
+  captureRow: {
+    position: "absolute",
+    bottom: 118,
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 26,
+  },
+
+  iconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  iconBtnPressed: {
+    backgroundColor: "rgba(255,255,255,0.16)",
+    borderColor: "rgba(255,255,255,0.30)",
+  },
+
+  snapStack: {
+    width: 92,
+    height: 92,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  snapOuterRing: {
+    position: "absolute",
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.40)",
+  },
+  snapBurstRing: {
+    position: "absolute",
+    width: 98,
+    height: 98,
+    borderRadius: 49,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.65)",
+  },
+  snapPressable: {
+    width: 82,
+    height: 82,
+    borderRadius: 41,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  snapButton: {
+    width: 82,
+    height: 82,
+    borderRadius: 41,
+    backgroundColor: "white",
+  },
+
+  previewOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "black" },
+  previewImage: { width: "100%", height: "100%", resizeMode: "cover" },
+
+  previewBtnsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+
+  inlineRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+
+  transparentBtn: { paddingVertical: 12, paddingHorizontal: 18 },
+  transparentBtnText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+
+  primaryBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.30)",
+    backgroundColor: "rgba(255,255,255,0.10)",
+  },
+  primaryBtnText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+
+  illuminate: { opacity: 0.92, transform: [{ scale: 1.02 }] },
+  illuminatePrimary: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderColor: "rgba(255,255,255,0.45)",
+    transform: [{ scale: 1.02 }],
+  },
+
+  mutedStrong: { color: "rgba(255,255,255,0.75)", fontWeight: "800" },
+
+  priceLabel: { color: "white", fontWeight: "900", marginBottom: 8 },
+  priceInput: {
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+    borderRadius: 14,
+    padding: 12,
+    color: "white",
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+  previewHint: {
+    color: "rgba(255,255,255,0.6)",
+    marginTop: 8,
+    fontWeight: "600",
+  },
+
+  page: {
+    flex: 1,
+    paddingTop: 70,
+    paddingHorizontal: 18,
+    backgroundColor: "black",
+  },
+  pageTitle: {
+    color: "white",
+    fontSize: 22,
+    fontWeight: "900",
+    marginBottom: 6,
+    letterSpacing: 0.2,
+  },
+  muted: { color: "rgba(255,255,255,0.65)" },
+
+  resultsHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  resultsSubcopy: {
+    color: "rgba(255,255,255,0.70)",
+    fontWeight: "700",
+    marginBottom: 12,
+  },
+
+  // Loading stage w/ background image
+  loadingStage: {
+    height: 320,
+    borderRadius: 22,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    marginBottom: 12,
+  },
+  loadingCard: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+  },
+  loadingTitle: {
+    color: "white",
+    fontWeight: "900",
+    marginTop: 12,
+    textAlign: "center",
+  },
+  loadingHint: {
+    color: "rgba(255,255,255,0.65)",
+    fontWeight: "700",
+    marginTop: 8,
+    textAlign: "center",
+  },
+  loadingSlow: {
+    color: "rgba(255,255,255,0.70)",
+    fontWeight: "800",
+    marginTop: 10,
+    textAlign: "center",
+  },
+  loadingBtnsRow: { flexDirection: "row", gap: 12, marginTop: 14 },
+
+  primaryActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+    backgroundColor: "rgba(255,255,255,0.14)",
+  },
+  primaryActionText: { color: "white", fontWeight: "900" },
+
+  secondaryActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  secondaryActionText: { color: "white", fontWeight: "900" },
+
+  resultCard: {
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  heroImg: {
+    width: "100%",
+    height: 170,
+    borderRadius: 16,
+    marginBottom: 12,
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  resultTitle: { color: "white", fontWeight: "900", fontSize: 16 },
+  resultMeta: { color: "rgba(255,255,255,0.75)", fontWeight: "800" },
+
+  savedBig: { color: "white", fontWeight: "900" },
+  savedSmall: {
+    color: "rgba(255,255,255,0.75)",
+    fontWeight: "800",
+    marginTop: 3,
+  },
+
+  marketBox: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.10)",
+  },
+  marketTitle: {
+    color: "rgba(255,255,255,0.9)",
+    fontWeight: "900",
+    marginBottom: 8,
+  },
+  marketLine: {
+    color: "rgba(255,255,255,0.75)",
+    fontWeight: "800",
+    marginTop: 3,
+  },
+
+  tapHint: {
+    color: "rgba(255,255,255,0.55)",
+    marginTop: 12,
+    fontWeight: "800",
+  },
+
+  sectionTitle: {
+    color: "rgba(255,255,255,0.82)",
+    fontWeight: "900",
+    marginBottom: 10,
+    marginTop: 2,
+  },
+
+  miniCard: {
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    marginBottom: 10,
+  },
+  miniImg: { width: 54, height: 54, borderRadius: 10, backgroundColor: "#111" },
+  miniImgFallback: {
+    width: 54,
+    height: 54,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  miniTitle: { color: "white", fontWeight: "900" },
+  miniMeta: { color: "rgba(255,255,255,0.70)", fontWeight: "800", fontSize: 12 },
+
+  emptyCard: {
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  emptyTitle: { color: "white", fontWeight: "900", fontSize: 16 },
+  emptyBody: { color: "rgba(255,255,255,0.70)", fontWeight: "700", marginTop: 8 },
+
+  historyRow: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginBottom: 10,
+  },
+  historyThumb: { width: 54, height: 54, borderRadius: 10, backgroundColor: "#111" },
+  historyTitle: { color: "white", fontWeight: "900" },
+  historyTime: { color: "rgba(255,255,255,0.65)", marginTop: 2, fontSize: 12 },
+
+  savingsBox: {
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginBottom: 12,
+  },
+  savingsTitle: { color: "white", fontWeight: "900", fontSize: 16 },
+  savingsSub: { color: "rgba(255,255,255,0.65)", marginTop: 4, fontWeight: "600" },
+  savingsSubStrong: { color: "rgba(255,255,255,0.75)", marginTop: 8, fontWeight: "800" },
+
+  profileHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  subStatus: { color: "rgba(255,255,255,0.70)", fontWeight: "700" },
+
+  signInBtn: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  signInText: { color: "white", fontWeight: "900" },
+
+  profileBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginBottom: 12,
+  },
+  profileBtnText: { color: "white", fontWeight: "900", letterSpacing: 0.2 },
+
+  helpBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+  },
+  helpBox: {
+    width: "100%",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(0,0,0,0.60)",
+    padding: 16,
+  },
+  helpTitle: { color: "white", fontWeight: "900", fontSize: 16, marginBottom: 10 },
+  helpItem: { color: "rgba(255,255,255,0.85)", marginBottom: 8, fontWeight: "600" },
+  helpHint: { color: "rgba(255,255,255,0.55)", marginTop: 6, fontSize: 12 },
+
+  tabBar: {
+    position: "absolute",
+    bottom: 24,
+    left: 18,
+    right: 18,
+    height: 62,
+    borderRadius: 22,
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  tabBtn: {
+    width: 54,
+    height: 44,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tabActive: {
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.28)",
+  },
+  tabPressed: { backgroundColor: "rgba(255,255,255,0.12)" },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.60)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  modalCard: {
+    width: "100%",
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(12,12,12,0.92)",
+    padding: 16,
+  },
+  modalTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  modalTitle: { color: "white", fontWeight: "900", fontSize: 16 },
+  modalDesc: { color: "rgba(255,255,255,0.75)", fontWeight: "600", marginBottom: 14 },
+
+  backPill: {
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  backText: { color: "white", fontWeight: "900" },
+
+  payPill: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  payPillText: { color: "white", fontWeight: "900" },
+
+  payRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    marginBottom: 16,
+  },
+
+  priceBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    marginBottom: 14,
+  },
+  priceBig: { color: "white", fontWeight: "900", fontSize: 34, lineHeight: 38 },
+  priceSmall: { color: "rgba(255,255,255,0.75)", fontWeight: "800", textAlign: "center" },
+
+  divider: { height: 1, backgroundColor: "rgba(255,255,255,0.10)", marginVertical: 12 },
+
+  modalPrimary: {
+    paddingVertical: 12,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.22)",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  modalPrimaryText: { color: "white", fontWeight: "900" },
+
+  modalSecondary: {
+    paddingVertical: 12,
+    borderRadius: 18,
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    alignItems: "center",
+  },
+  modalSecondaryText: { color: "rgba(255,255,255,0.85)", fontWeight: "900" },
+
+  modalFoot: {
+    color: "rgba(255,255,255,0.55)",
+    marginTop: 10,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+
+  paywallBox: {
+    padding: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginBottom: 12,
+  },
+  paywallTitle: { color: "white", fontWeight: "900" },
+  paywallSub: { color: "rgba(255,255,255,0.70)", fontWeight: "700", marginTop: 6 },
+
+  authInput: {
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+    borderRadius: 14,
+    padding: 12,
+    color: "white",
+    marginBottom: 14,
+  },
+
+  confLabel: { color: "rgba(255,255,255,0.70)", fontWeight: "900", marginBottom: 8 },
+  confOuter: {
+    height: 22,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    overflow: "hidden",
+  },
+  confFill: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  confSheen: {
+    position: "absolute",
+    top: -18,
+    width: 60,
+    height: 80,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    opacity: 0.65,
+  },
+  confBubble: {
+    position: "absolute",
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.22)",
+    opacity: 0.6,
+  },
+  confTextWrap: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
+  confText: { color: "white", fontWeight: "900", letterSpacing: 0.3 },
+
+  // ✅ logos + actions
+  logoRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 10,
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  logoChip: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  logoImg: { width: 18, height: 18 },
+  logoText: { color: "rgba(255,255,255,0.85)", fontWeight: "900", fontSize: 12 },
+
+  resultActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  smallActionBtn: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,255,255,0.07)",
+  },
+  smallActionText: { color: "white", fontWeight: "900" },
+
+  listingRow: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    marginBottom: 10,
+  },
+  listingTitle: { color: "white", fontWeight: "900" },
+  listingMeta: { color: "rgba(255,255,255,0.70)", fontWeight: "800", marginTop: 4, fontSize: 12 },
+
+  haggleRow: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  haggleText: {
+    flex: 1,
+    color: "rgba(255,255,255,0.88)",
+    fontWeight: "800",
+    marginRight: 10,
+  },
+});

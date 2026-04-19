@@ -12,6 +12,7 @@ import {
   Easing as RNEasing,
   Pressable,
   useWindowDimensions,
+  Platform,
 } from "react-native";
 import {
   Canvas,
@@ -32,8 +33,11 @@ import {
   interpolate,
 } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
-import { C, SP, R, TY } from "../design/DS";
+import { C, SP, R, TY, EASE_PANTHERE } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
+
+const IS_ANDROID = Platform.OS === "android";
+const panthereRN = RNEasing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -52,6 +56,8 @@ interface LoadingScreenProps {
   headline?: string;
   /** True when scan has been running >10s with no result — shows Connection Weak state */
   slowNetwork?: boolean;
+  /** Called on orb press-in — used by parent to trigger haptic burst */
+  onOrbPress?: () => void;
 }
 
 const STAGE_COPY: Record<LoadingStage, { primary: string; sub: string }> = {
@@ -82,6 +88,7 @@ export function LoadingScreen({
   loadingDots = "",
   headline,
   slowNetwork,
+  onOrbPress,
 }: LoadingScreenProps) {
   const { width: screenW } = useWindowDimensions();
 
@@ -133,11 +140,11 @@ export function LoadingScreen({
       -1, false
     );
 
-    // Scan progress bar (RN Animated, width can't use native driver)
+    // Scan progress bar (RN Animated, width can't use native driver) — Panthere ease
     RNAnimated.timing(progressAnim, {
       toValue: 1,
       duration: 28000,
-      easing: RNEasing.out(RNEasing.quad),
+      easing: panthereRN,
       useNativeDriver: false,
     }).start();
 
@@ -151,7 +158,7 @@ export function LoadingScreen({
       ]).start();
     });
 
-    // Pill glow loop
+    // Pill glow loop — keep sin for continuous breathing (Panthere is for start→rest moves)
     const pillGlowLoop = RNAnimated.loop(RNAnimated.sequence([
       RNAnimated.timing(pillGlow, { toValue: 1, duration: 900, easing: RNEasing.inOut(RNEasing.sin), useNativeDriver: true }),
       RNAnimated.timing(pillGlow, { toValue: 0, duration: 900, easing: RNEasing.inOut(RNEasing.sin), useNativeDriver: true }),
@@ -164,14 +171,14 @@ export function LoadingScreen({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Stage cross-fade
+  // Stage cross-fade — Panthere curve (heavy start → silk finish)
   useEffect(() => {
     RNAnimated.timing(textOpacity, {
-      toValue: 0, duration: 120, easing: RNEasing.out(RNEasing.cubic), useNativeDriver: true,
+      toValue: 0, duration: 120, easing: panthereRN, useNativeDriver: true,
     }).start(() => {
       setRenderStage(stage);
       RNAnimated.timing(textOpacity, {
-        toValue: 1, duration: 260, easing: RNEasing.out(RNEasing.cubic), useNativeDriver: true,
+        toValue: 1, duration: 260, easing: panthereRN, useNativeDriver: true,
       }).start();
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -247,6 +254,7 @@ export function LoadingScreen({
     <View style={styles.container}>
 
       {/* ── SKIA CANVAS — crisp GPU-rendered orb ── */}
+      <Pressable onPressIn={onOrbPress} style={{ width: screenW, height: CANVAS_H }}>
       <Canvas style={{ width: screenW, height: CANVAS_H }}>
 
         {/* 1. Background ambient glow */}
@@ -315,28 +323,37 @@ export function LoadingScreen({
         <Circle cx={cx} cy={cy} r={coreInnerR} color="rgba(255,255,255,0.96)" />
 
       </Canvas>
+      </Pressable>
 
       {/* ── STAGE TEXT ── */}
-      <RNAnimated.View style={[styles.textBlock, { opacity: textOpacity }]}>
-        <Text style={styles.primaryText}>
+      <RNAnimated.View
+        style={[styles.textBlock, { opacity: textOpacity }]}
+        renderToHardwareTextureAndroid={IS_ANDROID}
+        shouldRasterizeIOS={!IS_ANDROID}
+      >
+        <Text style={styles.primaryText} allowFontScaling={false} numberOfLines={1}>
           {headline ?? (stageCopy.primary + loadingDots)}
         </Text>
-        <Text style={styles.subText}>
+        <Text style={styles.subText} allowFontScaling={false} numberOfLines={1}>
           {stageMeta ?? stageCopy.sub}
         </Text>
         {slowNetwork ? (
           <View style={styles.subwayModeBlock}>
             <View style={styles.subwayModeHeader}>
               <View style={styles.subwayModeDot} />
-              <Text style={styles.subwayModeLabel}>DEEP ANALYSIS MODE</Text>
+              <Text style={styles.subwayModeLabel} allowFontScaling={false} numberOfLines={1}>
+                DEEP ANALYSIS MODE
+              </Text>
             </View>
-            <Text style={styles.subwayModeText}>
+            <Text style={styles.subwayModeText} allowFontScaling={false}>
               Low signal detected — extending market search for best results
             </Text>
             {onRetry ? (
               <Pressable onPress={onRetry} style={styles.subwayRetryBtn}>
                 <Ionicons name="refresh-outline" size={13} color="rgba(255,255,255,0.75)" />
-                <Text style={styles.subwayRetryText}>Retry with fresh scan</Text>
+                <Text style={styles.subwayRetryText} allowFontScaling={false} numberOfLines={1}>
+                  Retry with fresh scan
+                </Text>
               </Pressable>
             ) : null}
           </View>
@@ -365,17 +382,23 @@ export function LoadingScreen({
                   }],
                 },
               ]}
+              renderToHardwareTextureAndroid={IS_ANDROID}
+              shouldRasterizeIOS={!IS_ANDROID}
             >
               {isCompleted ? (
                 <Ionicons name="checkmark" size={9} color="rgba(255,255,255,0.85)" />
               ) : isActive ? (
-                <RNAnimated.View style={[
-                  styles.pillGlowDot,
-                  {
-                    opacity: pillGlow.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1.0] }),
-                    transform: [{ scale: pillGlow.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.2] }) }],
-                  },
-                ]} />
+                <RNAnimated.View
+                  style={[
+                    styles.pillGlowDot,
+                    {
+                      opacity: pillGlow.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1.0] }),
+                      transform: [{ scale: pillGlow.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.2] }) }],
+                    },
+                  ]}
+                  renderToHardwareTextureAndroid={IS_ANDROID}
+                  shouldRasterizeIOS={!IS_ANDROID}
+                />
               ) : null}
             </RNAnimated.View>
           );
@@ -384,10 +407,14 @@ export function LoadingScreen({
 
       {/* ── SCAN PROGRESS BAR ── */}
       <View style={styles.progressTrack}>
-        <RNAnimated.View style={[
-          styles.progressFill,
-          { width: progressAnim.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) as any },
-        ]} />
+        <RNAnimated.View
+          style={[
+            styles.progressFill,
+            { width: progressAnim.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) as any },
+          ]}
+          renderToHardwareTextureAndroid={IS_ANDROID}
+          shouldRasterizeIOS={!IS_ANDROID}
+        />
       </View>
 
       {/* ── CANCEL / RETRY ── */}
@@ -436,6 +463,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#ffffff",
     textAlign: "center",
+    lineHeight: 26,
     marginBottom: SP.xs,
     letterSpacing: 0.2,
   },

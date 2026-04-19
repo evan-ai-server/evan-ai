@@ -28,6 +28,7 @@ import Reanimated, {
   withSequence,
   interpolate,
   Extrapolation,
+  Easing,
 } from "react-native-reanimated";
 import { LoadingScreen, LoadingStage } from "../scan/LoadingScreen";
 import { CardDeck } from "./CardDeck";
@@ -35,8 +36,11 @@ import { ResultsDock } from "./ResultsDock";
 import { AskAIDrawer, ScanContext } from "./AskAIDrawer";
 import { AutoListingDrawer } from "./AutoListingDrawer";
 import { OfflineBanner } from "./OfflineBanner";
-import { C, SP, R, TY, confidenceLabel } from "../design/DS";
+import { C, SP, R, TY, confidenceLabel, EASE_PANTHERE, SINGULARITY } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
+
+const IS_ANDROID = Platform.OS === "android";
+const panthere = Easing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
 
 interface ResultsContentProps {
   // ── Data ──────────────────────────────────
@@ -88,6 +92,9 @@ interface ResultsContentProps {
   onRetryAfterError?: () => void;
   onZoomImage?: (uri: string) => void;
   onShareCard?: (card: any) => void;
+  onVaultSave?: (entry: any) => void;
+  onOrbPress?: () => void;
+  isNet?: boolean;
   /** Feature 1: timestamp (ms) of cached result — truthy = show offline banner */
   offlineCachedAt?: number | null;
   onRefreshFromCache?: () => void;
@@ -98,7 +105,7 @@ interface ResultsContentProps {
 // Dock approximate height + safe area buffer
 const DOCK_SAFE_HEIGHT = 200;
 
-export function ResultsContent({
+export const ResultsContent = React.memo(function ResultsContent({
   activeResult,
   results,
   loadingResults,
@@ -134,6 +141,9 @@ export function ResultsContent({
   watchlist,
   onToggleWatchlist,
   onShareCard,
+  onVaultSave,
+  onOrbPress,
+  isNet,
   offlineCachedAt,
   onRefreshFromCache,
   apiBase,
@@ -154,9 +164,10 @@ export function ResultsContent({
   const loadingOpacity  = useSharedValue(loadingResults ? 0 : 0);
   const loadingScale    = useSharedValue(loadingResults ? 0.94 : 1);
 
-  // Results container: enters with translateY+opacity spring
+  // Results container: Singularity — opacity + translateY + scale bloom
   const resultsOpacity  = useSharedValue(loadingResults ? 0 : 1);
-  const resultsTranslateY = useSharedValue(loadingResults ? 40 : 0);
+  const resultsTranslateY = useSharedValue(loadingResults ? SINGULARITY.fromTranslateY : 0);
+  const resultsScale    = useSharedValue(loadingResults ? SINGULARITY.fromScale : 1);
 
   // Legacy entrance animations (used for header/content stagger within results)
   const headerEntrance = useSharedValue(0);
@@ -172,36 +183,46 @@ export function ResultsContent({
     setDeckIndex(0);
   }, [activeResult]);
 
-  // Loading screen entrance: spring scale 0.94→1, opacity 0→1
+  // Loading screen entrance: Panthere fade (heavy start → silk finish) + spring scale
   useEffect(() => {
     if (loadingResults) {
       hasShownLoading.current = true;
       loadingOpacity.value = 0;
       loadingScale.value = 0.94;
-      // Spring entrance for loading screen
-      loadingOpacity.value = withTiming(1, { duration: 380 });
+      loadingOpacity.value = withTiming(1, { duration: SINGULARITY.duration, easing: panthere });
       loadingScale.value = withSpring(1, { damping: 22, stiffness: 200 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingResults]);
 
-  // Transition: loading → results
+  // Transition: loading → results (Singularity curve for all fades)
   useEffect(() => {
     if (!loadingResults && activeResult) {
-      // 1. Animate loading container out: scale 1→1.04 + opacity 1→0
-      loadingOpacity.value = withTiming(0, { duration: 280 });
-      loadingScale.value = withTiming(1.04, { duration: 280 });
+      // 1. Animate loading container out: scale 1→1.04 + opacity 1→0 (Panthere)
+      loadingOpacity.value = withTiming(0, { duration: 280, easing: panthere });
+      loadingScale.value = withTiming(1.04, { duration: 280, easing: panthere });
 
-      // 2. After 120ms delay, animate results in
+      // 2. After 120ms delay, animate results in — Singularity bloom
       resultsOpacity.value = 0;
-      resultsTranslateY.value = 40;
-      resultsOpacity.value = withDelay(120, withSpring(1, { damping: 26, stiffness: 180 }));
-      resultsTranslateY.value = withDelay(120, withSpring(0, { damping: 26, stiffness: 180 }));
+      resultsTranslateY.value = SINGULARITY.fromTranslateY;
+      resultsScale.value = SINGULARITY.fromScale;
+      resultsOpacity.value = withDelay(
+        120,
+        withTiming(1, { duration: SINGULARITY.duration, easing: panthere }),
+      );
+      resultsTranslateY.value = withDelay(
+        120,
+        withTiming(0, { duration: SINGULARITY.duration, easing: panthere }),
+      );
+      resultsScale.value = withDelay(
+        120,
+        withTiming(1, { duration: SINGULARITY.duration, easing: panthere }),
+      );
 
       // 3. Legacy glow + staggered header/content
       glowPulse.value = withSequence(
-        withTiming(1, { duration: 400 }),
-        withTiming(0, { duration: 600 }),
+        withTiming(1, { duration: 400, easing: panthere }),
+        withTiming(0, { duration: 600, easing: panthere }),
       );
       headerEntrance.value = 0;
       contentEntrance.value = 0;
@@ -222,7 +243,10 @@ export function ResultsContent({
 
   const resultsContainerStyle = useAnimatedStyle(() => ({
     opacity: resultsOpacity.value,
-    transform: [{ translateY: resultsTranslateY.value }] as any,
+    transform: [
+      { scale: resultsScale.value },
+      { translateY: resultsTranslateY.value },
+    ] as any,
   }));
 
   const headerAnimStyle = useAnimatedStyle(() => ({
@@ -289,7 +313,12 @@ export function ResultsContent({
           Positioned absolutely so it overlaps the results container during transition.
       */}
       {loadingResults ? (
-        <Reanimated.View style={[styles.transitionLayer, loadingContainerStyle as any]}>
+        <Reanimated.View
+          style={[styles.transitionLayer, loadingContainerStyle as any]}
+          renderToHardwareTextureAndroid={IS_ANDROID}
+          shouldRasterizeIOS={!IS_ANDROID}
+          needsOffscreenAlphaCompositing={IS_ANDROID}
+        >
           <LoadingScreen
             photoUri={loadingPhotoUri}
             stage={scanStage}
@@ -301,6 +330,7 @@ export function ResultsContent({
             retryReveal={retryReveal}
             retryScale={retryScale}
             loadingDots={loadingDots}
+            onOrbPress={onOrbPress}
           />
         </Reanimated.View>
       ) : null}
@@ -310,9 +340,19 @@ export function ResultsContent({
           then floats up into place.
       */}
       {!loadingResults ? (
-        <Reanimated.View style={[styles.resultsWrap, resultsContainerStyle as any]}>
+        <Reanimated.View
+          style={[styles.resultsWrap, resultsContainerStyle as any]}
+          renderToHardwareTextureAndroid={IS_ANDROID}
+          shouldRasterizeIOS={!IS_ANDROID}
+          needsOffscreenAlphaCompositing={IS_ANDROID}
+        >
           {/* Animated depth glow sweep at top */}
-          <Reanimated.View style={[styles.bgGlow, glowStyle as any]} pointerEvents="none" />
+          <Reanimated.View
+            style={[styles.bgGlow, glowStyle as any]}
+            pointerEvents="none"
+            renderToHardwareTextureAndroid={IS_ANDROID}
+            shouldRasterizeIOS={!IS_ANDROID}
+          />
 
           {/* ── Error card (replaces results if present) */}
           {uiError ? (
@@ -357,7 +397,11 @@ export function ResultsContent({
               ) : null}
 
               {/* Identity header: item name + intelligence signal */}
-              <Reanimated.View style={headerAnimStyle as any}>
+              <Reanimated.View
+                style={headerAnimStyle as any}
+                renderToHardwareTextureAndroid={IS_ANDROID}
+                shouldRasterizeIOS={!IS_ANDROID}
+              >
                 <IdentityHeader
                   activeResult={activeResult}
                   lastScan={lastScan}
@@ -367,7 +411,11 @@ export function ResultsContent({
               </Reanimated.View>
 
               {/* Horizontal card deck (has its own entrance animation) */}
-              <Reanimated.View style={contentAnimStyle as any}>
+              <Reanimated.View
+                style={contentAnimStyle as any}
+                renderToHardwareTextureAndroid={IS_ANDROID}
+                shouldRasterizeIOS={!IS_ANDROID}
+              >
                 <CardDeck
                   activeResult={activeResult}
                   results={results}
@@ -377,9 +425,16 @@ export function ResultsContent({
                   onSnapToIndex={handleSnap}
                   onToggleWatchlist={onToggleWatchlist}
                   onShare={onShareCard}
+                  onVaultSave={onVaultSave}
+                  isNet={isNet}
                 />
               </Reanimated.View>
             </>
+          ) : null}
+
+          {/* Oracle's Tip — typewriter AI micro-copy */}
+          {activeResult && !uiError ? (
+            <TypeWriter text={oracleTip(activeResult)} />
           ) : null}
 
           {/* ── Dock spacer (so scroll content isn't hidden under dock) */}
@@ -469,7 +524,7 @@ export function ResultsContent({
       ) : null}
     </View>
   );
-}
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IDENTITY HEADER — compact item context above the card deck
@@ -507,14 +562,14 @@ function IdentityHeader({
 
         <View style={styles.identityText}>
           {/* Item name */}
-          <Text numberOfLines={1} style={styles.identityName}>
+          <Text numberOfLines={1} allowFontScaling={false} style={styles.identityName}>
             {activeResult.itemName || "Scan result"}
           </Text>
 
           {/* Intelligence badge */}
           {(intelLevel ?? 0) >= 5 ? (
             <View style={styles.intelBadge}>
-              <Text style={styles.intelBadgeText}>
+              <Text style={styles.intelBadgeText} allowFontScaling={false} numberOfLines={1}>
                 {(intelLevel ?? 0) >= 8 ? "FULL INTEL" : "INTEL"}
               </Text>
             </View>
@@ -533,12 +588,18 @@ function IdentityHeader({
               }
             ]} />
 
-            <Text style={styles.identityMetaText}>{confLabel}</Text>
+            <Text style={styles.identityMetaText} allowFontScaling={false} numberOfLines={1}>
+              {confLabel}
+            </Text>
 
             {query ? (
               <>
-                <Text style={styles.metaSep}>·</Text>
-                <Text numberOfLines={1} style={[styles.identityMetaText, { flex: 1 }]}>
+                <Text style={styles.metaSep} allowFontScaling={false}>·</Text>
+                <Text
+                  numberOfLines={1}
+                  allowFontScaling={false}
+                  style={[styles.identityMetaText, { flex: 1 }]}
+                >
                   &quot;{query}&quot;
                 </Text>
               </>
@@ -546,8 +607,10 @@ function IdentityHeader({
 
             {totalMatches > 0 ? (
               <>
-                <Text style={styles.metaSep}>·</Text>
-                <Text style={styles.identityMetaText}>{totalMatches} listings</Text>
+                <Text style={styles.metaSep} allowFontScaling={false}>·</Text>
+                <Text style={styles.identityMetaText} allowFontScaling={false} numberOfLines={1}>
+                  {totalMatches} listings
+                </Text>
               </>
             ) : null}
           </View>
@@ -574,6 +637,80 @@ function EmptyState({ onNewScan }: { onNewScan: () => void }) {
     </View>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORACLE'S TIP — AI micro-copy typewriter
+// ─────────────────────────────────────────────────────────────────────────────
+function oracleTip(data: any): string {
+  const hour = new Date().getHours();
+  if (hour >= 0 && hour < 5)
+    return "Night owl mode active. The quietest hours find the loudest profits.";
+  const verdict   = (data?.buyVerdict ?? "").toUpperCase();
+  const tier      = data?.ebaySoldComps?.velocityTier ?? "";
+  const conf      = Number(data?.visionConfidence ?? 0);
+  const avgM      = Number(data?.avgMarket ?? 0);
+  if (/GREAT|FLIP/i.test(verdict))
+    return "High flip potential detected — list within 48h for peak ROI.";
+  if (tier === "hot")
+    return "Hot category right now — buyers are moving fast. Don't wait.";
+  if (conf >= 0.90)
+    return "Strong ID match. Low competition on this brand — try the Top Tier price.";
+  if (tier === "slow" || tier === "rare")
+    return "Slow mover — hold for seasonal peak or price it to move today.";
+  if (avgM > 0 && avgM < 40)
+    return "Micro-priced item: volume is your edge. Stack and batch-ship.";
+  return "Market data locked in — list within 24h to capture current demand.";
+}
+
+function TypeWriter({ text }: { text: string }) {
+  const [displayed, setDisplayed] = useState("");
+
+  useEffect(() => {
+    setDisplayed("");
+    let i = 0;
+    const timer = setInterval(() => {
+      i += 1;
+      setDisplayed(text.slice(0, i));
+      if (i >= text.length) clearInterval(timer);
+    }, 26);
+    return () => clearInterval(timer);
+  }, [text]);
+
+  const cursor = displayed.length < text.length;
+  return (
+    <View style={oracleStyles.wrap}>
+      <Ionicons name="sparkles" size={9} color="rgba(255,200,60,0.7)" />
+      <Text style={oracleStyles.text}>
+        {displayed}
+        {cursor ? <Text style={oracleStyles.cursor}>|</Text> : null}
+      </Text>
+    </View>
+  );
+}
+
+const oracleStyles = StyleSheet.create({
+  wrap: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 5,
+    marginHorizontal: SP.xl,
+    marginTop: SP.sm,
+    marginBottom: 4,
+    opacity: 0.88,
+  },
+  text: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: "400",
+    color: "rgba(255,200,60,0.80)",
+    lineHeight: 16,
+    letterSpacing: 0.1,
+  },
+  cursor: {
+    opacity: 0.5,
+    color: "rgba(255,200,60,0.60)",
+  },
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STYLES
@@ -644,6 +781,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "800",
     color: "#ffffff",
+    lineHeight: 25,
     marginBottom: SP.xs,
   },
   identityMeta: {

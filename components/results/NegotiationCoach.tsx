@@ -27,6 +27,8 @@ import Animated, {
 import * as Haptics from "expo-haptics";
 import { C, SP, R, TY } from "../design/DS";
 
+const IS_ANDROID = Platform.OS === "android";
+
 export interface NegotiationContext {
   itemName?: string | null;
   listingPrice?: number | null;
@@ -90,6 +92,7 @@ export function NegotiationCoach({ visible, context, apiBase, onClose }: Negotia
       setInput("");
       setStreaming(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   const sendMessage = useCallback(async (text: string) => {
@@ -187,7 +190,11 @@ export function NegotiationCoach({ visible, context, apiBase, onClose }: Negotia
         <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.45)" }]} />
       </Pressable>
 
-      <Animated.View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }, animStyle]}>
+      <Animated.View
+        style={[styles.sheet, { paddingBottom: insets.bottom + 12 }, animStyle]}
+        renderToHardwareTextureAndroid={IS_ANDROID}
+        shouldRasterizeIOS={!IS_ANDROID}
+      >
         {/* Handle */}
         <View style={styles.handle} />
 
@@ -198,8 +205,10 @@ export function NegotiationCoach({ visible, context, apiBase, onClose }: Negotia
               <Ionicons name="chatbubble-ellipses" size={18} color="rgba(0,200,120,0.95)" />
             </View>
             <View>
-              <Text style={styles.headerTitle}>Negotiation Coach</Text>
-              <Text style={styles.headerSub}>
+              <Text style={styles.headerTitle} allowFontScaling={false} numberOfLines={1}>
+                Negotiation Coach
+              </Text>
+              <Text style={styles.headerSub} allowFontScaling={false} numberOfLines={1}>
                 {context.listingPrice && context.marketMedian
                   ? `Listed $${context.listingPrice} · Market $${Math.round(context.marketMedian)}`
                   : context.itemName || "AI-powered haggling"}
@@ -226,7 +235,7 @@ export function NegotiationCoach({ visible, context, apiBase, onClose }: Negotia
           >
             {messages.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyTitle}>What's your situation?</Text>
+                <Text style={styles.emptyTitle}>What&apos;s your situation?</Text>
                 <Text style={styles.emptySub}>Tap a prompt or type your own</Text>
                 <View style={styles.openers}>
                   {openers.map((o, i) => (

@@ -17,11 +17,26 @@
  */
 import React, { Suspense, useRef, useState, useCallback, useImperativeHandle, forwardRef, useMemo, useEffect, Component } from "react";
 import { StyleSheet, Platform, View } from "react-native";
+
+// ─── Native polyfill ──────────────────────────────────────────────────────────
+// Three.js module init touches `window.document` even on import. On React
+// Native there is no DOM, so guard against ReferenceError on iOS/Android.
+if (Platform.OS !== "web") {
+  const g = global as any;
+  if (!g.window) g.window = {};
+  if (!g.window.document) g.window.document = {};
+}
+
 import { Canvas, useThree } from "@react-three/fiber/native";
 import * as THREE from "three";
 import gsap from "gsap";
 import * as Haptics from "expo-haptics";
-import { Text as DreiText } from "@react-three/drei";
+// DreiText (troika-three-text) calls document.createElement('canvas') — unavailable
+// on React Native. On native platforms, degrade gracefully to no-op.
+import { Text as _DreiText } from "@react-three/drei/native";
+const DreiText: typeof _DreiText = Platform.OS === "web"
+  ? _DreiText
+  : ((() => null) as any);
 import type { VerdictMode } from "./SpatialContext";
 
 // ─── ZONE COORDINATES ────────────────────────────────────────────────────────

@@ -1024,123 +1024,7 @@ function getGreeting(): string {
   return "Night owl mode active. Find the hidden gems.";
 }
 
-// ─── Laser Scanner ──────────────────────────────────────────────────────────────
-// Horizontal neon line that sweeps the viewfinder; haptic tick at each bounce.
-function LaserScanner({ active, goldPulse }: { active: boolean; goldPulse?: boolean }) {
-  const progress  = useSharedValue(0);
-  const bounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const goldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [isGold, setIsGold] = useState(false);
-  const { height: screenH } = useWindowDimensions();
 
-  useEffect(() => {
-    if (!active) { progress.value = 0; return; }
-    const PERIOD = 1900;
-    progress.value = withRepeat(
-      withTiming(1, { duration: PERIOD, easing: Easing.inOut(Easing.sin) }),
-      -1, true,
-    );
-    const tick = () => {
-      try { Haptics.selectionAsync(); } catch {}
-      bounceRef.current = setTimeout(tick, PERIOD);
-    };
-    bounceRef.current = setTimeout(tick, PERIOD);
-    return () => { if (bounceRef.current) clearTimeout(bounceRef.current); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
-
-  // Gold pulse: fires when goldPulse prop becomes true while active
-  useEffect(() => {
-    if (active && goldPulse) {
-      setIsGold(true);
-      if (goldTimerRef.current) clearTimeout(goldTimerRef.current);
-      goldTimerRef.current = setTimeout(() => setIsGold(false), 3000);
-    }
-    return () => { if (goldTimerRef.current) clearTimeout(goldTimerRef.current); };
-  }, [active, goldPulse]);
-
-  const lineColor = isGold ? "rgba(255,215,0,0.92)"  : "rgba(0,255,180,0.92)";
-  const shadowC   = isGold ? "rgba(255,215,0,1)"      : "rgba(0,255,180,1)";
-  const glowColor = isGold ? "rgba(255,215,0,0.08)"   : "rgba(0,255,180,0.07)";
-
-  const lineStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: interpolate(progress.value, [0, 1], [0, screenH - 2], Extrapolation.CLAMP) }],
-  }));
-
-  if (!active) return null;
-  return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
-      <Reanimated.View style={[laserStyles.glow, lineStyle as any, { backgroundColor: glowColor }]} />
-      <Reanimated.View style={[laserStyles.line, lineStyle as any, { backgroundColor: lineColor, shadowColor: shadowC }]} />
-    </View>
-  );
-}
-const laserStyles = StyleSheet.create({
-  line: {
-    position: "absolute", left: 0, right: 0, height: 1.5,
-    backgroundColor: "rgba(0,255,180,0.92)",
-    shadowColor: "rgba(0,255,180,1)", shadowOpacity: 0.9, shadowRadius: 5, shadowOffset: { width: 0, height: 0 },
-  },
-  glow: {
-    position: "absolute", left: 0, right: 0, height: 14, marginTop: -6,
-    backgroundColor: "rgba(0,255,180,0.07)",
-  },
-});
-
-// ─── Focus Lock Indicator ─────────────────────────────────────────────────────
-function FocusLockIndicator({ visible }: { visible: boolean }) {
-  const opacity = useSharedValue(0);
-  useEffect(() => {
-    opacity.value = visible
-      ? withSpring(1, { damping: 14, stiffness: 220 })
-      : withTiming(0, { duration: 280 });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
-  // Breathing haptic: rhythmic light pulse while focus is locked
-  useEffect(() => {
-    if (!visible) return;
-    const interval = setInterval(() => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [visible]);
-  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
-  return (
-    <Reanimated.View
-      pointerEvents="none"
-      style={[focusLockStyles.badge, style as any]}
-    >
-      <Ionicons name="aperture-outline" size={11} color="rgba(0,255,180,0.92)" />
-      <Text style={focusLockStyles.text}>FOCUS LOCKED</Text>
-    </Reanimated.View>
-  );
-}
-const focusLockStyles = StyleSheet.create({
-  badge: {
-    position: "absolute",
-    top: 84,
-    alignSelf: "center",
-    left: "50%",
-    marginLeft: -60,
-    width: 120,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    backgroundColor: "rgba(0,16,10,0.78)",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "rgba(0,255,180,0.32)",
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-  },
-  text: {
-    fontSize: 10,
-    fontWeight: "700" as const,
-    letterSpacing: 1.1,
-    color: "rgba(0,255,180,0.9)",
-  },
-});
 
 // ─── Vault Fly Particle ───────────────────────────────────────────────────────
 function VaultFlyParticle({ uri }: { uri: string }) {
@@ -3433,12 +3317,6 @@ const [_enrich, _setEnrich] = useState(null);
  // Vault fly animation
  const [vaultFly, setVaultFly] = useState<{ key: number; uri: string } | null>(null);
  const vaultFlyKeyRef = useRef(0);
- // Gold Pulse: laser turns gold for 3s when a top-tier item is vaulted
- const [lastVaultIsTopTier, setLastVaultIsTopTier] = useState(false);
- // Focus Lock (Ghost Scanner)
- const [focusLocked, setFocusLocked] = useState(false);
- const stillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
- const focusLockedRef = useRef(false);
  // Heartbeat haptic during scan
  const heartbeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
  const heartbeatPhaseRef = useRef<"slow" | "fast">("slow");
@@ -3595,40 +3473,6 @@ useEffect(() => {
 // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
-// ── Ghost Scanner: Focus Lock via Accelerometer ───────────────────────────────
-useEffect(() => {
-  const isCameraActive = tab === "camera" && !photo && !loadingResults && !!permission?.granted;
-  if (!isCameraActive) {
-    Accelerometer.removeAllListeners();
-    if (stillTimerRef.current) { clearTimeout(stillTimerRef.current); stillTimerRef.current = null; }
-    if (!focusLockedRef.current) setFocusLocked(false);
-    return;
-  }
-  Accelerometer.setUpdateInterval(80);
-  const sub = Accelerometer.addListener(({ x, y, z }) => {
-    const mag = Math.sqrt(x * x + y * y + z * z);
-    const movement = Math.abs(mag - 1.0); // ~1g when completely still
-    if (movement < 0.05) {
-      if (!stillTimerRef.current && !focusLockedRef.current) {
-        stillTimerRef.current = setTimeout(() => {
-          stillTimerRef.current = null;
-          focusLockedRef.current = true;
-          setFocusLocked(true);
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-          setTimeout(() => { focusLockedRef.current = false; setFocusLocked(false); }, 2200);
-        }, 1200);
-      }
-    } else {
-      if (stillTimerRef.current) { clearTimeout(stillTimerRef.current); stillTimerRef.current = null; }
-      if (!focusLockedRef.current) setFocusLocked(false);
-    }
-  });
-  return () => {
-    sub.remove();
-    if (stillTimerRef.current) { clearTimeout(stillTimerRef.current); stillTimerRef.current = null; }
-  };
-// eslint-disable-next-line react-hooks/exhaustive-deps
-}, [tab, photo, loadingResults, permission?.granted]);
 
 // ── Heartbeat haptic: rhythmic Light pulse while scanning, crescendo on enrich ─
 useEffect(() => {
@@ -4170,11 +4014,6 @@ const handleVaultSave = async (entry: { id: string; tempUri: string; name: strin
     vaultFlyKeyRef.current += 1;
     setVaultFly({ key: vaultFlyKeyRef.current, uri: destUri });
     setTimeout(() => setVaultFly(null), 900);
-    // Gold pulse: laser turns gold when a high-profit item (>$100) is vaulted
-    if ((entry.potentialProfit ?? 0) > 100) {
-      setLastVaultIsTopTier(true);
-      setTimeout(() => setLastVaultIsTopTier(false), 300000); // 5 minutes
-    }
     // Synchronized chime + haptic win burst
     SoundEffect.chime();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -6846,6 +6685,9 @@ const tabMaskOpacity = useRef(new RNAnimated.Value(0)).current;
 const goTab = (next) => {
   if (!next || next === tab) return;
 
+  // ✅ Immediately kill any in-flight tabFade to prevent ghost frames
+  try { tabFade.stopAnimation?.(); } catch {}
+
   // ✅ HARD throttle: ignores tab spam (prevents animation stacking + lag)
   const now = Date.now();
   if (now - goTabLastRef.current < 220) return;
@@ -6856,11 +6698,13 @@ const goTab = (next) => {
   if (nowMs - lastTabPressRef.current < TAB_COOLDOWN_MS) return;
   lastTabPressRef.current = nowMs;
 
-  // ✅ If switching already, allow ONLY ONE pending (latest wins)
+  // ✅ If switching already, allow ONLY ONE pending (latest wins); clear stale queue first
   if (tabSwitchingRef.current) {
-    if (pendingTabRef.current !== next) pendingTabRef.current = next;
+    pendingTabRef.current = next;
     return;
   }
+  // Clear any leftover pending from a previous blocked switch
+  pendingTabRef.current = null;
 
   closeAllOverlays?.();
   hapticSelect?.();
@@ -6903,9 +6747,11 @@ const goTab = (next) => {
   } catch {}
   tabFailSafeRef.current = setTimeout(() => {
     try { tabFade.stopAnimation?.(); } catch {}
+    // Recover: ensure the current tab is visible
     try { tabFade.setValue?.(1); } catch {}
 
     tabSwitchingRef.current = false;
+    pendingTabRef.current = null;
     setTabInteractable(true);
 
     try {
@@ -6929,9 +6775,9 @@ const goTab = (next) => {
     }
   }, 700);
 
-  // ✅ Kill any running fade immediately
+  // ✅ Kill any running fade — do NOT force setValue(1) which causes
+  // a single-frame flash of the current tab during rapid switching
   try { tabFade.stopAnimation?.(); } catch {}
-  try { tabFade.setValue?.(1); } catch {}
 
   // 1) Fade out current
   RNAnimated.timing(tabFade, {
@@ -11760,7 +11606,7 @@ transform: [
     {/* Sentient greeting — time-aware hint below scan pills */}
     <View
       pointerEvents="none"
-      style={{ position: "absolute", top: TOP + 136, left: 0, right: 0, alignItems: "center" }}
+      style={{ position: "absolute", top: TOP + 230, left: 0, right: 0, alignItems: "center" }}
     >
       <Text style={{ color: "rgba(255,255,255,0.28)", fontSize: 11, fontWeight: "500", letterSpacing: 0.4 }}>
         {getGreeting()}
@@ -11859,8 +11705,6 @@ onBarcodeScanned={(d) => {
   />
 )}
 
-<LaserScanner active={tab === "camera" && !photo && !loadingResults && !!permission?.granted} goldPulse={lastVaultIsTopTier} />
-<FocusLockIndicator visible={focusLocked} />
 
 <NeuralScanOverlay
   active={scanAnimActive}

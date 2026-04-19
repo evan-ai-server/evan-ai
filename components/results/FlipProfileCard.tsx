@@ -14,7 +14,7 @@ export interface FlipProfile {
   avgMargin: number;
   totalSaved: number;
   totalFlips: number;
-  badges: Array<{ icon: string; label: string }>;
+  badges: { icon: string; label: string }[];
   advice: string;
 }
 
@@ -46,29 +46,41 @@ export function FlipProfileCard({ profile, loading }: FlipProfileCardProps) {
       {/* Header */}
       <View style={styles.row}>
         <View style={styles.iconWrap}>
-          <Text style={styles.iconText}>{profile.personalityIcon || "🔍"}</Text>
+          <Text style={styles.iconText} allowFontScaling={false} numberOfLines={1}>
+            {profile.personalityIcon || "🔍"}
+          </Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.personalityLabel}>YOUR FLIP IDENTITY</Text>
-          <Text style={styles.personality}>{profile.personality}</Text>
+          <Text style={styles.personalityLabel} allowFontScaling={false} numberOfLines={1}>
+            YOUR FLIP IDENTITY
+          </Text>
+          <Text style={styles.personality} allowFontScaling={false} numberOfLines={1}>
+            {profile.personality}
+          </Text>
         </View>
       </View>
 
-      {/* Stats row */}
+      {/* Stats row — sub-pixel pinned values via fixed line-height */}
       <View style={styles.statsRow}>
         <View style={styles.stat}>
-          <Text style={styles.statVal}>{profile.totalFlips}</Text>
-          <Text style={styles.statLabel}>Scans</Text>
+          <Text style={styles.statVal} allowFontScaling={false} numberOfLines={1}>
+            {profile.totalFlips}
+          </Text>
+          <Text style={styles.statLabel} allowFontScaling={false} numberOfLines={1}>Scans</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.stat}>
-          <Text style={styles.statVal}>{fmtMoney(profile.avgMargin)}</Text>
-          <Text style={styles.statLabel}>Avg Saved</Text>
+          <Text style={styles.statVal} allowFontScaling={false} numberOfLines={1}>
+            {fmtMoney(profile.avgMargin)}
+          </Text>
+          <Text style={styles.statLabel} allowFontScaling={false} numberOfLines={1}>Avg Saved</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.stat}>
-          <Text style={styles.statVal}>{fmtMoney(profile.totalSaved)}</Text>
-          <Text style={styles.statLabel}>Total Saved</Text>
+          <Text style={styles.statVal} allowFontScaling={false} numberOfLines={1}>
+            {fmtMoney(profile.totalSaved)}
+          </Text>
+          <Text style={styles.statLabel} allowFontScaling={false} numberOfLines={1}>Total Saved</Text>
         </View>
       </View>
 
@@ -77,8 +89,8 @@ export function FlipProfileCard({ profile, loading }: FlipProfileCardProps) {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.badgeScroll} contentContainerStyle={styles.badgeRow}>
           {profile.badges.map((b, i) => (
             <View key={i} style={styles.badge}>
-              <Text style={styles.badgeIcon}>{b.icon}</Text>
-              <Text style={styles.badgeLabel}>{b.label}</Text>
+              <Text style={styles.badgeIcon} allowFontScaling={false} numberOfLines={1}>{b.icon}</Text>
+              <Text style={styles.badgeLabel} allowFontScaling={false} numberOfLines={1}>{b.label}</Text>
             </View>
           ))}
         </ScrollView>
@@ -87,7 +99,7 @@ export function FlipProfileCard({ profile, loading }: FlipProfileCardProps) {
       {/* Advice */}
       <View style={styles.adviceWrap}>
         <Ionicons name="bulb-outline" size={13} color="rgba(255,200,60,0.75)" />
-        <Text style={styles.advice}>{profile.advice}</Text>
+        <Text style={styles.advice} allowFontScaling={false}>{profile.advice}</Text>
       </View>
     </View>
   );
@@ -124,11 +136,13 @@ const styles = StyleSheet.create({
     ...TY.cap,
     color: C.text3,
     letterSpacing: 1.5,
+    lineHeight: 15,
   },
   personality: {
     color: "rgba(255,255,255,0.92)",
     fontSize: 16,
     fontWeight: "800",
+    lineHeight: 21,
     marginTop: 2,
   },
   statsRow: {
@@ -153,6 +167,7 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.92)",
     fontSize: 18,
     fontWeight: "900",
+    lineHeight: 23,
   },
   statLabel: {
     ...TY.cap,

@@ -9,7 +9,7 @@
  *
  * No expo-linear-gradient. Gradient via layered semi-transparent Views.
  */
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -17,14 +17,23 @@ import {
   StyleSheet,
   Share,
   TouchableOpacity,
+  Pressable,
+  Platform,
 } from "react-native";
+
+const IS_ANDROID = Platform.OS === "android";
+import { captureRef } from "react-native-view-shot";
+import * as Sharing from "expo-sharing";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import Reanimated, {
   useSharedValue,
   useAnimatedStyle,
+  useAnimatedReaction,
   withSequence,
   withSpring,
+  withTiming,
+  withRepeat,
   interpolate,
   interpolateColor,
   Extrapolation,
@@ -36,7 +45,7 @@ import {
   C, SP, R, TY, SH,
   CARD, IOS,
   verdictStyle, confidenceLabel,
-  fmtMoney,
+  fmtMoney, Feedback,
 } from "../design/DS";
 import { PriceHistoryChart, PriceChartPoint } from "./PriceHistoryChart";
 import { CommunityCompsPanel } from "./CommunityCompsPanel";
@@ -93,6 +102,8 @@ export interface CardData {
   visionQuery?: string | null;
   scanWhy?: string[] | null;
   rankWhy?: string[] | null;
+  // Visual DNA — from vision pipeline identity object
+  visionIdentity?: any | null;
 }
 
 interface ResultCardProps {
@@ -100,11 +111,19 @@ interface ResultCardProps {
   isHero: boolean;
   /** The hero's price — used by alt cards to compute delta */
   heroPrice?: number | null;
+  /** Scanned / target price — drives Market Spectrum badge logic */
+  scannedPrice?: number | null;
+  /** True when this card has the lowest price across the deck */
+  isLowest?: boolean;
   isWatchlisted?: boolean;
   onPress?: () => void;
   onZoomImage?: (uri: string) => void;
   onToggleWatchlist?: () => void;
   onShare?: () => void;
+  /** Vault save callback — fires after captureRef with temp URI + item metadata */
+  onVaultSave?: (entry: { id: string; tempUri: string; name: string; price: number | null; potentialProfit: number | null }) => void;
+  /** Apply 15% platform fee deduction to all profit calculations */
+  isNet?: boolean;
   /** API base URL — required to fetch community comps on hero card */
   apiBase?: string;
   /** User ID for community comp attribution (optional) */
@@ -172,7 +191,11 @@ function HeartButton({
 
   return (
     <GestureDetector gesture={tap}>
-      <Reanimated.View style={[styles.overlayBtn, bgStyle as any]}>
+      <Reanimated.View
+        style={[styles.overlayBtn, bgStyle as any]}
+        renderToHardwareTextureAndroid={IS_ANDROID}
+        shouldRasterizeIOS={!IS_ANDROID}
+      >
         <Reanimated.View style={heartStyle as any}>
           <Ionicons
             name={isWatchlisted ? "heart" : "heart-outline"}
@@ -202,7 +225,11 @@ function ShareBtn({ onShare }: { onShare: () => void }) {
 
   return (
     <GestureDetector gesture={tap}>
-      <Reanimated.View style={[styles.overlayBtn, styles.shareBtnBg, style as any]}>
+      <Reanimated.View
+        style={[styles.overlayBtn, styles.shareBtnBg, style as any]}
+        renderToHardwareTextureAndroid={IS_ANDROID}
+        shouldRasterizeIOS={!IS_ANDROID}
+      >
         <Ionicons name="arrow-up-outline" size={17} color="white" />
       </Reanimated.View>
     </GestureDetector>
@@ -229,14 +256,45 @@ function VelocityBadge({ comps }: { comps: VelocityComps }) {
   const countTxt = `${count} sold${comps.hasDates ? " / " + period : ""}`;
   const daysTxt  = days != null ? ` · ~${days}d to sell` : "";
 
-  return (
+  // Flame pulse for hot tier
+  const flamePulse = useSharedValue(1);
+  useEffect(() => {
+    if (tier !== "hot") return;
+    flamePulse.value = withRepeat(
+      withSequence(
+        withTiming(0.45, { duration: 750 }),
+        withTiming(1.0,  { duration: 750 }),
+      ),
+      -1, false,
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tier]);
+  const flameStyle = useAnimatedStyle(() => ({ opacity: flamePulse.value }));
+
+  const badge = (
     <View style={[velocityStyles.badge, { backgroundColor: vs.bg, borderColor: vs.border }]}>
-      <Ionicons name={vs.icon as any} size={11} color={vs.color} />
-      <Text style={[velocityStyles.text, { color: vs.color }]}>
+      {tier === "hot" ? (
+        <Reanimated.View
+          style={flameStyle as any}
+          renderToHardwareTextureAndroid={IS_ANDROID}
+          shouldRasterizeIOS={!IS_ANDROID}
+        >
+          <Ionicons name="flame" size={11} color={vs.color} />
+        </Reanimated.View>
+      ) : (
+        <Ionicons name={vs.icon as any} size={11} color={vs.color} />
+      )}
+      <Text
+        style={[velocityStyles.text, { color: vs.color }]}
+        allowFontScaling={false}
+        numberOfLines={1}
+      >
         {countTxt}{daysTxt}
       </Text>
     </View>
   );
+
+  return badge;
 }
 
 const velocityStyles = StyleSheet.create({
@@ -302,38 +360,195 @@ function VolatileAssetBadge({ signal }: { signal: VelocitySignal }) {
 }
 
 // ─── Card label helper ────────────────────────────────────────────────────────
+// Market Spectrum labels use scannedPrice as the anchor (what user is evaluating).
+// Hero labels additionally respond to isLowest (VALUE FLOOR) and flip verdict.
+// Alt labels: PREMIUM ANCHOR >2.5x, MARKET ALIGN ±20%, HIDDEN GEM, CHEAPER ALT.
 function cardLabel(
   isHero: boolean,
   price: number | null,
   heroPrice: number | null,
+  scannedPrice: number | null,
+  isLowest: boolean,
   verdict?: string,
-): { text: string; bg: string; border: string; color: string } | null {
+): { text: string; bg: string; border: string; color: string; heavy?: boolean } | null {
   if (isHero) {
-    const isFlip = /GREAT|FLIP/i.test(verdict || "");
-    return isFlip
-      ? { text: "BEST FLIP",   bg: "rgba(0,210,120,0.18)",   border: "rgba(0,210,120,0.35)",   color: "rgba(150,255,190,0.95)" }
-      : { text: "BEST DEAL",   bg: "rgba(255,255,255,0.12)", border: "rgba(255,255,255,0.28)", color: "rgba(255,255,255,0.96)" };
+    if (isLowest)
+      return { text: "VALUE FLOOR", bg: "rgba(255,200,60,0.16)", border: "rgba(255,200,60,0.35)", color: "rgba(255,225,100,0.96)" };
+    if (/GREAT|FLIP/i.test(verdict || ""))
+      return { text: "BEST FLIP",  bg: "rgba(0,210,120,0.18)", border: "rgba(0,210,120,0.35)", color: "rgba(150,255,190,0.95)" };
+    return { text: "BEST DEAL", bg: "rgba(255,255,255,0.12)", border: "rgba(255,255,255,0.28)", color: "rgba(255,255,255,0.96)" };
   }
-  if (price == null || heroPrice == null)
+
+  if (price == null) return null;
+
+  // PREMIUM ANCHOR: >2.5x the scanned price (show market ceiling for context)
+  if (Number.isFinite(scannedPrice) && price > scannedPrice! * 2.5)
+    return { text: "PREMIUM ANCHOR", bg: "rgba(180,140,255,0.10)", border: "rgba(180,140,255,0.32)", color: "rgba(210,185,255,0.88)", heavy: true };
+
+  // MARKET ALIGNMENT: within ±20% of scanned price
+  if (Number.isFinite(scannedPrice) && price >= scannedPrice! * 0.80 && price <= scannedPrice! * 1.20)
+    return { text: "MARKET ALIGN", bg: "rgba(100,180,255,0.12)", border: "rgba(100,180,255,0.28)", color: "rgba(150,210,255,0.92)" };
+
+  if (heroPrice == null)
     return { text: "CHEAPER ALT", bg: "rgba(0,210,120,0.12)", border: "rgba(0,210,120,0.28)", color: "rgba(120,255,160,0.92)" };
   const pctDiff = ((heroPrice - price) / heroPrice) * 100;
   if (pctDiff >= 18)
-    return { text: "HIDDEN GEM",   bg: "rgba(255,200,60,0.14)",  border: "rgba(255,200,60,0.30)",  color: "rgba(255,215,100,0.95)" };
+    return { text: "HIDDEN GEM",  bg: "rgba(255,200,60,0.14)", border: "rgba(255,200,60,0.30)", color: "rgba(255,215,100,0.95)" };
   if (pctDiff > 0)
     return { text: "CHEAPER ALT", bg: "rgba(0,210,120,0.12)", border: "rgba(0,210,120,0.28)", color: "rgba(120,255,160,0.92)" };
   return { text: "PREMIUM PICK", bg: "rgba(255,255,255,0.07)", border: "rgba(255,255,255,0.18)", color: "rgba(255,255,255,0.65)" };
 }
+
+// ─── Visual DNA match helper ──────────────────────────────────────────────────
+interface DnaAttr { label: string; pct: number }
+
+function computeDnaAttrs(vi: any, title: string): DnaAttr[] {
+  if (!vi || typeof vi !== "object") return [];
+  const t = (title || "").toLowerCase();
+  const candidates: { label: string; value: string }[] = [];
+  if (vi.brand)         candidates.push({ label: "Brand",  value: String(vi.brand) });
+  if (vi.style || vi.model)
+                        candidates.push({ label: "Model",  value: String(vi.style || vi.model) });
+  if (vi.color)         candidates.push({ label: "Color",  value: String(vi.color) });
+  return candidates
+    .map(({ label, value }) => {
+      const v     = value.toLowerCase();
+      const words = v.split(/\s+/).filter((w) => w.length > 2);
+      if (!words.length) return null;
+      const hits = words.filter((w) => t.includes(w)).length;
+      const pct  = Math.round((hits / words.length) * 100);
+      return pct > 0 ? { label, pct } : null;
+    })
+    .filter((a): a is DnaAttr => a !== null);
+}
+
+// ─── Avg Market Counter (Price Pulse) ────────────────────────────────────────
+function AvgMarketCounter({ value }: { value: number }) {
+  const anim = useSharedValue(0);
+  const [display, setDisplay] = useState("—");
+
+  const updateDisplay = useCallback((v: number) => {
+    setDisplay(fmtMoney(v));
+  }, []);
+
+  useEffect(() => {
+    anim.value = 0;
+    // Spring with slight overshoot: damping 8, stiffness 130 → overshoots ~4%
+    anim.value = withSpring(value, { damping: 8, stiffness: 130, mass: 0.9 });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  useAnimatedReaction(
+    () => Math.round(anim.value),
+    (v, prev) => {
+      if (v !== prev) runOnJS(updateDisplay)(v);
+    },
+  );
+
+  return (
+    <View style={avgStyles.row}>
+      <Ionicons name="stats-chart-outline" size={10} color="rgba(160,210,255,0.65)" />
+      <Text style={avgStyles.label} allowFontScaling={false} numberOfLines={1}>Avg Market</Text>
+      <Text style={avgStyles.value} allowFontScaling={false} numberOfLines={1}>{display}</Text>
+    </View>
+  );
+}
+
+const avgStyles = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 3,
+    marginBottom: 1,
+  },
+  label: {
+    fontSize: 10,
+    fontWeight: "500",
+    color: "rgba(160,210,255,0.60)",
+    letterSpacing: 0.4,
+  },
+  value: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "rgba(200,230,255,0.92)",
+    letterSpacing: 0.2,
+  },
+});
+
+// ─── Price Ladder ─────────────────────────────────────────────────────────────
+const LADDER_TIERS = [
+  { label: "QUICK FLIP",    sub: "Liquidate <48h",      mult: 0.90, color: "rgba(100,200,255,0.9)" },
+  { label: "MARKET VALUE",  sub: "Std sell · 1–2 wks",  mult: 1.00, color: "rgba(80,255,150,0.9)"  },
+  { label: "TOP TIER",      sub: "Collector / Premium",  mult: 1.10, color: "rgba(255,200,60,0.9)"  },
+];
+const FEE = 0.85; // 15% platform fee for NET mode
+
+function PriceLadder({ avgMarket, cost, isNet }: { avgMarket: number; cost: number; isNet: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={ladderStyles.wrap}>
+      <Pressable onPress={() => setOpen(v => !v)} style={ladderStyles.header}>
+        <Text style={ladderStyles.headerIcon}>▲</Text>
+        <Text style={ladderStyles.headerText}>PROFIT SCENARIOS{isNet ? " · NET" : ""}</Text>
+        <Text style={ladderStyles.chevron}>{open ? "▲" : "▼"}</Text>
+      </Pressable>
+      {open ? (
+        <View style={ladderStyles.tiers}>
+          {LADDER_TIERS.map((t, i) => {
+            const sellPrice = avgMarket * t.mult * (isNet ? FEE : 1.0);
+            const profit = sellPrice - cost;
+            return (
+              <View key={t.label} style={[ladderStyles.tier, i < 2 && ladderStyles.tierBorder]}>
+                <View style={ladderStyles.tierLeft}>
+                  <View style={[ladderStyles.tierBar, { height: 5 + i * 3, backgroundColor: t.color }]} />
+                  <View>
+                    <Text style={ladderStyles.tierLabel}>{t.label}</Text>
+                    <Text style={ladderStyles.tierSub}>{t.sub}{isNet ? " · after fees" : ""}</Text>
+                  </View>
+                </View>
+                <Text style={[ladderStyles.tierProfit, { color: profit > 0 ? (isNet ? "#00d4a0" : t.color) : C.danger }]}>
+                  {profit > 0 ? "+" : ""}{fmtMoney(profit)}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const ladderStyles = StyleSheet.create({
+  wrap:       { marginTop: 4 },
+  header:     { flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 3 },
+  headerIcon: { fontSize: 7, color: "rgba(255,200,60,0.5)" },
+  headerText: { ...TY.cap, color: "rgba(255,200,60,0.72)", flex: 1 },
+  chevron:    { fontSize: 7, color: C.text4 },
+  tiers:      { gap: 3, marginTop: 2 },
+  tier:       { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 3 },
+  tierBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(255,255,255,0.06)", paddingBottom: 4 },
+  tierLeft:   { flexDirection: "row", alignItems: "center", gap: 5 },
+  tierBar:    { width: 2.5, borderRadius: 1.5 },
+  tierLabel:  { ...TY.cap, color: C.text3, fontSize: 9 },
+  tierSub:    { ...TY.cap, color: C.text4, fontSize: 8, marginTop: 1 },
+  tierProfit: { ...TY.label, fontSize: 11, fontWeight: "900" as const },
+});
 
 // ─── Main card ────────────────────────────────────────────────────────────────
 export function ResultCard({
   data,
   isHero,
   heroPrice,
+  scannedPrice,
+  isLowest = false,
   isWatchlisted = false,
   onPress,
   onZoomImage,
   onToggleWatchlist,
   onShare,
+  onVaultSave,
+  isNet = false,
   apiBase,
   userId,
 }: ResultCardProps) {
@@ -342,14 +557,43 @@ export function ResultCard({
   const name     = data.itemName || data.title || "Listing";
   const store    = data.store || data.source || null;
 
+  const cardRef = useRef<View>(null);
+  const [capturingShare, setCapturingShare] = useState(false);
+
   const handleShare = useCallback(async () => {
+    if (capturingShare) return;
+    setCapturingShare(true);
+    Feedback.save();
+    try {
+      const uri = await captureRef(cardRef, { format: "png", quality: 0.95 });
+      // Save to vault (caller copies to permanent storage)
+      if (onVaultSave) {
+        const costBasis = Number.isFinite(Number(data.scannedPrice ?? scannedPrice))
+          ? Number(data.scannedPrice ?? scannedPrice) : null;
+        const potentialProfit = isHero && data.avgMarket != null && costBasis != null
+          ? Number(data.avgMarket) - costBasis : null;
+        onVaultSave({ id: String(Date.now()), tempUri: uri, name, price, potentialProfit });
+      }
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, {
+          dialogTitle: isHero ? "Check out this deal — Evan AI" : "Found a cheaper listing — Evan AI",
+          mimeType: "image/png",
+        });
+        Feedback.sold();
+        setCapturingShare(false);
+        return;
+      }
+    } catch {}
+    setCapturingShare(false);
+    // Fallback to text share
     if (onShare) { onShare(); return; }
     try {
       await Share.share({
         message: `Found ${name} for ${fmtMoney(price)} on Evan AI — AI-powered price scanner.\nhttps://evanai.app`,
       });
     } catch {}
-  }, [name, price, onShare]);
+  }, [capturingShare, name, price, isHero, onShare, onVaultSave, data.avgMarket, data.scannedPrice, scannedPrice]);
 
   // Confidence dot color
   const conf = Number(data.visionConfidence ?? 0);
@@ -368,12 +612,20 @@ export function ResultCard({
 
   // Delta vs hero (alt cards)
   const delta = (!isHero && heroPrice != null && price != null) ? price - heroPrice : null;
-  const label = cardLabel(isHero, price, heroPrice ?? null, data.buyVerdict ?? undefined);
+  const _scannedPrice = Number.isFinite(Number(scannedPrice ?? data.scannedPrice))
+    ? Number(scannedPrice ?? data.scannedPrice)
+    : null;
+  const label = cardLabel(isHero, price, heroPrice ?? null, _scannedPrice, isLowest, data.buyVerdict ?? undefined);
 
   // Tweak 1: Signal Velocity — compute once at render
   const velocitySignal = (isHero && data.priceChartPoints?.length)
     ? computeVelocitySignal(data.priceChartPoints)
     : null;
+
+  // Visual DNA — attribute-level match between vision identity and listing title
+  const dnaAttrs = (isHero && data.visionIdentity)
+    ? computeDnaAttrs(data.visionIdentity, name)
+    : [];
 
   // Confidence Range — "Est. $X – $Y" (App Store compliant: no "Guaranteed" language)
   const confLow  = Number.isFinite(Number(data.historicalLow))  ? Number(data.historicalLow)  : null;
@@ -381,7 +633,7 @@ export function ResultCard({
   const hasConfRange = isHero && confLow != null && confHigh != null && confHigh > confLow;
 
   return (
-    <View style={[styles.card, isHero ? SH.cardActive : SH.card]}>
+    <View ref={cardRef} collapsable={false} style={[styles.card, isHero ? SH.cardActive : SH.card]}>
       {/* ── IMAGE SECTION (60%) ───────────────────────────────── */}
       <View style={styles.imageSection}>
         {imageUri ? (
@@ -409,8 +661,18 @@ export function ResultCard({
 
         {/* Card label badge (top-left) */}
         {label ? (
-          <View style={[styles.labelBadge, { backgroundColor: label.bg, borderColor: label.border }]}>
-            <Text style={[styles.labelText, { color: label.color }]}>{label.text}</Text>
+          <View style={[
+            styles.labelBadge,
+            { backgroundColor: label.bg, borderColor: label.border },
+            label.heavy ? styles.labelBadgeHeavy : null,
+          ]}>
+            <Text
+              allowFontScaling={false}
+              numberOfLines={1}
+              style={[styles.labelText, { color: label.color }]}
+            >
+              {label.text}
+            </Text>
           </View>
         ) : null}
 
@@ -434,16 +696,22 @@ export function ResultCard({
 
         <View style={styles.panelContent}>
           {/* Item name */}
-          <Text numberOfLines={1} style={styles.itemName}>{name}</Text>
+          <Text numberOfLines={1} allowFontScaling={false} style={styles.itemName}>{name}</Text>
 
-          {/* Price row */}
+          {/* Price row — sub-pixel pinned: flex baseline + fixed line-height via TY.price/displayLg */}
           <View style={styles.priceRow}>
-            <Text style={[styles.price, isHero && styles.priceHero]}>{fmtMoney(price)}</Text>
+            <Text
+              allowFontScaling={false}
+              numberOfLines={1}
+              style={[styles.price, isHero && styles.priceHero]}
+            >
+              {fmtMoney(price)}
+            </Text>
 
             {hasSaving ? (
               <View style={styles.savingsPill}>
                 <Ionicons name="arrow-down" size={11} color={C.good} />
-                <Text style={styles.savingsText}>
+                <Text style={styles.savingsText} allowFontScaling={false} numberOfLines={1}>
                   {savedPct != null ? `${Math.round(savedPct)}% less` : `save ${fmtMoney(saved)}`}
                 </Text>
               </View>
@@ -460,10 +728,14 @@ export function ResultCard({
                   size={11}
                   color={delta > 0 ? C.danger : C.good}
                 />
-                <Text style={[
-                  styles.deltaText,
-                  { color: delta > 0 ? C.danger : C.good }
-                ]}>
+                <Text
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  style={[
+                    styles.deltaText,
+                    { color: delta > 0 ? C.danger : C.good }
+                  ]}
+                >
                   {delta > 0 ? "+" : ""}{fmtMoney(Math.abs(delta))}
                 </Text>
               </View>
@@ -473,14 +745,20 @@ export function ResultCard({
           {/* Store + verdict + condition + confidence row */}
           <View style={styles.metaRow}>
             {store ? (
-              <Text numberOfLines={1} style={styles.store}>{store}</Text>
+              <Text numberOfLines={1} allowFontScaling={false} style={styles.store}>{store}</Text>
             ) : null}
 
             {isHero && verdict ? (
               <>
                 {store ? <View style={styles.metaDot} /> : null}
                 <View style={[styles.verdictBadge, { backgroundColor: verdict.bg, borderColor: verdict.border }]}>
-                  <Text style={[styles.verdictText, { color: verdict.text }]}>{data.buyVerdict}</Text>
+                  <Text
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    style={[styles.verdictText, { color: verdict.text }]}
+                  >
+                    {data.buyVerdict}
+                  </Text>
                 </View>
               </>
             ) : null}
@@ -489,7 +767,9 @@ export function ResultCard({
               <>
                 <View style={styles.metaDot} />
                 <View style={styles.conditionBadge}>
-                  <Text style={styles.conditionText}>{data.conditionLabel}</Text>
+                  <Text style={styles.conditionText} allowFontScaling={false} numberOfLines={1}>
+                    {data.conditionLabel}
+                  </Text>
                 </View>
               </>
             ) : null}
@@ -500,12 +780,20 @@ export function ResultCard({
                 {conf < 0.5 ? (
                   <View style={styles.lowConfRow}>
                     <Ionicons name="warning-outline" size={11} color={C.warn} />
-                    <Text style={[styles.confLabel, { color: C.warn }]}>Low confidence</Text>
+                    <Text
+                      allowFontScaling={false}
+                      numberOfLines={1}
+                      style={[styles.confLabel, { color: C.warn }]}
+                    >
+                      Low confidence
+                    </Text>
                   </View>
                 ) : (
                   <>
                     <View style={[styles.confDot, { backgroundColor: confDotColor }]} />
-                    <Text style={styles.confLabel}>{confidenceLabel(conf)}</Text>
+                    <Text style={styles.confLabel} allowFontScaling={false} numberOfLines={1}>
+                      {confidenceLabel(conf)}
+                    </Text>
                   </>
                 )}
               </>
@@ -520,6 +808,11 @@ export function ResultCard({
               height={42}
               width={CARD.width - SP.lg * 2}
             />
+          ) : null}
+
+          {/* Price Pulse — animated avg market count-up (hero only) */}
+          {isHero && data.avgMarket != null && Number(data.avgMarket) > 0 ? (
+            <AvgMarketCounter value={Number(data.avgMarket)} />
           ) : null}
 
           {/* Confidence Range — "Est. $X – $Y" (legally safe, no "Guaranteed" language) */}
@@ -589,6 +882,32 @@ export function ResultCard({
             </View>
           ) : null}
 
+          {/* Visual DNA — attribute match strip (hero only) */}
+          {isHero && dnaAttrs.length > 0 ? (
+            <View style={styles.dnaStrip}>
+              <Text style={styles.dnaHeaderText}>VISUAL DNA</Text>
+              <View style={styles.dnaChips}>
+                {dnaAttrs.slice(0, 3).map((a) => (
+                  <View key={a.label} style={styles.dnaChip}>
+                    <Ionicons
+                      name={a.pct >= 100 ? "checkmark-circle" : "radio-button-on"}
+                      size={9}
+                      color={a.pct >= 80 ? "rgba(80,255,150,0.85)" : "rgba(255,200,80,0.8)"}
+                    />
+                    <Text style={styles.dnaChipText}>
+                      {a.label}{a.pct >= 100 ? " · Exact" : ` · ${a.pct}%`}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {/* Price Ladder — profit scenario breakdown (hero + avgMarket + scannedPrice) */}
+          {isHero && data.avgMarket != null && _scannedPrice != null ? (
+            <PriceLadder avgMarket={Number(data.avgMarket)} cost={_scannedPrice} isNet={isNet} />
+          ) : null}
+
           {/* Community comps (hero only) */}
           {isHero && apiBase ? (
             <CommunityCompsPanel
@@ -607,6 +926,10 @@ export function ResultCard({
               <Text style={styles.viewListingText}>View listing  →</Text>
             </View>
           ) : null}
+        </View>
+        {/* Branding watermark — included in screenshot exports */}
+        <View style={styles.watermark} pointerEvents="none">
+          <Text style={styles.watermarkText}>EVAN AI · MARKET PRECISION</Text>
         </View>
       </View>
     </View>
@@ -869,6 +1192,23 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
+  // ── Watermark ────────────────────────────────────────────────────────────
+  watermark: {
+    position: "absolute",
+    bottom: 6,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    pointerEvents: "none",
+  },
+  watermarkText: {
+    fontSize: 8,
+    fontWeight: "700" as const,
+    letterSpacing: 1.0,
+    color: "rgba(255,255,255,0.18)",
+    textTransform: "uppercase" as const,
+  },
+
   // ── Card label badge ──────────────────────────────────────────────────────
   labelBadge: {
     position: "absolute",
@@ -878,6 +1218,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 4,
+  },
+  labelBadgeHeavy: {
+    borderWidth: 1.5,
+    shadowColor: "rgba(180,140,255,1)",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.28,
+    shadowRadius: 6,
   },
   labelText: {
     fontSize: 9,
@@ -889,5 +1236,40 @@ const styles = StyleSheet.create({
   // ── Hero price override ───────────────────────────────────────────────────
   priceHero: {
     ...TY.displayLg,
+  },
+
+  // ── Visual DNA strip ──────────────────────────────────────────────────────
+  dnaStrip: {
+    marginTop: 4,
+    gap: 4,
+  },
+  dnaHeaderText: {
+    ...TY.cap,
+    fontSize: 8,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+    color: "rgba(130,200,255,0.42)",
+    textTransform: "uppercase",
+  },
+  dnaChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+  },
+  dnaChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: R.xs,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  dnaChipText: {
+    ...TY.cap,
+    fontSize: 9,
+    color: "rgba(255,255,255,0.45)",
   },
 });
