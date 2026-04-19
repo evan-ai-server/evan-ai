@@ -11,8 +11,8 @@
  *   - laserActive: boolean — triggers neon laser scan line
  */
 import React, { createContext, useContext, useState, useCallback, useRef } from "react";
-import type { ZoneKey, ArchiveItem } from "./SpatialEngine";
-export type { ZoneKey, ArchiveItem };
+import type { ZoneKey, ArchiveItem, ForgeDataPoint, ShadowDataItem } from "./SpatialEngine";
+export type { ZoneKey, ArchiveItem, ForgeDataPoint, ShadowDataItem };
 
 export type VerdictMode = "buy" | "pass" | null;
 
@@ -45,6 +45,32 @@ interface SpatialContextValue {
   /** Set by SpatialEngine when a shard inspection completes */
   inspectedArchiveId: string | null;
   setInspectedArchiveId: (id: string | null) => void;
+
+  // ─── Market Pulse ──────────────────────────────────────────────────────────
+  /** Market heat intensity (0.0–1.0) — drives pulse zone lighting + breathing */
+  marketHeat: number;
+  setMarketHeat: (v: number) => void;
+
+  // ─── Neural Forge ─────────────────────────────────────────────────────────
+  /** Forge active — triggers clinical analysis zone */
+  forgeActive: boolean;
+  setForgeActive: (v: boolean) => void;
+  /** Forge data points — holographic labels orbiting the scan box */
+  forgeDataPoints: ForgeDataPoint[];
+  setForgeDataPoints: (points: ForgeDataPoint[]) => void;
+
+  // ─── Liquidity Well ────────────────────────────────────────────────────────
+  /** Liquidity score (0–100) — drives well zone flow line speed */
+  liquidityScore: number;
+  setLiquidityScore: (v: number) => void;
+
+  // ─── Shadow Market ─────────────────────────────────────────────────────────
+  /** Shadow Market active — triggers amber vault zone */
+  shadowActive: boolean;
+  setShadowActive: (v: boolean) => void;
+  /** Shadow Market data — insider alpha (private auction results) */
+  shadowData: ShadowDataItem[];
+  setShadowData: (items: ShadowDataItem[]) => void;
 }
 
 const SpatialContext = createContext<SpatialContextValue>({
@@ -63,6 +89,18 @@ const SpatialContext = createContext<SpatialContextValue>({
   setArchiveItems: () => {},
   inspectedArchiveId: null,
   setInspectedArchiveId: () => {},
+  marketHeat: 0.5,
+  setMarketHeat: () => {},
+  forgeActive: false,
+  setForgeActive: () => {},
+  forgeDataPoints: [],
+  setForgeDataPoints: () => {},
+  liquidityScore: 50,
+  setLiquidityScore: () => {},
+  shadowActive: false,
+  setShadowActive: () => {},
+  shadowData: [],
+  setShadowData: () => {},
 });
 
 export function SpatialProvider({ children }: { children: React.ReactNode }) {
@@ -73,6 +111,12 @@ export function SpatialProvider({ children }: { children: React.ReactNode }) {
   const [laserActive, setLaserActive] = useState(false);
   const [archiveItems, setArchiveItems] = useState<ArchiveItem[]>([]);
   const [inspectedArchiveId, setInspectedArchiveId] = useState<string | null>(null);
+  const [marketHeat, setMarketHeatState] = useState(0.5);
+  const [forgeActive, setForgeActiveState] = useState(false);
+  const [forgeDataPoints, setForgeDataPointsState] = useState<ForgeDataPoint[]>([]);
+  const [liquidityScore, setLiquidityScoreState] = useState(50);
+  const [shadowActive, setShadowActiveState] = useState(false);
+  const [shadowData, setShadowDataState] = useState<ShadowDataItem[]>([]);
 
   // Prevent double-fire
   const warpLock = useRef(false);
@@ -112,6 +156,30 @@ export function SpatialProvider({ children }: { children: React.ReactNode }) {
     setInspectedArchiveId(id);
   }, []);
 
+  const handleSetMarketHeat = useCallback((v: number) => {
+    setMarketHeatState(Math.max(0, Math.min(1, v)));
+  }, []);
+
+  const handleSetForgeActive = useCallback((v: boolean) => {
+    setForgeActiveState(v);
+  }, []);
+
+  const handleSetForgeDataPoints = useCallback((points: ForgeDataPoint[]) => {
+    setForgeDataPointsState(points);
+  }, []);
+
+  const handleSetLiquidityScore = useCallback((v: number) => {
+    setLiquidityScoreState(Math.max(0, Math.min(100, v)));
+  }, []);
+
+  const handleSetShadowActive = useCallback((v: boolean) => {
+    setShadowActiveState(v);
+  }, []);
+
+  const handleSetShadowData = useCallback((items: ShadowDataItem[]) => {
+    setShadowDataState(items);
+  }, []);
+
   return (
     <SpatialContext.Provider
       value={{
@@ -130,6 +198,18 @@ export function SpatialProvider({ children }: { children: React.ReactNode }) {
         setArchiveItems: handleSetArchiveItems,
         inspectedArchiveId,
         setInspectedArchiveId: handleSetInspectedArchiveId,
+        marketHeat,
+        setMarketHeat: handleSetMarketHeat,
+        forgeActive,
+        setForgeActive: handleSetForgeActive,
+        forgeDataPoints,
+        setForgeDataPoints: handleSetForgeDataPoints,
+        liquidityScore,
+        setLiquidityScore: handleSetLiquidityScore,
+        shadowActive,
+        setShadowActive: handleSetShadowActive,
+        shadowData,
+        setShadowData: handleSetShadowData,
       }}
     >
       {children}
