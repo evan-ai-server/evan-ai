@@ -71,21 +71,33 @@ export default function AuthScreen({ visible, onDismiss }: AuthScreenProps) {
   };
 
   const handleSubmit = useCallback(async () => {
-    if (!email.trim() || !password.trim()) {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = displayName.trim().slice(0, 64);
+
+    if (!cleanEmail || !password) {
       setError("Email and password are required.");
       return;
     }
-    if (tab === "register" && !displayName.trim()) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setError("Enter a valid email address.");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (tab === "register" && !cleanName) {
       setError("Display name is required.");
       return;
     }
+
     setLoading(true);
     setError(null);
     try {
       if (tab === "login") {
-        await login(email.trim(), password);
+        await login(cleanEmail, password);
       } else {
-        await register(email.trim(), password, displayName.trim());
+        await register(cleanEmail, password, cleanName);
       }
       resetForm();
       onDismiss();

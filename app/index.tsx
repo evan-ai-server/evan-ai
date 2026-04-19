@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useEffect, useRef, useState } from "react";
+import { sanitizeHint, sanitizePropContext, devLog, devWarn } from "../lib/security";
 import { SubscriptionModal } from "../components/subscription/SubscriptionModal";
 import { ResultsContent } from "../components/results/ResultsContent";
 import {
@@ -4883,7 +4884,7 @@ if (cached && isFresh(cached)) {
     const effectiveUserId = userId || installId;
     if (effectiveUserId) form.append("userId", effectiveUserId);
     if (scanMode === SCAN_MODES.PROP && propContext.trim()) {
-      form.append("propContext", propContext.trim());
+      form.append("propContext", sanitizePropContext(propContext));
     }
     if (Number.isFinite(originalPrice) && (originalPrice as number) > 0) {
       form.append("originalPrice", String(originalPrice));
@@ -4892,7 +4893,7 @@ if (cached && isFresh(cached)) {
       form.append("cheapestAlternative", String(cheapestAlt));
     }
     if (itemHint && itemHint.trim()) {
-      form.append("itemHint", itemHint.trim());
+      form.append("itemHint", sanitizeHint(itemHint));
     }
 
 const uploadName = preparedUri.split("/").pop() || "scan.jpg";
@@ -5067,12 +5068,8 @@ if (finalQuery) {
   _healthBase = base;
   _healthOkMs = Date.now();
 
-  console.log("VISION RAW RESPONSE", JSON.stringify(data));
-  console.log("VISION RAW TEXT", text);
-  console.log("RUNSCAN VISION QUERY →", payload.query);
-  console.log("RUNSCAN VISION VARIANTS →", payload.variants);
-  console.log("RUNSCAN VISION CONFIDENCE →", payload.confidence);
-  console.log("RUNSCAN VISION IDENTITY →", payload.visionIdentity);
+  devLog("RUNSCAN VISION QUERY →", payload.query);
+  devLog("RUNSCAN VISION CONFIDENCE →", payload.confidence);
 
   const enrichedVariants = [
     payload.query,
@@ -7753,7 +7750,7 @@ const visionVariants = [
   })
   .slice(0, 8);
 
-console.log("RUNSCAN VISION VARIANTS →", visionVariants);
+devLog("RUNSCAN VISION VARIANTS →", visionVariants.length);
 
 const rawVisionConfidence =
   confidences.length > 0
@@ -7761,8 +7758,8 @@ const rawVisionConfidence =
     : 0;
 const visionConfidence = smoothConfidence(rawVisionConfidence);
 
-console.log("RUNSCAN VISION QUERY →", visionQuery);
-console.log("RUNSCAN VISION CONFIDENCE →", visionConfidence);	
+devLog("RUNSCAN VISION QUERY →", visionQuery);
+devLog("RUNSCAN VISION CONFIDENCE →", visionConfidence);
 
 if (!visionQuery || !String(visionQuery).trim()) {
   if (
@@ -8140,19 +8137,7 @@ try {
       combined = relaxed.length ? relaxed : strictFiltered.length ? strictFiltered : preQualityCombined.slice(0, 15);
     }
 
-    console.log("MARKET RAW COUNTS →", {
-      market: rawItems.length,
-    });
-
-    console.log("MARKET COMBINED COUNT →", combined.length);
-    console.log(
-      "MARKET TOP TITLES →",
-      combined.slice(0, 5).map((x) => ({
-        title: x?.title,
-        price: x?.numericTotal ?? x?.price,
-        source: x?.source,
-      }))
-    );
+    devLog("MARKET RAW COUNTS →", rawItems.length, "combined →", combined.length);
 
     MARKET_CACHE.set(marketCacheKey, {
       ts: Date.now(),
@@ -9190,8 +9175,8 @@ setPriceSubmitted(true);
 Keyboard.dismiss();
 
 const photoUri = photo.uri;
-const itemHint = itemNameInput.trim() || null;
-const sizeHintVal = sizeInput.trim() || null; // Feature 11
+const itemHint = sanitizeHint(itemNameInput) || null;
+const sizeHintVal = sanitizeHint(sizeInput) || null; // Feature 11
 
 // ── Offline check ──────────────────────────────────────────────────────
 const currentlyOnline = await checkNetworkNow();
