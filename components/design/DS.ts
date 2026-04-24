@@ -82,6 +82,20 @@ export const C = {
   liquidGlassStrong: "rgba(255,255,255,0.16)",
   liquidGlassBorder: "rgba(255,255,255,0.12)",
   liquidGlassBorderActive: "rgba(255,255,255,0.28)",
+
+  // ─── Singularity Snap Spectrum ───────────────────────────────────────────
+  electricCyan: "#00F0FF",
+  electricCyanGlow: "rgba(0,240,255,0.35)",
+  electricCyanDim: "rgba(0,240,255,0.12)",
+  nuclearMagenta: "#FF007A",
+  nuclearMagentaGlow: "rgba(255,0,122,0.35)",
+  nuclearMagentaDim: "rgba(255,0,122,0.12)",
+  emeraldSpark: "#00FFA3",
+  emeraldSparkGlow: "rgba(0,255,163,0.35)",
+  emeraldSparkDim: "rgba(0,255,163,0.12)",
+  deepSpaceViolet: "#1A0033",
+  deepSpaceVioletMid: "rgba(26,0,51,0.80)",
+  singularityWhite: "rgba(255,255,255,0.95)",
 } as const;
 
 // ─── SPACING ──────────────────────────────────────────────────────────────────
@@ -146,6 +160,14 @@ export const MO = {
     liquid:  { damping: 20, stiffness: 90, mass: 1.0 },
     /** Tab switch spring — fast settle, no bounce */
     tabSwitch: { damping: 28, stiffness: 260, mass: 0.7 },
+    /** Singularity implosion — heavy gravitational pull */
+    implosion: { damping: 12, stiffness: 400, mass: 1.2 },
+    /** Supernova blast — explosive outward burst */
+    supernova: { damping: 8, stiffness: 500, mass: 0.6 },
+    /** Neural trace — electric, jittery lock-on */
+    neuralTrace: { damping: 16, stiffness: 340, mass: 0.9 },
+    /** Reality bloom — heavy, majestic reveal */
+    bloom: { damping: 24, stiffness: 160, mass: 1.3 },
   },
   dur: {
     micro:   70,
@@ -154,6 +176,14 @@ export const MO = {
     slow:   360,
     cinema: 520,
     singularity: SINGULARITY.duration,
+    /** Phase 1: finger-down gravity implosion */
+    implosion: 280,
+    /** Phase 2: chromatic supernova blast */
+    supernova: 450,
+    /** Phase 3: neural trace lock-on */
+    neuralTrace: 1800,
+    /** Phase 4: reality bloom reveal */
+    bloom: 800,
   },
   ease: {
     out: "cubic-bezier(0.16, 1, 0.3, 1)",
@@ -258,6 +288,19 @@ export const Feedback = {
   select: () => { try { Haptics.selectionAsync(); } catch {} },
   /** Error pulse — auth fail, no results */
   error:  () => { try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); } catch {} },
+
+  // ─── Singularity Snap Haptic Sequence ──────────────────────────────────
+  /** Phase 1: sharp high-pressure tick — gravity well activation */
+  singularityTouch: () => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Rigid); } catch {} },
+  /** Phase 2: medium burst — supernova wave release */
+  singularitySnap:  () => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); } catch {} },
+  /** Phase 3: low neural hum — repeating soft ticks during trace */
+  neuralHum:        () => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);  } catch {} },
+  /** Phase 4: heavy bloom impact + success vibration */
+  realityBloom:     () => { try {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    setTimeout(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success), 180);
+  } catch {} },
 } as const;
 
 // ─── SOUND EFFECTS ────────────────────────────────────────────────────────────
