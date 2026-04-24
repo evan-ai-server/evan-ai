@@ -1,9 +1,11 @@
 import { Stack } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
-import { ThemeProvider, DarkTheme, DefaultTheme } from "@react-navigation/native";
-import { useColorScheme, View } from "react-native";
+import { ThemeProvider, DarkTheme } from "@react-navigation/native";
+import { Appearance, View } from "react-native";
 import { AuthProvider } from "../components/auth/AuthContext";
+
+Appearance.setColorScheme("dark");
 import { SpatialProvider } from "../components/spatial/SpatialContext";
 import { SpatialEngine } from "../components/spatial/SpatialEngine";
 import { useSpatialZone } from "../components/spatial/SpatialContext";
@@ -29,13 +31,11 @@ function SpatialBackground() {
 }
 
 export default function RootLayout() {
-  const scheme = useColorScheme();
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
         <SpatialProvider>
-          <ThemeProvider value={scheme === "dark" ? DarkTheme : DefaultTheme}>
+          <ThemeProvider value={DarkTheme}>
             <StatusBar style="light" />
             {/* Layer 0: 3D spatial void (behind everything) */}
             <SpatialBackground />
@@ -45,7 +45,9 @@ export default function RootLayout() {
                 screenOptions={{
                   headerShown: false,
                   contentStyle: { backgroundColor: "transparent" },
-                  animation: "none",
+                  animation: "fade",
+                  animationDuration: 180,
+                  freezeOnBlur: true,
                 }}
               />
             </View>

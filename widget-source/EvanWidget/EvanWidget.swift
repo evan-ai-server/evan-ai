@@ -1,6 +1,8 @@
 import WidgetKit
 import SwiftUI
 
+// Requires iOS 17+ for containerBackground API
+
 // MARK: - Timeline Entry
 
 struct EvanEntry: TimelineEntry {

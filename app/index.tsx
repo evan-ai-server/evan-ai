@@ -2396,8 +2396,12 @@ const skipOnboard = async () => {
   }).start(() => { setShowOnboard(false); setTutorialStep(0); });
 };
 
-// Survey complete — persist answers (all fields guaranteed non-undefined), optionally launch tutorial
+// Survey complete — persist answers, optionally launch tutorial.
+// State-locked: cannot fire twice even if onComplete callback triggers rapidly.
+const surveyCompleteLockRef = useRef(false);
 const handleSurveyComplete = useCallback(async (ans: SurveyAnswers, goTutorial: boolean) => {
+  if (surveyCompleteLockRef.current) return;
+  surveyCompleteLockRef.current = true;
   try { await AsyncStorage.setItem("EVAN_SURVEY_V1", JSON.stringify(ans)); } catch {}
   setShowSurvey(false);
   if (goTutorial) {
@@ -2428,7 +2432,11 @@ const advanceTutorialStep = () => {
   });
 };
 
+// State-locked: prevents the tutorial from being triggered twice (double-flicker fix)
+const tutorialOpenLockRef = useRef(false);
 const openTutorial = () => {
+  if (tutorialOpenLockRef.current) return;
+  tutorialOpenLockRef.current = true;
   tutorialOpacity.setValue(0);
   openInteractiveTutorial();
   RNAnimated.timing(tutorialOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
@@ -2481,6 +2489,10 @@ const closeInteractiveTutorial = useCallback(() => {
   ]).start(() => {
     setShowITutorial(false);
     setITutStep(0);
+    // Release all tutorial locks so it can be re-opened if needed
+    iTutOpenLockRef.current = false;
+    tutorialOpenLockRef.current = false;
+    surveyCompleteLockRef.current = false;
   });
 }, [iTutBgOp, iTutCardOp, iTutSpotOp, iTutRingOpacity]);
 
@@ -2565,7 +2577,11 @@ const goToITutStep = useCallback((nextStep: number) => {
   });
 }, [iTutCardOp, iTutCardY, iTutSpotOp, iTutRingOpacity]);
 
+const iTutOpenLockRef = useRef(false);
 const openInteractiveTutorial = useCallback(() => {
+  // State lock: if tutorial is already opening or open, ignore the call
+  if (iTutOpenLockRef.current) return;
+  iTutOpenLockRef.current = true;
   setITutStep(0);
   setShowITutorial(true);
   iTutBgOp.setValue(0);
@@ -3309,6 +3325,7 @@ const [_enrich, _setEnrich] = useState(null);
  const [plFlips, setPlFlips] = useState<PLFlip[]>([]);
  const [plBadge, setPlBadge] = useState(false);
  const lastProfileOpenMsRef = useRef<number>(0);
+ const plFlipsLoadedRef = useRef(false); // guard: don't save until initial load completes
  // Net/Gross profit toggle (15% platform fee deduction)
  const [netProfitEnabled, setNetProfitEnabled] = useState(false);
  // The Vault — screenshot trophy case
@@ -3438,7 +3455,10 @@ useEffect(() => {
 }, [tab]);
 
 // ── Feature 1: Persist P&L flips to AsyncStorage ─────────────────────────────
+// Guard: skip the first render (initial empty state) so we don't overwrite
+// persisted data before the load effect has a chance to restore it.
 useEffect(() => {
+  if (!plFlipsLoadedRef.current) return;
   AsyncStorage.setItem("EVAN_PL_FLIPS_V1", JSON.stringify(plFlips)).catch(() => {});
 }, [plFlips]);
 
@@ -3756,17 +3776,28 @@ RNAnimated.sequence([
     splashDotsListenerIdRef.current = id;
   } catch {}
 
+// Liquid Glass exit — spring-driven scale-down + fade instead of linear timing
 const timer = setTimeout(() => {
-  RNAnimated.timing(splashOpacity, {
-    toValue: 0,
-    duration: reduceMotion ? 0 : 500,
-    useNativeDriver: true,
-  }).start(() => {
+  RNAnimated.parallel([
+    RNAnimated.timing(splashOpacity, {
+      toValue: 0,
+      duration: reduceMotion ? 0 : 420,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }),
+    RNAnimated.spring(logoScale, {
+      toValue: 0.92,
+      damping: 20,
+      stiffness: 90,
+      mass: 1.0,
+      useNativeDriver: true,
+    }),
+  ]).start(() => {
     requestAnimationFrame(() => {
       setShowSplash(false);
     });
   });
-}, Math.max(0, SPLASH_MIN_MS - (reduceMotion ? 0 : 500)));
+}, Math.max(0, SPLASH_MIN_MS - (reduceMotion ? 0 : 420)));
 
   return () => {
     clearTimeout(timer);
@@ -4239,7 +4270,15 @@ const runBarcodeLookup = async (code: string) => {
   setResultModalOpen(false);
   setSpatialVerdict(null);  // Clear previous verdict
   setSpatialLaser(true);    // Neon laser ON
-  goTab("results");
+
+  // Direct tab swap — no goTab animation delay, prevents camera flash
+  if (tab !== "results") {
+    setTab("results");
+    setSpatialZone("results" as ZoneKey);
+    try { tabFade.setValue?.(1); } catch {}
+    tabSwitchingRef.current = false;
+    setTabInteractable(true);
+  }
 
   // Feature 6: instant UPC lookup (<1s) — show partial result immediately
   // while market search continues in background
@@ -5536,6 +5575,7 @@ useEffect(() => {
         const plRaw = await AsyncStorage.getItem("EVAN_PL_FLIPS_V1");
         if (plRaw) setPlFlips(JSON.parse(plRaw));
       } catch { /* non-fatal */ }
+      plFlipsLoadedRef.current = true; // unlock the save effect
 
 const intelRaw = await AsyncStorage.getItem(INTEL_KEY);
 if (intelRaw) {
@@ -6669,45 +6709,38 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [tab, photo, loadingResults, showSplash]);
 
-// ✅ Tab transition safety: opacity + pointerEvents must never desync
+// Tab transition safety: opacity + pointerEvents must never desync
 const [tabInteractable, setTabInteractable] = useState(true);
 const tabFailSafeRef = useRef<any>(null);
 
-// ✅ full-screen transition mask to prevent split-second tab overlay/bleed
-const [tabMaskVisible, setTabMaskVisible] = useState(false);
-const tabMaskOpacity = useRef(new RNAnimated.Value(0)).current;
-
-// ✅ Smooth tab switch (NO ghost overlay, NO double-render blink, NO scroll memory)
-
+// Liquid Glass tab switch — spring-physics fade, no mask hack, zero ghosting
 const goTab = (next) => {
   if (!next || next === tab) return;
 
-  // ✅ Immediately kill any in-flight tabFade to prevent ghost frames
+  // Kill any in-flight animation immediately
   try { tabFade.stopAnimation?.(); } catch {}
 
-  // ✅ HARD throttle: ignores tab spam (prevents animation stacking + lag)
+  // Hard throttle — prevents animation stacking + lag on rapid taps
   const now = Date.now();
   if (now - goTabLastRef.current < 220) return;
   goTabLastRef.current = now;
 
-  // ✅ HARD cooldown: ignore spam presses entirely (NO queue spam)
-  const nowMs = Date.now();
-  if (nowMs - lastTabPressRef.current < TAB_COOLDOWN_MS) return;
-  lastTabPressRef.current = nowMs;
+  // Hard cooldown — ignore spam presses
+  if (now - lastTabPressRef.current < TAB_COOLDOWN_MS) return;
+  lastTabPressRef.current = now;
 
-  // ✅ If switching already, allow ONLY ONE pending (latest wins); clear stale queue first
+  // If already switching, queue latest only
   if (tabSwitchingRef.current) {
     pendingTabRef.current = next;
     return;
   }
-  // Clear any leftover pending from a previous blocked switch
   pendingTabRef.current = null;
 
   closeAllOverlays?.();
   hapticSelect?.();
   Keyboard.dismiss?.();
 
-  // ✅ hard-close transient overlays that can visually stack during tab switches
+  // Hard-close transient overlays that ghost during tab switches
   try { setResultModalOpen(false); } catch {}
   try { setSeeMoreOpen(false); } catch {}
   try { setHelpOpen(false); } catch {}
@@ -6723,90 +6756,50 @@ const goTab = (next) => {
 
   tabSwitchingRef.current = true;
   pendingTabRef.current = next;
-
-  // ✅ during transition, NO tab should be touchable until fade-in completes
   setTabInteractable(false);
 
-  // Subtle mask — just enough to cover the swap, not a hard flash
-  setTabMaskVisible(true);
-  try { tabMaskOpacity.stopAnimation?.(); } catch {}
-  try { tabMaskOpacity.setValue?.(0); } catch {}
-  RNAnimated.timing(tabMaskOpacity, {
-    toValue: 0.6,
-    duration: 55,
-    easing: Easing.out(Easing.cubic),
-    useNativeDriver: true,
-  }).start();
-
-  // ✅ FAILSAFE: if an animation callback never fires, recover anyway
-  try {
-    if (tabFailSafeRef.current) clearTimeout(tabFailSafeRef.current);
-  } catch {}
+  // Failsafe recovery — if animation callback never fires
+  try { if (tabFailSafeRef.current) clearTimeout(tabFailSafeRef.current); } catch {}
   tabFailSafeRef.current = setTimeout(() => {
     try { tabFade.stopAnimation?.(); } catch {}
-    // Recover: ensure the current tab is visible
     try { tabFade.setValue?.(1); } catch {}
-
     tabSwitchingRef.current = false;
     pendingTabRef.current = null;
     setTabInteractable(true);
+  }, 500);
 
-    try {
-      RNAnimated.timing(tabMaskOpacity, {
-        toValue: 0,
-        duration: 80,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start(() => {
-        setTabMaskVisible(false);
-      });
-    } catch {
-      setTabMaskVisible(false);
-    }
-
-    // run any queued request (latest wins)
-    if (pendingTabRef.current) {
-      const queued = pendingTabRef.current;
-      pendingTabRef.current = null;
-      goTab(queued);
-    }
-  }, 700);
-
-  // ✅ Kill any running fade — do NOT force setValue(1) which causes
-  // a single-frame flash of the current tab during rapid switching
-  try { tabFade.stopAnimation?.(); } catch {}
-
-  // 1) Fade out current
-  RNAnimated.timing(tabFade, {
+  // 1) Spring fade-out — fast exit, no linear jank
+  RNAnimated.spring(tabFade, {
     toValue: 0,
-    duration: 55,
-    easing: Easing.out(Easing.cubic),
+    damping: 28,
+    stiffness: 380,
+    mass: 0.6,
     useNativeDriver: true,
   }).start(() => {
     const to = pendingTabRef.current || next;
     pendingTabRef.current = null;
 
-    // ✅ keep barcode from causing camera reconfig mid-switch
+    // Reset barcode state during switch
     try {
       setBarcodeMode(false);
       setLastBarcode(null);
       barcodeLockRef.current = false;
     } catch {}
 
-    // 2) lock opacity at 0 before switching
+    // Lock at 0 before switching
     try { tabFade.setValue?.(0); } catch {}
 
-    // 3) switch tab + spatial zone (history → archive zone for 3D shards)
+    // Switch tab + spatial zone
     setTab(to);
     setSpatialZone((to === "history" ? "archive" : to) as ZoneKey);
 
-    // Feature 9: load relist suggestions when navigating to watchlist
+    // Lazy-load data for destination tab
     if (to === "watchlist") {
       setTimeout(() => loadRelistSuggestions(), 800);
       setTimeout(() => loadRadar(), 1200);
     }
 
-    // 4) reset scroll reliably
+    // Reset scroll positions
     const resetScroll = () => {
       try {
         if (to === "profile") profileScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
@@ -6814,38 +6807,25 @@ const goTab = (next) => {
         if (to === "watchlist") watchlistScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
       } catch {}
     };
-
     requestAnimationFrame(() => {
       resetScroll();
       requestAnimationFrame(resetScroll);
-      setTimeout(resetScroll, 40);
     });
 
-    // 5) fade in new
-    RNAnimated.timing(tabFade, {
+    // 2) Spring fade-in — liquid feel
+    RNAnimated.spring(tabFade, {
       toValue: 1,
-      duration: 130,
-      easing: Easing.out(Easing.cubic),
+      damping: 22,
+      stiffness: 260,
+      mass: 0.7,
       useNativeDriver: true,
     }).start(() => {
-      try {
-        if (tabFailSafeRef.current) clearTimeout(tabFailSafeRef.current);
-      } catch {}
+      try { if (tabFailSafeRef.current) clearTimeout(tabFailSafeRef.current); } catch {}
       tabFailSafeRef.current = null;
-
       tabSwitchingRef.current = false;
       setTabInteractable(true);
 
-      RNAnimated.timing(tabMaskOpacity, {
-        toValue: 0,
-        duration: 80,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start(() => {
-        setTabMaskVisible(false);
-      });
-
-      // ✅ ONLY ONE queued switch max
+      // Process queued tab switch (latest wins)
       if (pendingTabRef.current) {
         const queued = pendingTabRef.current;
         pendingTabRef.current = null;
@@ -7586,12 +7566,16 @@ const hardStopTimer = setTimeout(() => {
   setSpatialVerdict(null);  // Clear previous verdict
   setSpatialLaser(true);    // Neon laser ON during scan pipeline
 
-// ✅ go to results immediately, but ONLY after loading state is already on
-requestAnimationFrame(() => {
-  if (tabRef?.current !== "results") {
-    goTab("results");
+  // Immediately kill camera state and switch to results — no flicker back to camera/watchlist.
+  // Direct tab swap (no requestAnimationFrame delay) prevents the scanning stack flash.
+  if (tab !== "results") {
+    // Force-set tab synchronously so the next render frame shows results, not camera
+    setTab("results");
+    setSpatialZone("results" as ZoneKey);
+    try { tabFade.setValue?.(1); } catch {}
+    tabSwitchingRef.current = false;
+    setTabInteractable(true);
   }
-});
 
   if (batchMode) {
     setBatchCount((c) => c + 1);
@@ -10361,43 +10345,81 @@ transform: [
             },
           ]}
         >
-          {/* Outer glow orb */}
+          {/* Liquid Glass ambient — deep outer glow */}
           <RNAnimated.View
             pointerEvents="none"
             style={{
               position: "absolute",
-              width: 340,
-              height: 340,
-              borderRadius: 170,
-              backgroundColor: "rgba(255,255,255,0.018)",
+              width: 420,
+              height: 420,
+              borderRadius: 210,
+              backgroundColor: "rgba(255,255,255,0.012)",
               opacity: splashOrbOpacity,
               transform: [{ scale: splashOrbScale }],
               shadowColor: "#ffffff",
-              shadowOpacity: 0.10,
-              shadowRadius: 90,
+              shadowOpacity: IOS ? 0.08 : 0,
+              shadowRadius: 120,
               shadowOffset: { width: 0, height: 0 },
             }}
           />
-          {/* Inner glow orb */}
+          {/* Mid orb — frosted glass layer */}
           <RNAnimated.View
             pointerEvents="none"
             style={{
               position: "absolute",
-              width: 160,
-              height: 160,
-              borderRadius: 80,
-              backgroundColor: "rgba(255,255,255,0.038)",
+              width: 240,
+              height: 240,
+              borderRadius: 120,
+              backgroundColor: "rgba(255,255,255,0.022)",
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: "rgba(255,255,255,0.06)",
               opacity: splashOrbOpacity,
               transform: [{
-                scale: splashOrbScale.interpolate({ inputRange: [0.85, 1.14], outputRange: [1.06, 0.88] }),
+                scale: splashOrbScale.interpolate({ inputRange: [0.85, 1.14], outputRange: [1.08, 0.92] }),
+              }],
+            }}
+          />
+          {/* Inner core orb */}
+          <RNAnimated.View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              width: 120,
+              height: 120,
+              borderRadius: 60,
+              backgroundColor: "rgba(255,255,255,0.04)",
+              opacity: splashOrbOpacity,
+              transform: [{
+                scale: splashOrbScale.interpolate({ inputRange: [0.85, 1.14], outputRange: [1.12, 0.85] }),
               }],
             }}
           />
 
-          {/* Wordmark */}
-          <RNAnimated.View style={{ alignItems: "center", transform: [{ scale: logoScale }] }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <Text style={{ color: "white", fontSize: 52, fontWeight: "900", letterSpacing: -2.5 }}>
+          {/* Wordmark — overflow hidden prevents safe-area-inset sub-pixel crack */}
+          <RNAnimated.View style={{
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "hidden",
+            transform: [{ scale: logoScale }],
+          }}>
+            <View style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
+              paddingBottom: 2,
+            }}>
+              <Text
+                style={{
+                  color: "white",
+                  fontSize: 52,
+                  fontWeight: "900",
+                  letterSpacing: -2.5,
+                  includeFontPadding: false,
+                  lineHeight: 56,
+                }}
+                allowFontScaling={false}
+              >
                 EVAN
               </Text>
               <View style={{
@@ -10407,8 +10429,20 @@ transform: [
                 backgroundColor: "rgba(255,255,255,0.10)",
                 borderWidth: 1,
                 borderColor: "rgba(255,255,255,0.22)",
+                overflow: "hidden",
               }}>
-                <Text style={{ color: "white", fontSize: 17, fontWeight: "900", letterSpacing: 2.5 }}>AI</Text>
+                <Text
+                  style={{
+                    color: "white",
+                    fontSize: 17,
+                    fontWeight: "900",
+                    letterSpacing: 2.5,
+                    includeFontPadding: false,
+                  }}
+                  allowFontScaling={false}
+                >
+                  AI
+                </Text>
               </View>
             </View>
           </RNAnimated.View>
@@ -10429,11 +10463,11 @@ transform: [
             SCAN · PRICE · WIN
           </RNAnimated.Text>
 
-          {/* Feature chips */}
+          {/* Feature chips — Liquid Glass capsules */}
           <RNAnimated.View
             style={{
               flexDirection: "row",
-              gap: 7,
+              gap: 8,
               marginTop: 30,
               opacity: splashChipsOp,
               transform: [{ translateY: splashChipsY }],
@@ -10443,34 +10477,53 @@ transform: [
               <View
                 key={label}
                 style={{
-                  paddingHorizontal: 12,
-                  paddingVertical: 7,
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
                   borderRadius: 99,
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.12)",
-                  backgroundColor: "rgba(255,255,255,0.05)",
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: "rgba(255,255,255,0.14)",
+                  backgroundColor: "rgba(255,255,255,0.06)",
                 }}
               >
-                <Text style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: "700" }}>
+                <Text
+                  style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, fontWeight: "800", letterSpacing: 0.3 }}
+                  allowFontScaling={false}
+                >
                   {label}
                 </Text>
               </View>
             ))}
           </RNAnimated.View>
 
-          {/* Bottom progress + label */}
-          <View style={{ position: "absolute", bottom: 64, alignItems: "center", width: 150 }}>
-            <View style={{ width: 150, height: 1, backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 1, overflow: "hidden" }}>
+          {/* Bottom progress + label — Liquid Glass */}
+          <View style={{ position: "absolute", bottom: 64, alignItems: "center", width: 160 }}>
+            <View style={{
+              width: 160,
+              height: 2,
+              backgroundColor: "rgba(255,255,255,0.06)",
+              borderRadius: 1,
+              overflow: "hidden",
+            }}>
               <RNAnimated.View
                 style={{
-                  height: 1,
-                  backgroundColor: "rgba(255,255,255,0.48)",
+                  height: 2,
+                  backgroundColor: "rgba(255,255,255,0.55)",
                   borderRadius: 1,
                   width: splashProgressAnim.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }),
                 }}
               />
             </View>
-            <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 9, fontWeight: "700", letterSpacing: 2.2, textTransform: "uppercase", marginTop: 10 }}>
+            <Text
+              style={{
+                color: "rgba(255,255,255,0.22)",
+                fontSize: 9,
+                fontWeight: "800",
+                letterSpacing: 2.5,
+                textTransform: "uppercase",
+                marginTop: 12,
+              }}
+              allowFontScaling={false}
+            >
               {`Initializing${splashLoadingDots}`}
             </Text>
           </View>
@@ -11220,21 +11273,30 @@ transform: [
   <RNAnimated.View
     style={[
       StyleSheet.absoluteFillObject,
-      { zIndex: 200000, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", alignItems: "center", opacity: welcomeScreenOp },
+      { zIndex: 200000, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center", opacity: welcomeScreenOp },
     ]}
   >
     <Pressable
       style={[StyleSheet.absoluteFillObject, { justifyContent: "center", alignItems: "center" }]}
       onPress={() => {
-        RNAnimated.timing(welcomeScreenOp, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+        // Liquid Glass exit — spring scale-down + fade
+        RNAnimated.parallel([
+          RNAnimated.timing(welcomeScreenOp, { toValue: 0, duration: 340, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        ]).start(() => {
           setShowWelcomeScreen(false);
         });
       }}
     >
-      <Text style={{ color: "white", fontSize: 34, fontWeight: "900", textAlign: "center", letterSpacing: -0.5, lineHeight: 40, paddingHorizontal: 40 }}>
+      <Text
+        style={{ color: "white", fontSize: 34, fontWeight: "900", textAlign: "center", letterSpacing: -0.8, lineHeight: 42, paddingHorizontal: 40 }}
+        allowFontScaling={false}
+      >
         {"Welcome to\nEvan AI"}
       </Text>
-      <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 15, marginTop: 16, letterSpacing: 0.3 }}>
+      <Text
+        style={{ color: "rgba(255,255,255,0.35)", fontSize: 14, marginTop: 18, letterSpacing: 0.5, fontWeight: "600" }}
+        allowFontScaling={false}
+      >
         Tap anywhere to begin
       </Text>
     </Pressable>
@@ -11244,10 +11306,10 @@ transform: [
 {/* ── CINEMATIC TUTORIAL OVERLAY ──────────────────────────────────────── */}
 {showOnboard ? (
   <View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, { zIndex: 100001 }]}>
-    {/* Blurred backdrop */}
+    {/* Frosted Liquid Glass backdrop */}
     <RNAnimated.View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { opacity: onboardOpacity }]}>
-      <BlurView intensity={55} tint="dark" style={StyleSheet.absoluteFillObject} />
-      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.5)" }]} />
+      <BlurView intensity={65} tint="dark" style={StyleSheet.absoluteFillObject} />
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.45)" }]} />
     </RNAnimated.View>
 
     {/* X close button */}
@@ -11266,18 +11328,23 @@ transform: [
       </Pressable>
     </RNAnimated.View>
 
-    {/* Bottom sheet card */}
+    {/* Bottom sheet card — Liquid Glass surface */}
     <RNAnimated.View
       style={{
         position: "absolute", bottom: 0, left: 0, right: 0,
-        backgroundColor: "rgba(10,10,10,0.97)",
+        // Liquid Glass sheet
+        backgroundColor: "rgba(8,8,8,0.92)",
         borderTopLeftRadius: 36, borderTopRightRadius: 36,
-        borderWidth: 1, borderColor: "rgba(255,255,255,0.09)",
+        borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.12)",
         paddingHorizontal: 28, paddingTop: 32,
         paddingBottom: BOTTOM + 24,
         opacity: onboardOpacity,
         transform: [{ translateY: onboardOpacity.interpolate({ inputRange: [0, 1], outputRange: [80, 0] }) }],
-        shadowColor: "#000", shadowOpacity: 0.6, shadowRadius: 40, shadowOffset: { width: 0, height: -10 },
+        shadowColor: "#000",
+        shadowOpacity: IOS ? 0.65 : 0.45,
+        shadowRadius: 48,
+        shadowOffset: { width: 0, height: -14 },
+        elevation: 28,
       }}
     >
       {/* Step content — fades/slides between steps */}
@@ -11463,7 +11530,7 @@ transform: [
       transform: [{ translateY: topHudY }],
     }}
   >
-    {/* Free scans pill */}
+    {/* Free scans pill — Liquid Glass capsule */}
     <Pressable
       onPress={() => {
         hapticSelect?.();
@@ -11477,22 +11544,26 @@ transform: [
           paddingHorizontal: 14,
           paddingVertical: 8,
           borderRadius: 999,
-          backgroundColor: "rgba(0,0,0,0.35)",
-          borderWidth: 1,
-          borderColor: "rgba(255,255,255,0.12)",
+          backgroundColor: "rgba(255,255,255,0.08)",
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: "rgba(255,255,255,0.14)",
+          shadowColor: "#000",
+          shadowOpacity: IOS ? 0.25 : 0,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 4 },
         },
-        pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+        pressed && { opacity: 0.88, transform: [{ scale: 0.97 }] },
       ]}
     >
-      <Text style={{ color: "white", fontSize: 16, fontWeight: "800" }}>
+      <Text style={{ color: "white", fontSize: 16, fontWeight: "800" }} allowFontScaling={false}>
         {isPro ? "Pro · Unlimited" : `${scansUsed || 0}/${FREE_SCAN_LIMIT_SAFE} free scans`}
       </Text>
-      <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, fontWeight: "800", marginTop: 2 }}>
+      <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, fontWeight: "800", marginTop: 2 }} allowFontScaling={false}>
         Tap to upgrade
       </Text>
     </Pressable>
 
-    {/* Flashlight */}
+    {/* Flashlight — Liquid Glass circle */}
     <Pressable
       onPress={() => {
         hapticSelect?.();
@@ -11508,11 +11579,15 @@ transform: [
           borderRadius: 23,
           alignItems: "center",
           justifyContent: "center",
-          backgroundColor: torchOn ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.35)",
-          borderWidth: 1,
-          borderColor: torchOn ? "rgba(255,255,255,0.24)" : "rgba(255,255,255,0.12)",
+          backgroundColor: torchOn ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.08)",
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: torchOn ? "rgba(255,255,255,0.30)" : "rgba(255,255,255,0.14)",
+          shadowColor: "#000",
+          shadowOpacity: IOS ? 0.25 : 0,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 4 },
         },
-        pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+        pressed && { opacity: 0.88, transform: [{ scale: 0.94 }] },
       ]}
     >
       <Ionicons name={torchOn ? "flash" : "flash-outline"} size={20} color="white" />
@@ -11544,14 +11619,15 @@ transform: [
                   paddingHorizontal: 18,
                   paddingVertical: 10,
                   borderRadius: 999,
-                  backgroundColor: active ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.10)",
-                  borderWidth: 1,
-                  borderColor: active ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.14)",
+                  // Liquid Glass pill
+                  backgroundColor: active ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.07)",
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: active ? "rgba(255,255,255,0.30)" : "rgba(255,255,255,0.12)",
                 },
-                pressed && { opacity: 0.92, transform: [{ scale: 0.985 }] },
+                pressed && { opacity: 0.88, transform: [{ scale: 0.96 }] },
               ]}
             >
-              <Text style={{ color: "white", fontSize: 16, fontWeight: "900" }}>
+              <Text style={{ color: "white", fontSize: 16, fontWeight: "900" }} allowFontScaling={false}>
                 {t[0].toUpperCase() + t.slice(1)}
               </Text>
             </Pressable>
@@ -13850,20 +13926,6 @@ ${shareLink}`
 </RNAnimated.View>
 </RNAnimated.View>
 
-{tabMaskVisible ? (
-  <RNAnimated.View
-    pointerEvents="none"
-    style={[
-      StyleSheet.absoluteFillObject,
-      {
-        zIndex: 6000,
-        backgroundColor: "#000",
-        opacity: tabMaskOpacity,
-      },
-    ]}
-  />
-) : null}
-
 <Modal
   visible={profileModal === "payments"}
   animationType="fade"
@@ -15806,20 +15868,40 @@ style={[
     zIndex: 99999,
     elevation: 99999,
 
+    // Liquid Glass shadow — deep, diffused
     shadowColor: "#000",
-    shadowOpacity: 0.28,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: IOS ? 0.40 : 0.28,
+    shadowRadius: 32,
+    shadowOffset: { width: 0, height: 14 },
   },
   {
     opacity: tabBarVisible ? 1 : 0,
     transform: [
-      { scale: tabBarVisible ? 1 : 0.98 },
-      { translateY: showSplash ? 4 : 0 },
+      { scale: tabBarVisible ? 1 : 0.96 },
+      { translateY: showSplash ? 8 : 0 },
     ],
   },
 ]}
 >
+      {/* Frosted glass backdrop */}
+      {IOS ? (
+        <BlurView
+          intensity={40}
+          tint="dark"
+          style={[StyleSheet.absoluteFillObject, { borderRadius: 26 }]}
+        />
+      ) : null}
+      {/* Specular top edge */}
+      <View pointerEvents="none" style={{
+        position: "absolute",
+        top: 0,
+        left: 24,
+        right: 24,
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: "rgba(255,255,255,0.22)",
+        borderRadius: 999,
+      }} />
+
       <TabButton
         active={tab === "history"}
         icon="time-sharp"
@@ -16583,7 +16665,21 @@ function IconButton({ icon, onPress }) {
 }
 function TabButton({ active, icon, onPress, badge = 0, dot = false }) {
   const show = Number(badge) > 0;
+  // Liquid Glass spring-physics for active state
+  const scaleAnim = useRef(new RNAnimated.Value(1)).current;
+  const activeAnim = useRef(new RNAnimated.Value(active ? 1 : 0)).current;
   const dotAnim = useRef(new RNAnimated.Value(0.4)).current;
+
+  useEffect(() => {
+    RNAnimated.spring(activeAnim, {
+      toValue: active ? 1 : 0,
+      damping: 20,
+      stiffness: 90,
+      mass: 1.0,
+      useNativeDriver: true,
+    }).start();
+  }, [active]);
+
   useEffect(() => {
     if (!dot) { dotAnim.setValue(0.4); return; }
     const loop = RNAnimated.loop(RNAnimated.sequence([
@@ -16593,27 +16689,62 @@ function TabButton({ active, icon, onPress, badge = 0, dot = false }) {
     loop.start();
     return () => loop.stop();
   }, [dot]);
+
   return (
     <Pressable
+      onPressIn={() => {
+        RNAnimated.spring(scaleAnim, { toValue: 0.88, damping: 18, stiffness: 280, mass: 0.8, useNativeDriver: true }).start();
+      }}
+      onPressOut={() => {
+        RNAnimated.spring(scaleAnim, { toValue: 1, damping: 14, stiffness: 300, mass: 0.9, useNativeDriver: true }).start();
+      }}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.tabBtn,
-        active && styles.tabActive,
-        pressed && styles.tabPressed,
-      ]}
     >
-      <Ionicons
-        name={icon}
-        size={26}
-        color={active ? "white" : "rgba(255,255,255,0.65)"}
-      />
+      <RNAnimated.View
+        style={[
+          styles.tabBtn,
+          {
+            transform: [{ scale: scaleAnim }],
+            backgroundColor: activeAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: ["rgba(255,255,255,0.0)", "rgba(255,255,255,0.14)"],
+            }),
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: activeAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: ["rgba(255,255,255,0.0)", "rgba(255,255,255,0.30)"],
+            }),
+          },
+        ]}
+      >
+        <Ionicons
+          name={icon}
+          size={26}
+          color={active ? "white" : "rgba(255,255,255,0.55)"}
+        />
+        {/* Active glow dot */}
+        {active ? (
+          <RNAnimated.View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              bottom: 6,
+              width: 4,
+              height: 4,
+              borderRadius: 2,
+              backgroundColor: "rgba(255,255,255,0.85)",
+              opacity: activeAnim,
+            }}
+          />
+        ) : null}
+      </RNAnimated.View>
       {show && !dot ? (
         <View
           pointerEvents="none"
           style={{
             position: "absolute",
-            top: 10,
-            right: 16,
+            top: 4,
+            right: 10,
             minWidth: 18,
             height: 18,
             borderRadius: 9,
@@ -16633,8 +16764,8 @@ function TabButton({ active, icon, onPress, badge = 0, dot = false }) {
           pointerEvents="none"
           style={{
             position: "absolute",
-            top: 10,
-            right: 18,
+            top: 6,
+            right: 14,
             width: 8,
             height: 8,
             borderRadius: 4,
@@ -18680,17 +18811,22 @@ camera: { flex: 1, backgroundColor: TOK.C.bg },
 sideBtn: {
   width: 52,
   height: 52,
-  borderRadius: 26,
+  borderRadius: 18,
   alignItems: "center",
   justifyContent: "center",
-  backgroundColor: "rgba(0,0,0,0.35)",
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.12)",
+  // Liquid Glass circle
+  backgroundColor: "rgba(255,255,255,0.08)",
+  borderWidth: StyleSheet.hairlineWidth,
+  borderColor: "rgba(255,255,255,0.14)",
+  shadowColor: "#000",
+  shadowOpacity: IOS ? 0.25 : 0,
+  shadowRadius: 10,
+  shadowOffset: { width: 0, height: 4 },
 },
 
 sideBtnPressed: {
-  opacity: 0.92,
-  transform: [{ scale: 0.98 }],
+  opacity: 0.88,
+  transform: [{ scale: 0.94 }],
 },
 
 resultsSubtitleBig: {
@@ -18750,21 +18886,23 @@ modeRow: {
   flexWrap: "wrap",
 },
 modePill: {
-  paddingHorizontal: 12,
+  paddingHorizontal: 14,
   paddingVertical: 8,
   borderRadius: 999,
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.14)",
-  backgroundColor: "rgba(0,0,0,0.35)",
+  borderWidth: StyleSheet.hairlineWidth,
+  borderColor: "rgba(255,255,255,0.12)",
+  // Liquid Glass pill
+  backgroundColor: "rgba(255,255,255,0.06)",
 },
 modePillActive: {
-  backgroundColor: "rgba(255,255,255,0.14)",
-  borderColor: "rgba(255,255,255,0.28)",
+  backgroundColor: "rgba(255,255,255,0.16)",
+  borderColor: "rgba(255,255,255,0.30)",
 },
 modeText: {
   color: "white",
   fontWeight: "900",
   fontSize: 12,
+  letterSpacing: 0.1,
 },
 propBox: {
   position: "absolute",
@@ -19273,7 +19411,7 @@ signInBtn: {
   
 helpBackdrop: {
   ...StyleSheet.absoluteFillObject,
-  backgroundColor: "rgba(0,0,0,0.55)", // ✅ real fade, not see-through
+  backgroundColor: "rgba(0,0,0,0.60)",
   alignItems: "center",
   justifyContent: "center",
   paddingHorizontal: 18,
@@ -19281,16 +19419,17 @@ helpBackdrop: {
 
 helpBox: {
   width: "100%",
-  borderRadius: 22,
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.16)",
-  backgroundColor: "rgba(20,20,20,0.94)", // ✅ premium solid card
-  padding: 18,
+  borderRadius: 24,
+  borderWidth: StyleSheet.hairlineWidth,
+  borderColor: "rgba(255,255,255,0.14)",
+  // Liquid Glass modal surface
+  backgroundColor: "rgba(14,14,14,0.92)",
+  padding: 20,
   shadowColor: "#000",
-  shadowOpacity: 0.45,
-  shadowRadius: 22,
-  shadowOffset: { width: 0, height: 14 },
-  elevation: 22,
+  shadowOpacity: IOS ? 0.55 : 0.35,
+  shadowRadius: 32,
+  shadowOffset: { width: 0, height: 18 },
+  elevation: 24,
 },
 
   helpTitle: { color: "white", fontWeight: "900", fontSize: 16, marginBottom: 10 },
@@ -19304,47 +19443,44 @@ tabBar: {
   height: 66,
   borderRadius: 26,
   borderWidth: StyleSheet.hairlineWidth,
-  borderColor: "rgba(255,255,255,0.14)",
+  borderColor: "rgba(255,255,255,0.16)",
   overflow: "hidden",
   flexDirection: "row",
-  justifyContent: "space-between",
+  justifyContent: "space-evenly",
   alignItems: "center",
-  paddingHorizontal: 8,
-  backgroundColor: "rgba(12,12,12,0.92)",
-  ...TOK.S.tab,
+  paddingHorizontal: 6,
+  // Liquid Glass surface — translucent dark glass
+  backgroundColor: "rgba(10,10,10,0.78)",
 },
 tabBtn: {
     width: 56,
     height: 46,
-    borderRadius: 18,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
   },
-  tabActive: {
-    backgroundColor: "rgba(255,255,255,0.13)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.32)",
-  },
-  tabPressed: { backgroundColor: "rgba(255,255,255,0.10)" },
+  tabActive: {},
+  tabPressed: {},
 
 modalCard: {
   width: "100%",
   maxWidth: 520,
   borderRadius: 28,
-  padding: 20,
-  backgroundColor: "rgba(14,14,14,0.97)",
+  padding: 22,
+  // Liquid Glass modal — deep dark glass with subtle luminance
+  backgroundColor: "rgba(12,12,12,0.94)",
   borderWidth: StyleSheet.hairlineWidth,
-  borderColor: "rgba(255,255,255,0.16)",
+  borderColor: "rgba(255,255,255,0.14)",
   shadowColor: "#000",
-  shadowOpacity: 0.60,
-  shadowRadius: 32,
-  shadowOffset: { width: 0, height: 20 },
-  elevation: 28,
+  shadowOpacity: IOS ? 0.65 : 0.45,
+  shadowRadius: 40,
+  shadowOffset: { width: 0, height: 24 },
+  elevation: 30,
 },
 
 modalBackdrop: {
   flex: 1,
-  backgroundColor: "transparent", // ✅ no grey wash
+  backgroundColor: "rgba(0,0,0,0.50)",
   justifyContent: "center",
   alignItems: "center",
   padding: 18,
@@ -20422,21 +20558,23 @@ cameraControlsRow: {
 cameraSideBtn: {
   width: 54,
   height: 54,
-  borderRadius: 20,
+  borderRadius: 18,
   alignItems: "center",
   justifyContent: "center",
+  // Liquid Glass surface
   backgroundColor: "rgba(255,255,255,0.08)",
   borderWidth: StyleSheet.hairlineWidth,
-  borderColor: "rgba(255,255,255,0.22)",
+  borderColor: "rgba(255,255,255,0.18)",
   shadowColor: "#000",
-  shadowOpacity: 0.20,
-  shadowRadius: 8,
-  shadowOffset: { width: 0, height: 4 },
+  shadowOpacity: IOS ? 0.30 : 0.18,
+  shadowRadius: 12,
+  shadowOffset: { width: 0, height: 6 },
+  elevation: 8,
 },
 
 cameraSideBtnPressed: {
-  opacity: 0.92,
-  transform: [{ scale: 0.98 }],
+  opacity: 0.88,
+  transform: [{ scale: 0.94 }],
 },
 
 shutterPressable: {
@@ -20448,26 +20586,28 @@ shutterOuter: {
   width: 100,
   height: 100,
   borderRadius: 50,
-  backgroundColor: "rgba(255,255,255,0.07)",
+  backgroundColor: "rgba(255,255,255,0.08)",
   borderWidth: 1.5,
-  borderColor: "rgba(255,255,255,0.32)",
+  borderColor: "rgba(255,255,255,0.28)",
   alignItems: "center",
   justifyContent: "center",
+  // Liquid Glass glow
   shadowColor: "#ffffff",
-  shadowOpacity: 0.10,
-  shadowRadius: 24,
+  shadowOpacity: IOS ? 0.14 : 0,
+  shadowRadius: 30,
   shadowOffset: { width: 0, height: 0 },
-  elevation: 12,
+  elevation: 14,
 },
 
 shutterInner: {
-  width: 80,
-  height: 80,
-  borderRadius: 40,
+  width: 78,
+  height: 78,
+  borderRadius: 39,
   backgroundColor: "#ffffff",
+  // Inner glow — floating in liquid feel
   shadowColor: "#fff",
-  shadowOpacity: IOS ? 0.25 : 0,
-  shadowRadius: 16,
+  shadowOpacity: IOS ? 0.30 : 0,
+  shadowRadius: 20,
   shadowOffset: { width: 0, height: 0 },
 },
 
@@ -20476,8 +20616,8 @@ shutterBurstRing: {
   width: 118,
   height: 118,
   borderRadius: 59,
-  borderWidth: 1.5,
-  borderColor: "rgba(255,255,255,0.55)",
+  borderWidth: 1,
+  borderColor: "rgba(255,255,255,0.45)",
 },
 
 barcodeOverlay: {

@@ -75,6 +75,13 @@ export const C = {
   glow: "rgba(255,255,255,0.05)",
   glowMid: "rgba(255,255,255,0.10)",
   glowStrong: "rgba(255,255,255,0.18)",
+
+  // Liquid Glass surfaces
+  liquidGlass: "rgba(255,255,255,0.06)",
+  liquidGlassMid: "rgba(255,255,255,0.10)",
+  liquidGlassStrong: "rgba(255,255,255,0.16)",
+  liquidGlassBorder: "rgba(255,255,255,0.12)",
+  liquidGlassBorderActive: "rgba(255,255,255,0.28)",
 } as const;
 
 // ─── SPACING ──────────────────────────────────────────────────────────────────
@@ -135,6 +142,10 @@ export const MO = {
     card:    { damping: 26, stiffness: 250, mass: 1.0 },
     dock:    { damping: 30, stiffness: 200, mass: 1.0 },
     entrance:{ damping: 20, stiffness: 180, mass: 1.1 },
+    /** Liquid Glass master spring — floating-in-liquid feel */
+    liquid:  { damping: 20, stiffness: 90, mass: 1.0 },
+    /** Tab switch spring — fast settle, no bounce */
+    tabSwitch: { damping: 28, stiffness: 260, mass: 0.7 },
   },
   dur: {
     micro:   70,

@@ -7,11 +7,11 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "evanai",
-    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.evanai.app",
+      "deploymentTarget": "16.0",
       "buildNumber": "1",
       "infoPlist": {
         "NSAppTransportSecurity": {
@@ -79,7 +79,13 @@
         }
       ],
       "react-native-vision-camera",
-"./plugins/withEvanWidget",
+[
+        "./plugins/withEvanWidget",
+        {
+          "bundleIdentifier": "com.evanai.app.EvanWidget",
+          "targetName": "EvanWidget"
+        }
+      ],
       "expo-sqlite"
     ],
     "extra": {
