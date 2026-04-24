@@ -178,8 +178,8 @@ export const MO = {
     singularity: SINGULARITY.duration,
     /** Phase 1: finger-down gravity implosion */
     implosion: 280,
-    /** Phase 2: chromatic supernova blast */
-    supernova: 450,
+    /** Phase 2: chromatic supernova blast (140ms collapse + 700ms detonation) */
+    supernova: 850,
     /** Phase 3: neural trace lock-on */
     neuralTrace: 1800,
     /** Phase 4: reality bloom reveal */

@@ -171,83 +171,287 @@ const GRAVITY_WELL_SHADER = Skia.RuntimeEffect.Make(`
 `)!;
 
 /**
- * Phase 2: Chromatic Supernova — Ray-marched liquid fire ripple
- * Multi-spectral wave with aggressive chromatic aberration at the wavefront.
+ * Phase 2: CHROMATIC SUPERNOVA — All 10 enhancements
+ *
+ *  #1  Shockwave Refraction Lens — UV displacement at wavefront (heat haze)
+ *  #2  Particle Debris Field    — 40 GPU shrapnel streaks with drag
+ *  #3  Plasma Tendrils          — Voronoi-warped fractal lightning arms
+ *  #4  Temporal Echo Ghosts     — 3 trailing afterimage waves (cyan→magenta→violet)
+ *  #5  Gravity Shatter          — Voronoi tessellation, glowing crack seams
+ *  #6  Volumetric Smoke Plume   — 3D noise fog, cyan core → violet edge
+ *  #7  EMP Ring Cascade         — 5 concentric rings at different speeds
+ *  #8  Prismatic Light Scatter  — 7-band rainbow fan rotating at wavefront
+ *  #9  Stellar Core Collapse    — Pre-detonation singularity implosion
+ *  #10 Screen-Edge Burn         — Ember crawl, corner flares, molten drip
  */
 const SUPERNOVA_SHADER = Skia.RuntimeEffect.Make(`
   uniform float2 iResolution;
   uniform float  iTime;
-  uniform float  iWave;        // 0→1 wave expansion progress
+  uniform float  iWave;        // 0→1 main wave expansion
+  uniform float  iCollapse;    // 0→1 stellar core collapse (pre-detonation)
   uniform float2 iOrigin;      // blast center (pixel coords)
 
-  float hash(float2 p) {
-    return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
-  }
+  // ── noise utilities ──────────────────────────────────────────────────────
+  float hash2(float2 p) { return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
+  float hash1(float n)  { return fract(sin(n) * 43758.5453); }
 
   float noise(float2 p) {
     float2 i = floor(p);
     float2 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
     return mix(
-      mix(hash(i), hash(i + float2(1, 0)), f.x),
-      mix(hash(i + float2(0, 1)), hash(i + float2(1, 1)), f.x),
+      mix(hash2(i), hash2(i + float2(1.0, 0.0)), f.x),
+      mix(hash2(i + float2(0.0, 1.0)), hash2(i + float2(1.0, 1.0)), f.x),
       f.y
     );
+  }
+
+  float fbm(float2 p) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 4; i++) {
+      v += a * noise(p);
+      p = p * 2.0 + float2(100.0, 100.0);
+      a *= 0.5;
+    }
+    return v;
+  }
+
+  // Voronoi — returns (minDist, secondMinDist) for cracks + tendrils
+  float2 voronoi(float2 p) {
+    float2 i = floor(p);
+    float2 f = fract(p);
+    float md = 1.0;
+    float md2 = 1.0;
+    for (int y = -1; y <= 1; y++) {
+      for (int x = -1; x <= 1; x++) {
+        float2 nb = float2(float(x), float(y));
+        float2 pt = nb + float2(
+          hash2(i + nb),
+          hash2(i + nb + float2(37.0, 17.0))
+        ) - f;
+        float d = dot(pt, pt);
+        if (d < md) { md2 = md; md = d; }
+        else if (d < md2) { md2 = d; }
+      }
+    }
+    return float2(sqrt(md), sqrt(md2));
   }
 
   half4 main(float2 fragCoord) {
     float2 uv = fragCoord / iResolution;
     float2 center = iOrigin / iResolution;
-    float dist = length(uv - center);
+    float2 delta = uv - center;
+    float dist = length(delta);
+    float angle = atan(delta.y, delta.x);
 
-    // Wave front radius expands from center
-    float waveR = iWave * 1.6;    // overshoots screen diagonal
+    // ═══ #9: STELLAR CORE COLLAPSE ════════════════════════════════════════
+    float collapseR = mix(0.5, 0.003, iCollapse * iCollapse);
+    float collapsePull = iCollapse * 0.4 * exp(-dist * 2.0);
+    float collapseGlow = exp(-dist / max(collapseR, 0.001)) * iCollapse;
+    float collapseRing = smoothstep(0.005, 0.0, abs(dist - collapseR)) * iCollapse;
+
+    // ═══ MAIN WAVEFRONT ══════════════════════════════════════════════════
+    float waveR = iWave * 1.8;
     float waveDelta = dist - waveR;
-
-    // Wavefront band
-    float waveWidth = 0.06 + iWave * 0.04;
+    float waveWidth = 0.07 + iWave * 0.05;
     float waveFront = smoothstep(waveWidth, 0.0, abs(waveDelta));
 
-    // Trailing energy behind the wavefront
-    float trail = smoothstep(0.0, waveR, waveR - dist) * (1.0 - iWave * 0.5);
-    trail *= exp(-abs(waveDelta) * 4.0);
+    // ═══ #1: SHOCKWAVE REFRACTION LENS ═══════════════════════════════════
+    float refract = waveFront * 0.04;
+    float2 refDir = delta / max(dist, 0.001);
 
-    // Chromatic aberration — split RGB channels at the wavefront
-    float aberration = waveFront * 0.025;
-    float rDist = length(uv - center + float2(aberration, 0.0));
-    float gDist = dist;
-    float bDist = length(uv - center - float2(aberration, 0.0));
+    // ═══ #7: EMP RING CASCADE ════════════════════════════════════════════
+    float empRings = 0.0;
+    for (int i = 0; i < 5; i++) {
+      float fi = float(i);
+      float rR = iWave * 1.8 * (0.85 + fi * 0.08);
+      float rW = 0.012 + fi * 0.004;
+      float rT = 1.0 - fi * 0.18;
+      empRings += smoothstep(rW, 0.0, abs(dist - rR)) * (1.0 - iWave * 0.4) * rT;
+    }
 
+    // ═══ #4: TEMPORAL ECHO GHOSTS ════════════════════════════════════════
+    float ghost1 = smoothstep(0.04, 0.0, abs(dist - waveR * 0.72)) * 0.7
+                 * smoothstep(0.2, 0.5, iWave);
+    float ghost2 = smoothstep(0.03, 0.0, abs(dist - waveR * 0.50)) * 0.45
+                 * smoothstep(0.3, 0.6, iWave);
+    float ghost3 = smoothstep(0.025, 0.0, abs(dist - waveR * 0.30)) * 0.25
+                 * smoothstep(0.4, 0.7, iWave);
+
+    // ═══ #8: PRISMATIC LIGHT SCATTER ═════════════════════════════════════
+    float pR = 0.0;
+    float pG = 0.0;
+    float pB = 0.0;
+    for (int i = 0; i < 7; i++) {
+      float fi = float(i);
+      float bA = angle + fi * 0.09 - 0.27 + iTime * 0.5;
+      float bO = (fi - 3.0) * 0.008;
+      float bD = length(delta + float2(cos(bA), sin(bA)) * bO);
+      float band = smoothstep(0.02, 0.0, abs(bD - waveR)) * waveFront * 0.45;
+      float hue = fi / 7.0;
+      pR += band * max(0.0, 1.0 - abs(hue) * 4.0 + 0.2);
+      pG += band * max(0.0, 1.0 - abs(hue - 0.35) * 4.0 + 0.2);
+      pB += band * max(0.0, 1.0 - abs(hue - 0.7) * 4.0 + 0.2);
+    }
+
+    // ═══ #3: PLASMA TENDRILS ═════════════════════════════════════════════
+    float2 warpP = float2(angle * 1.2 + iTime * 0.8, dist * 4.0);
+    float2 vor = voronoi(warpP * 3.0);
+    float tendrilMask = smoothstep(0.0, waveR * 1.1, dist)
+                      * smoothstep(waveR * 1.4, waveR * 0.8, dist);
+    float tendrils = smoothstep(0.15, 0.0, vor.x) * tendrilMask * iWave * 0.8;
+    float tendrilJag = noise(float2(angle * 6.0 + iTime * 2.0, dist * 8.0));
+    tendrils *= (0.6 + tendrilJag * 0.6);
+
+    // ═══ CHROMATIC ABERRATION (enhanced) ═════════════════════════════════
+    float aber = waveFront * 0.035 + empRings * 0.01;
+    float rDist = length(delta + float2(aber, aber * 0.5));
+    float bDist = length(delta - float2(aber, aber * 0.5));
     float rWave = smoothstep(waveWidth, 0.0, abs(rDist - waveR));
-    float gWave = waveFront;
     float bWave = smoothstep(waveWidth, 0.0, abs(bDist - waveR));
 
-    // Liquid fire noise along the wavefront
-    float angle = atan(uv.y - center.y, uv.x - center.x);
-    float fireNoise = noise(float2(angle * 8.0 + iTime * 3.0, dist * 12.0));
-    float fire = fireNoise * waveFront * 0.7;
+    // ═══ #2: PARTICLE DEBRIS FIELD ═══════════════════════════════════════
+    float particles = 0.0;
+    float particleTrails = 0.0;
+    for (int i = 0; i < 40; i++) {
+      float fi = float(i);
+      float pAng = hash1(fi * 7.13) * 6.28318;
+      float pSpd = 0.3 + hash1(fi * 3.77) * 0.7;
+      float pDrg = 0.92 + hash1(fi * 11.3) * 0.07;
+      float pLife = iWave * pSpd;
+      float pDst = pLife * pDrg * (1.0 - pLife * 0.3);
+      float2 pPos = center + float2(cos(pAng), sin(pAng)) * pDst;
+      float2 pDir = float2(cos(pAng), sin(pAng));
+      float2 toF = uv - pPos;
+      float along = dot(toF, pDir);
+      float perp = length(toF - pDir * along);
+      float streak = smoothstep(0.015, 0.0, perp) * smoothstep(0.03, 0.0, abs(along));
+      float bright = (1.0 - pLife) * step(0.05, iWave);
+      particles += streak * bright * 0.8;
+      float tD = smoothstep(0.02 * pSpd, 0.0, abs(along + 0.01))
+               * smoothstep(0.008, 0.0, perp);
+      particleTrails += tD * bright * 0.3;
+    }
 
-    // Secondary ripples (echo waves)
-    float echo1 = smoothstep(0.02, 0.0, abs(dist - waveR * 0.7)) * (1.0 - iWave) * 0.4;
-    float echo2 = smoothstep(0.015, 0.0, abs(dist - waveR * 0.4)) * (1.0 - iWave) * 0.2;
+    // ═══ LIQUID FIRE (fbm enhanced) ══════════════════════════════════════
+    float fireNoise = fbm(float2(angle * 8.0 + iTime * 3.0, dist * 12.0 - iTime));
+    float fire = fireNoise * waveFront * 0.8;
 
-    // Nuclear Magenta (#FF007A) + Electric Cyan (#00F0FF) + Emerald (#00FFA3)
+    // ═══ #6: VOLUMETRIC SMOKE PLUME ══════════════════════════════════════
+    float smkPhase = max(0.0, iWave - 0.3) * 1.43;
+    float smkR = smkPhase * 0.8;
+    float smkDist = max(0.0, smkR - dist);
+    float smk3d = fbm(float2(angle * 3.0 + iTime * 0.4, dist * 5.0 - iTime * 0.3));
+    float smoke = smkDist * smk3d * smkPhase * 0.6
+                * smoothstep(smkR, smkR * 0.3, dist)
+                * max(0.0, 1.0 - (iWave - 0.5) * 3.0);
+
+    // ═══ #5: GRAVITY SHATTER ═════════════════════════════════════════════
+    float2 sVor = voronoi(uv * 12.0 + float2(iTime * 0.1, 0.0));
+    float cracks = smoothstep(0.06, 0.02, sVor.x);
+    float shatterI = waveFront * 0.7
+                   + smoothstep(0.0, 0.15, iWave) * smoothstep(0.4, 0.15, iWave) * 0.5;
+    float shatter = cracks * shatterI;
+
+    // ═══ #10: SCREEN-EDGE BURN ═══════════════════════════════════════════
+    float edgeL = uv.x;
+    float edgeR2 = 1.0 - uv.x;
+    float edgeT = uv.y;
+    float edgeB = 1.0 - uv.y;
+    float minEdge = min(min(edgeL, edgeR2), min(edgeT, edgeB));
+    float burnPhase = smoothstep(0.6, 1.0, iWave);
+
+    // Ember crawl along bezels
+    float eNoise = noise(float2(
+      (edgeL < edgeR2 ? uv.y : uv.y + 10.0) * 20.0 + iTime * 3.0,
+      (edgeT < edgeB  ? uv.x : uv.x + 10.0) * 20.0 + iTime * 2.5
+    ));
+    float embers = smoothstep(0.04, 0.0, minEdge) * burnPhase * (0.5 + eNoise * 0.5);
+
+    // Corner flares
+    float cDist = length(float2(min(edgeL, edgeR2), min(edgeT, edgeB)));
+    float cornerFlare = smoothstep(0.08, 0.0, cDist) * burnPhase * 1.5;
+
+    // Molten drip from top
+    float dripN = noise(float2(uv.x * 15.0, iTime * 1.5));
+    float drip = smoothstep(dripN * 0.08 * burnPhase, 0.0, uv.y)
+               * smoothstep(0.0, 0.02, burnPhase) * 0.7;
+
+    float edgeBurn = embers + cornerFlare + drip;
+
+    // ═══ CORE FLASH (collapse → detonate) ════════════════════════════════
+    float coreSize = mix(0.15, 0.002, iCollapse) * (1.0 + iWave * 0.5);
+    float coreFlash = exp(-dist / max(coreSize, 0.001)) * max(0.0, 1.0 - iWave * 2.5);
+    coreFlash = max(coreFlash, collapseGlow * 2.0);
+
+    // Trailing energy
+    float trail = smoothstep(0.0, max(waveR, 0.001), max(waveR - dist, 0.0))
+                * (1.0 - iWave * 0.5) * exp(-abs(waveDelta) * 3.5);
+
+    // ═══ COLOR COMPOSITION ═══════════════════════════════════════════════
+    half3 cCyan    = half3(0.0, 0.941, 1.0);
+    half3 cMagenta = half3(1.0, 0.0, 0.478);
+    half3 cEmerald = half3(0.0, 1.0, 0.639);
+    half3 cViolet  = half3(0.4, 0.0, 0.8);
+    half3 cWhite   = half3(1.0, 1.0, 1.0);
+    half3 cAmber   = half3(1.0, 0.6, 0.1);
+
     half3 col = half3(0.0);
-    col.r += half(rWave * 1.0 + fire * 0.8 + trail * 0.3);   // magenta channel
-    col.g += half(gWave * 0.2 + fire * 0.4 + trail * 0.8);   // cyan green
-    col.b += half(bWave * 0.9 + fire * 0.3 + trail * 1.0);   // cyan blue
 
-    // Emerald spark flashes
-    col.g += half((echo1 + echo2) * 1.0);
-    col.b += half((echo1 + echo2) * 0.6);
+    // #9 Core collapse
+    col += mix(cCyan, cWhite, half(iCollapse)) * half(collapseGlow * 1.5);
+    col += cCyan * half(collapseRing);
 
-    // Hot white core
-    float coreFlash = exp(-dist * 12.0) * max(0.0, 1.0 - iWave * 3.0);
-    col += half3(coreFlash);
+    // Chromatic wavefront
+    col.r += half(rWave * 1.0 + fire * 0.8 + trail * 0.3);
+    col.g += half(waveFront * 0.25 + fire * 0.45 + trail * 0.8);
+    col.b += half(bWave * 0.95 + fire * 0.35 + trail * 1.0);
+
+    // #7 EMP rings
+    col += cCyan  * half(empRings * 0.6);
+    col += cWhite * half(empRings * 0.2);
+
+    // #4 Temporal echoes
+    col += cCyan    * half(ghost1);
+    col += cMagenta * half(ghost2);
+    col += cViolet  * half(ghost3);
+
+    // #8 Prismatic scatter
+    col.r += half(pR);
+    col.g += half(pG);
+    col.b += half(pB);
+
+    // #3 Plasma tendrils
+    col += cMagenta * half(tendrils * 0.6);
+    col += cCyan    * half(tendrils * 0.3);
+
+    // #2 Particle debris
+    col += cWhite * half(particles);
+    col += cCyan  * half(particleTrails);
+
+    // #6 Smoke plume
+    col += mix(cCyan, cViolet, half(smkDist * 3.0)) * half(smoke);
+
+    // #5 Gravity shatter
+    col += cEmerald * half(shatter * 0.7);
+    col += cWhite   * half(shatter * 0.3);
+
+    // #10 Screen-edge burn
+    col += cAmber   * half(edgeBurn * 0.7);
+    col += cWhite   * half(edgeBurn * 0.3);
+    col += cMagenta * half(cornerFlare * 0.5);
+
+    // Core flash
+    col += cWhite * half(coreFlash);
 
     float alpha = clamp(
-      waveFront + trail * 0.6 + fire + echo1 + echo2 + coreFlash,
-      0.0, 1.0
+      collapseGlow + collapseRing +
+      waveFront + trail * 0.6 + fire +
+      empRings * 0.5 + ghost1 + ghost2 + ghost3 +
+      tendrils + particles + particleTrails +
+      smoke + shatter + edgeBurn + coreFlash +
+      pR + pG + pB, 0.0, 1.0
     );
 
     return half4(col, half(alpha));
@@ -442,6 +646,7 @@ export const SingularitySnap = React.memo(function SingularitySnap({
   // ── Phase timeline shared values ─────────────────────────────────────────
   const masterTime = useSharedValue(0);
   const implosionT = useSharedValue(0);
+  const collapseT = useSharedValue(0);   // #9 stellar core collapse
   const supernovaT = useSharedValue(0);
   const traceT = useSharedValue(0);
   const bloomT = useSharedValue(0);
@@ -486,6 +691,7 @@ export const SingularitySnap = React.memo(function SingularitySnap({
     if (phase === "idle") {
       overlayOpacity.value = withTiming(0, { duration: 200 });
       implosionT.value = 0;
+      collapseT.value = 0;
       supernovaT.value = 0;
       traceT.value = 0;
       bloomT.value = 0;
@@ -504,14 +710,27 @@ export const SingularitySnap = React.memo(function SingularitySnap({
     }
 
     if (phase === "supernova") {
-      // Phase 2: Chromatic Supernova
-      Feedback.singularitySnap();
+      // Phase 2: Chromatic Supernova — with stellar core collapse
       implosionT.value = withTiming(0, { duration: 200 });
-      supernovaT.value = 0;
-      supernovaT.value = withTiming(1, {
-        duration: MO.dur.supernova,
-        easing: panthere,
+
+      // #9: Stellar Core Collapse — 140ms implosion to singularity point
+      collapseT.value = 0;
+      collapseT.value = withTiming(1, {
+        duration: 140,
+        easing: Easing.in(Easing.quad),
       });
+
+      // After collapse, DETONATE — snap haptic fires at detonation
+      supernovaT.value = 0;
+      supernovaT.value = withDelay(
+        150,
+        withTiming(1, { duration: 700, easing: panthere })
+      );
+
+      // Haptic fires at the detonation moment (after collapse)
+      setTimeout(() => Feedback.singularitySnap(), 150);
+      // Collapse haptic fires immediately
+      Feedback.singularityTouch();
     }
 
     if (phase === "tracing") {
@@ -585,6 +804,7 @@ export const SingularitySnap = React.memo(function SingularitySnap({
     iResolution: [W, H] as [number, number],
     iTime: masterTime.value,
     iWave: supernovaT.value,
+    iCollapse: collapseT.value,
     iOrigin: [originX, originY] as [number, number],
   }));
 
