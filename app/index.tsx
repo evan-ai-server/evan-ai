@@ -8911,7 +8911,7 @@ try {
 // ── Revenue: track scan complete ──────────────────────────────────────────
 try {
   EventTracker.trackScanComplete(
-    String(card?.scanId || Date.now()),
+    String((card as any)?.scanId || Date.now()),
     card?.itemName || card?.visionQuery || "",
     Number.isFinite(Number(card?.price)) ? Number(card.price) : null,
     card?.buyVerdict ?? null

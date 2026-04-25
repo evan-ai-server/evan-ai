@@ -76,6 +76,7 @@ function enrichAlert(raw: DealAlert): EnrichedDealAlert {
 
   return {
     ...raw,
+    source: null,  // DealAlert doesn't expose source yet — populated when server adds it
     estimatedProfit: estimatedProfit > 0 ? Math.round(estimatedProfit * 100) / 100 : null,
     estimatedRoi,
     reason,
