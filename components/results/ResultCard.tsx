@@ -49,6 +49,7 @@ import {
 } from "../design/DS";
 import { PriceHistoryChart, PriceChartPoint } from "./PriceHistoryChart";
 import { CommunityCompsPanel } from "./CommunityCompsPanel";
+import { PremiumIntelPanel } from "./PremiumIntelPanel";
 import { routeListingClick } from "../../services/revenue/TransactionRouter";
 
 export interface CardData {
@@ -131,6 +132,10 @@ interface ResultCardProps {
   userId?: string | null;
   /** Scan session ID — used for click-through attribution */
   scanId?: string | null;
+  /** Whether user has Pro access (gates PremiumIntelPanel) */
+  isPro?: boolean;
+  /** Called when paywall CTA tapped inside PremiumIntelPanel */
+  onUnlockPro?: () => void;
 }
 
 // ─── Image area height ────────────────────────────────────────────────────────
@@ -555,6 +560,8 @@ export function ResultCard({
   apiBase,
   userId,
   scanId,
+  isPro = false,
+  onUnlockPro,
 }: ResultCardProps) {
   const imageUri = data.image || data.photoUri || null;
   const price    = Number.isFinite(Number(data.price)) ? Number(data.price) : null;
@@ -910,6 +917,23 @@ export function ResultCard({
           {/* Price Ladder — profit scenario breakdown (hero + avgMarket + scannedPrice) */}
           {isHero && data.avgMarket != null && _scannedPrice != null ? (
             <PriceLadder avgMarket={Number(data.avgMarket)} cost={_scannedPrice} isNet={isNet} />
+          ) : null}
+
+          {/* Hero: Premium Intel Panel (pro gated) */}
+          {isHero ? (
+            <PremiumIntelPanel
+              costBasis={_scannedPrice}
+              avgMarket={Number.isFinite(Number(data.avgMarket)) ? Number(data.avgMarket) : null}
+              source={store}
+              verdict={data.buyVerdict}
+              confidence={conf}
+              dealScore={data.buyScore ?? null}
+              trendIntel={data.trendIntel}
+              authenticityIntel={data.authenticityIntel}
+              ebaySoldComps={data.ebaySoldComps}
+              isPro={isPro}
+              onUnlock={onUnlockPro ?? (() => {})}
+            />
           ) : null}
 
           {/* Hero: tracked buy CTA */}

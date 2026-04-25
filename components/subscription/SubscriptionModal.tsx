@@ -89,11 +89,13 @@ interface Feature {
 }
 
 const FEATURES: Feature[] = [
-  { label: "Identification",    go: "✓",                      plus: "✓  Ultra-HD Analysis"       },
-  { label: "The Swarm",         go: "✓",                      plus: "✓  Priority Routing"         },
-  { label: "Auto-Negotiator",   go: "✓",                      plus: "✓  Game Theory Logic"        },
-  { label: "Command Center",    go: false,                    plus: "✓  Full Access"              },
-  { label: "Early Access",      go: false,                    plus: "✓  Beta Features"            },
+  { label: "Unlimited Scans",      go: "✓",   plus: "✓  Priority Queue"         },
+  { label: "Fees-Aware ROI",       go: false, plus: "✓  Full Breakdown"          },
+  { label: "Deal Quality Score",   go: false, plus: "✓  With Reasoning"          },
+  { label: "Market Trend Intel",   go: false, plus: "✓  Rising / Falling Signal" },
+  { label: "Autonomous Alerts",    go: "3/day", plus: "✓  Unlimited"             },
+  { label: "Seller Optimizer",     go: false, plus: "✓  Title + Platform Recs"   },
+  { label: "Early Access",         go: false, plus: "✓  Beta Features"           },
 ];
 
 // ─── Color tokens ─────────────────────────────────────────────────────────────
