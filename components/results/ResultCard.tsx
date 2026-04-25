@@ -136,6 +136,8 @@ interface ResultCardProps {
   isPro?: boolean;
   /** Called when paywall CTA tapped inside PremiumIntelPanel */
   onUnlockPro?: () => void;
+  /** Called when user taps "Sell?" on hero card — opens SellSidePanel */
+  onSell?: () => void;
 }
 
 // ─── Image area height ────────────────────────────────────────────────────────
@@ -562,6 +564,7 @@ export function ResultCard({
   scanId,
   isPro = false,
   onUnlockPro,
+  onSell,
 }: ResultCardProps) {
   const imageUri = data.image || data.photoUri || null;
   const price    = Number.isFinite(Number(data.price)) ? Number(data.price) : null;
@@ -958,6 +961,18 @@ export function ResultCard({
             </TouchableOpacity>
           ) : null}
 
+          {/* Hero: sell mode trigger */}
+          {isHero && onSell ? (
+            <TouchableOpacity
+              activeOpacity={0.72}
+              onPress={onSell}
+              style={styles.sellBar}
+            >
+              <Ionicons name="storefront-outline" size={12} color="rgba(255,210,80,0.75)" />
+              <Text style={styles.sellBarText}>Want to sell this?  →</Text>
+            </TouchableOpacity>
+          ) : null}
+
           {/* Community comps (hero only) */}
           {isHero && apiBase ? (
             <CommunityCompsPanel
@@ -1272,6 +1287,22 @@ const styles = StyleSheet.create({
     color: "rgba(120,255,170,0.80)",
     fontWeight: "700",
     letterSpacing: 0.5,
+  },
+
+  // ── Sell mode trigger ────────────────────────────────────────────────────
+  sellBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingTop: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,210,80,0.10)",
+  },
+  sellBarText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "rgba(255,210,80,0.60)",
+    letterSpacing: 0.3,
   },
 
   // ── Watermark ────────────────────────────────────────────────────────────
