@@ -49,6 +49,7 @@ import {
 } from "../design/DS";
 import { PriceHistoryChart, PriceChartPoint } from "./PriceHistoryChart";
 import { CommunityCompsPanel } from "./CommunityCompsPanel";
+import { routeListingClick } from "../../services/revenue/TransactionRouter";
 
 export interface CardData {
   // Core
@@ -128,6 +129,8 @@ interface ResultCardProps {
   apiBase?: string;
   /** User ID for community comp attribution (optional) */
   userId?: string | null;
+  /** Scan session ID — used for click-through attribution */
+  scanId?: string | null;
 }
 
 // ─── Image area height ────────────────────────────────────────────────────────
@@ -551,6 +554,7 @@ export function ResultCard({
   isNet = false,
   apiBase,
   userId,
+  scanId,
 }: ResultCardProps) {
   const imageUri = data.image || data.photoUri || null;
   const price    = Number.isFinite(Number(data.price)) ? Number(data.price) : null;
@@ -908,6 +912,28 @@ export function ResultCard({
             <PriceLadder avgMarket={Number(data.avgMarket)} cost={_scannedPrice} isNet={isNet} />
           ) : null}
 
+          {/* Hero: tracked buy CTA */}
+          {isHero && (data.url ?? data.buyLink) ? (
+            <TouchableOpacity
+              activeOpacity={0.72}
+              onPress={() =>
+                routeListingClick(data.url ?? data.buyLink, {
+                  scanId,
+                  userId,
+                  itemName: name,
+                  listingPrice: price,
+                  source: store,
+                  cardRole: "hero",
+                  intent: "buy",
+                })
+              }
+              style={styles.heroBuyBar}
+            >
+              <Ionicons name="cart-outline" size={13} color="rgba(120,255,170,0.85)" />
+              <Text style={styles.heroBuyText}>Buy Now  →</Text>
+            </TouchableOpacity>
+          ) : null}
+
           {/* Community comps (hero only) */}
           {isHero && apiBase ? (
             <CommunityCompsPanel
@@ -920,11 +946,25 @@ export function ResultCard({
             />
           ) : null}
 
-          {/* Alt: CTA bar */}
+          {/* Alt: Tracked listing CTA */}
           {!isHero ? (
-            <View style={styles.viewListingBar}>
+            <TouchableOpacity
+              activeOpacity={0.72}
+              onPress={() =>
+                routeListingClick(data.url ?? data.buyLink, {
+                  scanId,
+                  userId,
+                  itemName: name,
+                  listingPrice: price,
+                  source: store,
+                  cardRole: "alt",
+                  intent: "buy",
+                })
+              }
+              style={styles.viewListingBar}
+            >
               <Text style={styles.viewListingText}>View listing  →</Text>
-            </View>
+            </TouchableOpacity>
           ) : null}
         </View>
         {/* Branding watermark — included in screenshot exports */}
@@ -1189,6 +1229,24 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "rgba(255,255,255,0.35)",
     fontWeight: "600",
+    letterSpacing: 0.5,
+  },
+
+  // ── Hero buy CTA ──────────────────────────────────────────────────────────
+  heroBuyBar: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 5,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(0,210,120,0.14)",
+  },
+  heroBuyText: {
+    fontSize: 11,
+    color: "rgba(120,255,170,0.80)",
+    fontWeight: "700",
     letterSpacing: 0.5,
   },
 

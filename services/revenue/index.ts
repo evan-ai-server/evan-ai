@@ -5,3 +5,4 @@
 export * from "./RevenueTypes";
 export { EventTracker } from "./EventTracker";
 export { usePremiumAccess } from "./usePremiumAccess";
+export { routeListingClick } from "./TransactionRouter";
