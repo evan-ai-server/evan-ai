@@ -1,19 +1,20 @@
+/**
+ * Explore tab — Deal Hunter Dashboard
+ *
+ * Replaced placeholder with the real deal hunter feed.
+ * Uses watchlist queries from AsyncStorage to power autonomous sweeps.
+ * API_BASE resolves the same way as app/index.tsx.
+ */
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { Platform } from "react-native";
+import { DealHunterDashboard } from "../../components/dealhunter/DealHunterDashboard";
+import { useAuth } from "../../components/auth/AuthContext";
+
+const API_BASE =
+  process.env.EXPO_PUBLIC_API_URL ??
+  (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
 
 export default function ExploreScreen() {
-  return (
-    <View style={styles.root}>
-      <Text style={styles.title}>Explore</Text>
-      <Text style={styles.sub}>
-        Coming soon: trending items, recent scans, and “flip potential.”
-      </Text>
-    </View>
-  );
+  const { userId } = useAuth();
+  return <DealHunterDashboard apiBase={API_BASE} userId={userId} />;
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#07070a", padding: 18, justifyContent: "center" },
-  title: { color: "#fff", fontSize: 34, fontWeight: "900" },
-  sub: { marginTop: 10, color: "rgba(255,255,255,0.7)", fontSize: 15, lineHeight: 20 },
-});
