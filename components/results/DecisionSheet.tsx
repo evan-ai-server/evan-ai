@@ -26,6 +26,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C, SP, R, TY, IOS } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
+import { EventTracker } from "../../services/revenue/EventTracker";
 
 // ─── Source type config ───────────────────────────────────────────────────────
 
@@ -120,6 +121,14 @@ export function DecisionSheet({
     setLoading(true);
     setError(null);
     await postDecision(decision);
+    // Revenue: capture decision signal
+    try {
+      EventTracker.track("decision_pass", {
+        scanId,
+        itemName: itemName ?? null,
+        metadata: { decision },
+      });
+    } catch {}
     onComplete?.(decision);
     reset();
     onClose();
@@ -132,6 +141,13 @@ export function DecisionSheet({
     setLoading(true);
     setError(null);
     await postDecision("BUY"); // non-blocking — proceed even if it fails
+    // Revenue: capture buy intent signal
+    try {
+      EventTracker.track("decision_buy", {
+        scanId,
+        itemName: itemName ?? null,
+      });
+    } catch {}
     setLoading(false);
     setStep(2);
     // eslint-disable-next-line react-hooks/exhaustive-deps

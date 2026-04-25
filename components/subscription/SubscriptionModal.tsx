@@ -52,6 +52,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { C, SP, R, TY, MO, SH, IOS, fmtMoney } from "../design/DS";
 import { purchaseMonthly, purchaseYearly } from "../../src/purchases";
+import { EventTracker } from "../../services/revenue/EventTracker";
 
 // ─── Screen + layout ──────────────────────────────────────────────────────────
 const { height: SCREEN_H, width: SCREEN_W } = Dimensions.get("window");
@@ -376,6 +377,8 @@ export function SubscriptionModal({
   // Mount: spring up
   useEffect(() => {
     if (visible) {
+      // Revenue: track paywall view
+      try { EventTracker.trackPaywallView("subscription_modal"); } catch {}
       translateY.value = SHEET_MAX_H;
       backdropOp.value = 0;
       // Spring entrance with bounce
@@ -495,6 +498,8 @@ export function SubscriptionModal({
 
       if (result.success) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Revenue: track purchase complete
+        try { EventTracker.trackPurchaseComplete(plan); } catch {}
         onPurchased?.(result.isPro);
         dismiss();
       } else if (result.error !== "cancelled") {

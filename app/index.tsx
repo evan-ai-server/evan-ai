@@ -25,6 +25,8 @@ import { updateWidgetData } from "../components/widget/updateWidgetData";
 import { OnboardingFlow, type SurveyAnswers } from "../components/onboarding/OnboardingFlow";
 import { SingularityPipelineModal } from "../components/onboarding/SingularityPipeline";
 import { useSpatialZone, type ZoneKey } from "../components/spatial/SpatialContext";
+import { AutonomousDealHunter, type DealAlert } from "../services/scanService";
+import { EventTracker } from "../services/revenue/EventTracker";
 
 import {
   View,
@@ -38,6 +40,7 @@ import {
   Modal,
   ScrollView,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Linking,
   Keyboard,
   Alert,
@@ -85,6 +88,8 @@ import Reanimated, {
   withSequence,
   interpolate,
   Extrapolation,
+  FadeIn,
+  FadeInDown,
 } from "react-native-reanimated";
 
 import { Accelerometer } from "expo-sensors";
@@ -2647,6 +2652,49 @@ const [watchlist, setWatchlist] = useState<any[]>([]);
 const [focusedWatchlistId, setFocusedWatchlistId] = useState<string | null>(null);
 // 🔥 STABILITY — declare refs BEFORE any effects use them
 const watchlistRef = useRef<any[]>([]);
+
+// ── Autonomous Deal Hunter ────────────────────────────────────────────────────
+const [dealHunterActive, setDealHunterActive] = useState(false);
+const [dealAlerts, setDealAlerts] = useState<DealAlert[]>([]);
+const _dealHunterRef = useRef<AutonomousDealHunter | null>(null);
+
+// Initialize hunter instance (once — never recreated)
+useEffect(() => {
+  _dealHunterRef.current = new AutonomousDealHunter({
+    apiBase: SAFE_API_BASE, // updated via setApiBase() when resolvedApiBase changes
+    intervalMs: 15 * 60 * 1000, // 15-minute sweeps
+    minDealScore: 0.65,
+    onAlert: (alert) => {
+      setDealAlerts((prev) => [alert, ...prev].slice(0, 50));
+      // Surface as a local notification so the app can be in background
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: `FLIP ALERT: ${alert.query}`,
+          body: `${alert.verdict} — $${alert.bestPrice.toFixed(2)} — tap to view`,
+          data: { screen: "results", dealAlert: alert },
+          sound: true,
+        },
+        trigger: null, // fire immediately
+      }).catch(() => {});
+      hapticTick();
+    },
+    onError: (err) => {
+      devWarn("DealHunter error:", err.message);
+    },
+    onSweepStart: (queries) => {
+      devLog(`DealHunter sweep: ${queries.length} targets`);
+    },
+  });
+
+  return () => {
+    _dealHunterRef.current?.stop();
+    _dealHunterRef.current = null;
+  };
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+
+// NOTE: dealHunter effects that depend on resolvedApiBase are hoisted below
+// its useState declaration (search "── DealHunter runtime effects ──").
 // ===============================
 // WATCHLIST BACKGROUND RECHECK (stable + ref-safe)
 // ===============================
@@ -2973,9 +3021,9 @@ useEffect(() => {
 async function prepareImage(uri) {
   const result = await ImageManipulator.manipulateAsync(
     uri,
-    [{ resize: { width: 768 } }],
+    [{ resize: { width: 512 } }],
     {
-      compress: 0.62,
+      compress: 0.4,
       format: ImageManipulator.SaveFormat.JPEG,
     }
   );
@@ -2986,10 +3034,37 @@ async function prepareImage(uri) {
 const scanLockRef = useRef(false);
 const scanTokenRef = useRef(0);
 const scanAbortRef = useRef(null);
+// Last confirmed vision query — used to fire speculative market searches
+// on subsequent scans even without an itemHint
+const _lastVisionQueryRef = useRef<string | null>(null);
   // ✅ Free cycle start (30 days reset)
   const [cycleStartMs, setCycleStartMs] = useState(Date.now());
 // ✅ resolved backend base (learned from vision success)
 const [resolvedApiBase, setResolvedApiBase] = useState(API_BASE);
+
+// ── DealHunter runtime effects (after resolvedApiBase declaration) ────────────
+useEffect(() => {
+  _dealHunterRef.current?.setApiBase(resolvedApiBase || SAFE_API_BASE);
+}, [resolvedApiBase]);
+
+// ── EventTracker init / userId sync ──────────────────────────────────────────
+useEffect(() => {
+  EventTracker.init(resolvedApiBase || SAFE_API_BASE, userId ?? null);
+}, [resolvedApiBase, userId]);
+
+useEffect(() => {
+  const hunter = _dealHunterRef.current;
+  if (!hunter) return;
+  const watchlistQueries = (watchlist || [])
+    .map((w: any) => w?.query || w?.itemName || w?.title || "")
+    .filter((q: string) => q.trim().length >= 3);
+  hunter.setQueries(watchlistQueries);
+  if (dealHunterActive && watchlistQueries.length > 0) {
+    hunter.start();
+  } else {
+    hunter.stop();
+  }
+}, [dealHunterActive, watchlist, resolvedApiBase]);
 
 // ─── Offline system ───────────────────────────────────────────────────────────
 // runScan is defined further below. We use a stable wrapper so useOfflineQueue
@@ -4189,11 +4264,19 @@ useEffect(() => {
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvt =
       Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const kbAnim = {
+      duration: 280,
+      update: { type: LayoutAnimation.Types.keyboard, property: LayoutAnimation.Properties.opacity },
+    };
     const showSub = Keyboard.addListener(showEvt, (e) => {
       const h = e?.endCoordinates?.height ?? 0;
+      LayoutAnimation.configureNext(kbAnim);
       setKeyboardHeight(h);
     });
-    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    const hideSub = Keyboard.addListener(hideEvt, () => {
+      LayoutAnimation.configureNext(kbAnim);
+      setKeyboardHeight(0);
+    });
     return () => {
       showSub.remove();
       hideSub.remove();
@@ -5106,9 +5189,12 @@ if (finalQuery) {
   // Cache successful base so next scan skips health check
   _healthBase = base;
   _healthOkMs = Date.now();
+  // Persist last confirmed query for speculative market pre-fire on next scan
+  if (payload.query) _lastVisionQueryRef.current = payload.query;
 
   devLog("RUNSCAN VISION QUERY →", payload.query);
   devLog("RUNSCAN VISION CONFIDENCE →", payload.confidence);
+  devLog("RUNSCAN VISION SOURCE →", data?.visionSource || "openai");
 
   const enrichedVariants = [
     payload.query,
@@ -7192,6 +7278,8 @@ const addToWatchlist = (card) => {
   const q = card?.visionQuery || card?.itemName;
   const best = toNumber(card?.price);
   if (!q || !Number.isFinite(best)) return;
+  // Revenue: track watchlist add for demand graph
+  try { EventTracker.trackWatchlistAdd(q, best); } catch {}
   setWatchlist((prev) => {
 if (
   prev.some(
@@ -7540,6 +7628,13 @@ const hardStopTimer = setTimeout(() => {
   } catch {}
 }, HARD_SCAN_ABORT_MS);
 
+// Perceived-performance haptic: success pulse at 2.5s regardless of state
+// Psychologically signals the AI has processed something — reduces anxiety
+const successHapticTimer = setTimeout(() => {
+  if (!isLiveScan()) return;
+  try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+}, 2500);
+
   scanSessionRef.current = {
     photoUri,
     scannedPrice,
@@ -7566,6 +7661,17 @@ const hardStopTimer = setTimeout(() => {
   setSpatialVerdict(null);  // Clear previous verdict
   setSpatialLaser(true);    // Neon laser ON during scan pipeline
 
+  // Pre-warm: background precompute cache fetch for itemHint/last query
+  // Fires immediately — never awaited, never blocks the scan pipeline
+  const _preWarmQuery = (itemHint && itemHint.trim().length >= 3)
+    ? itemHint.trim()
+    : (_lastVisionQueryRef.current || null);
+  if (_preWarmQuery) {
+    fetch(`${resolvedApiBase}/precompute/query?q=${encodeURIComponent(_preWarmQuery)}`, {
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => {});
+  }
+
   // Immediately kill camera state and switch to results — no flicker back to camera/watchlist.
   // Direct tab swap (no requestAnimationFrame delay) prevents the scanning stack flash.
   if (tab !== "results") {
@@ -7587,14 +7693,19 @@ const hardStopTimer = setTimeout(() => {
 const visionTimeout = withTimeout(25000, controller);
 
 // ── Speculative market search — fires concurrently with vision ────────────
-// If user typed an itemHint, we can start fetching prices before vision returns.
-// When vision query matches the hint (≥50% token overlap), these results are
-// reused directly, saving the full sequential market request time.
+// Priority: itemHint → last confirmed vision query (from previous scan session)
+// When vision result matches speculative query (≥50% token overlap), results
+// are reused directly — saving the full sequential market request time.
 let _speculativeMarketPromise: Promise<any> | null = null;
-if (itemHint && itemHint.trim().length >= 3) {
+const _speculativeQuery =
+  (itemHint && itemHint.trim().length >= 3)
+    ? itemHint.trim().toLowerCase()
+    : (_lastVisionQueryRef.current || null);
+
+if (_speculativeQuery) {
   _speculativeMarketPromise = searchMarket(
     {
-      query: itemHint.trim().toLowerCase(),
+      query: _speculativeQuery,
       variants: [],
       visionConfidence: 0.5,
       visionIdentity: null,
@@ -7760,6 +7871,7 @@ if (!visionQuery || !String(visionQuery).trim()) {
     clearTimeout(softRetryTimer);
     clearTimeout(hardStopTimer);
     clearTimeout(subwayModeTimer);
+    clearTimeout(successHapticTimer);
     try { setSlowNetwork(false); } catch {}
     return runScan({
       photoUri,
@@ -8689,6 +8801,31 @@ scanWhy: [
   ebaySoldComps: marketEbaySoldComps,
   // Feature 5: local / hyperlocal comps
   localComps: marketLocalComps,
+
+  // ── Neural Bridge — normalized scan contract (services/scanService.ts) ────
+  /** Vision certainty 0–1, mirrors visionConfidence */
+  confidenceScore: visionConfidence,
+  /** Average market resale price across all live listings */
+  marketPrice: stats.avgMarket ?? cheapestPrice,
+  /**
+   * Flip profit margin %: (expectedProfit / scannedPrice) × 100.
+   * Positive = profitable flip. Null when price inputs are missing.
+   */
+  profitMargin: (() => {
+    if (!Number.isFinite(scannedPrice) || !(scannedPrice as number) || !Number.isFinite(expectedProfit)) return null;
+    return Math.round(((expectedProfit as number) / (scannedPrice as number)) * 100);
+  })(),
+  /**
+   * Preliminary authenticity flag from authenticityIntel.
+   * true = likely authentic, false = suspicious/fake, null = not assessed.
+   */
+  isAuthentic: (() => {
+    if (!marketAuthenticityIntel) return null;
+    const v = String(marketAuthenticityIntel?.verdict || "").toLowerCase();
+    if (v === "likely_authentic" || v === "authentic") return true;
+    if (["likely_fake", "suspicious", "counterfeit"].includes(v)) return false;
+    return null;
+  })(),
 };
 // =========================
 // SAVE + COUNT SCAN (ONCE)
@@ -8769,6 +8906,16 @@ setActiveResult(card);
 try {
   const vStr = String(card?.buyVerdict || "").toUpperCase();
   setSpatialVerdict(/GREAT|GOOD|FLIP/.test(vStr) ? "buy" : "pass");
+} catch {}
+
+// ── Revenue: track scan complete ──────────────────────────────────────────
+try {
+  EventTracker.trackScanComplete(
+    String(card?.scanId || Date.now()),
+    card?.itemName || card?.visionQuery || "",
+    Number.isFinite(Number(card?.price)) ? Number(card.price) : null,
+    card?.buyVerdict ?? null
+  );
 } catch {}
 
 // Track for Flip Fatigue + Rivalry + Dead Stock
@@ -8960,6 +9107,9 @@ setLastScan({
 goTab("results");
 stopLoadingSafely(reqId);
 
+// DS.ts success chime — synchronized with results reveal
+SoundEffect.chime();
+
 scanCacheRef.current.set(cacheKey, {
   timestamp: Date.now(),
   results: top3,
@@ -9029,6 +9179,7 @@ stopLoadingSafely(reqId);
   clearTimeout(softRetryTimer);
   clearTimeout(hardStopTimer);
   clearTimeout(subwayModeTimer);
+  clearTimeout(successHapticTimer);
   try { setSlowNetwork(false); } catch {}
 }
 };
@@ -11676,7 +11827,7 @@ transform: [
   </RNAnimated.View>
 ) : null}
 
-{/* CAMERA TAB (ALWAYS MOUNTED — NO REMOUNT DELAY) */}
+{/* CAMERA TAB — hard-isolated: display:'none' kills bleed after fade */}
 <RNAnimated.View
   style={[
     styles.tabFull,
@@ -11689,6 +11840,8 @@ transform: [
   bottom: 0,
   opacity: tab === "camera" ? tabFade : 0,
   zIndex: tab === "camera" ? 30 : -1,
+  display: tab === "camera" ? "flex" : "none",
+  overflow: "hidden",
 },
   ]}
 pointerEvents={tab === "camera" && tabInteractable ? "auto" : "none"}
@@ -11714,7 +11867,7 @@ pointerEvents={tab === "camera" && tabInteractable ? "auto" : "none"}
           facing={cameraFacing}
           enableTorch={torchOn}
           animatedProps={cameraAnimatedProps}
-          active={permission?.granted && cameraDelayedActive}
+          active={permission?.granted && cameraDelayedActive && tab === "camera"}
           onCameraReady={() => { setCameraReady(true); RNAnimated.timing(cameraReadyOp, { toValue: 1, duration: 200, useNativeDriver: true }).start(); }}
           barcodeScannerSettings={{
             barcodeTypes: [
@@ -11936,7 +12089,7 @@ onBarcodeScanned={(d) => {
   </RNAnimated.View>
 
 {/* BOTTOM CAMERA CONTROLS (ABOVE TAB BAR, NO OVERLAY) */}
-{!photo && !loadingResults ? (
+{tab === "camera" && !photo && !loadingResults ? (
   <RNAnimated.View
     style={[
       styles.cameraControlsRow,
@@ -12153,7 +12306,7 @@ onBarcodeScanned={(d) => {
 </View>
 
 </RNAnimated.View>
-{/* RESULTS SCREEN */}
+{/* RESULTS SCREEN — hard-isolated */}
 <RNAnimated.View
 style={[
   styles.full,
@@ -12183,6 +12336,8 @@ style={[
   ],
 
   zIndex: tab === "results" ? 30 : -1,
+  display: tab === "results" ? "flex" : "none",
+  overflow: "hidden",
 },
 ]}
   pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
@@ -12727,11 +12882,13 @@ style={[
   bottom: 0,
   opacity: tab === "history" ? tabFade : 0,
   zIndex: tab === "history" ? 30 : -1,
+  display: tab === "history" ? "flex" : "none",
+  overflow: "hidden",
 },
   ]}
 pointerEvents={tab === "history" && tabInteractable ? "box-none" : "none"}
 >
-  <View style={[styles.page, { backgroundColor: "transparent" }]} pointerEvents="box-none">
+  <View style={[styles.page, { backgroundColor: "transparent", paddingTop: TOP + 32 }]} pointerEvents="box-none">
           <Text style={styles.pageTitle}>Archive</Text>
           <View style={styles.savingsBox}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -12851,11 +13008,13 @@ pointerEvents={tab === "history" && tabInteractable ? "box-none" : "none"}
   bottom: 0,
   opacity: tab === "watchlist" ? tabFade : 0,
   zIndex: tab === "watchlist" ? 30 : -1,
+  display: tab === "watchlist" ? "flex" : "none",
+  overflow: "hidden",
 },
   ]}
 pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
 >
-  <View style={styles.page}>
+  <View style={[styles.page, { paddingTop: TOP + 32 }]}>
     <Text style={styles.pageTitle}>Watchlist</Text>
     <Text style={styles.subStatus}>Daily price re-check · drop alerts · trends</Text>
     <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
@@ -12898,6 +13057,105 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
         <Text style={styles.profileBtnText}>Export CSV</Text>
       </Pressable>
     </View>
+
+    {/* ── Autonomous Deal Hunter toggle ──────────────────────────────────────── */}
+    <Pressable
+      onPress={() => {
+        hapticSelect();
+        if (!watchlist.length) {
+          setSavedToast("Add items to your watchlist first");
+          return;
+        }
+        const next = !dealHunterActive;
+        setDealHunterActive(next);
+        setSavedToast(next ? "Deal Hunter ON — sweeping every 15 min" : "Deal Hunter OFF");
+      }}
+      style={({ pressed }) => [{
+        marginTop: 10,
+        borderRadius: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: dealHunterActive ? "rgba(80,255,150,0.35)" : "rgba(255,255,255,0.12)",
+        backgroundColor: dealHunterActive ? "rgba(80,255,150,0.07)" : "rgba(255,255,255,0.04)",
+        paddingHorizontal: 14,
+        paddingVertical: 11,
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 10,
+        opacity: pressed ? 0.8 : 1,
+      }]}
+    >
+      <Ionicons
+        name={dealHunterActive ? "radio" : "radio-outline"}
+        size={18}
+        color={dealHunterActive ? "#50ff96" : "rgba(255,255,255,0.5)"}
+      />
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: dealHunterActive ? "#50ff96" : "white", fontWeight: "700", fontSize: 13 }}>
+          {dealHunterActive ? "Autonomous Deal Hunter ACTIVE" : "Autonomous Deal Hunter"}
+        </Text>
+        <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginTop: 1 }}>
+          {dealHunterActive
+            ? `Monitoring ${watchlist.length} item${watchlist.length !== 1 ? "s" : ""} · alerts delivered silently`
+            : "Auto-scans watchlist every 15 min · flip alerts in background"}
+        </Text>
+      </View>
+      {dealAlerts.length > 0 && (
+        <View style={{ backgroundColor: "#50ff96", borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 }}>
+          <Text style={{ color: "#000", fontWeight: "800", fontSize: 11 }}>{dealAlerts.length}</Text>
+        </View>
+      )}
+    </Pressable>
+
+    {/* Deal Alerts feed */}
+    {dealAlerts.length > 0 && (
+      <View style={{ marginTop: 10, gap: 6 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }}>
+          <Ionicons name="flash" size={13} color="#50ff96" />
+          <Text style={{ color: "#50ff96", fontWeight: "700", fontSize: 12 }}>DEAL ALERTS</Text>
+          <Pressable
+            onPress={() => { hapticSelect(); setDealAlerts([]); }}
+            style={{ marginLeft: "auto" }}
+          >
+            <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11 }}>Clear all</Text>
+          </Pressable>
+        </View>
+        {dealAlerts.slice(0, 5).map((alert) => (
+          <Pressable
+            key={alert.id}
+            onPress={() => {
+              hapticSelect();
+              if (alert.url) Linking.openURL(alert.url).catch(() => {});
+            }}
+            style={({ pressed }) => [{
+              backgroundColor: "rgba(80,255,150,0.05)",
+              borderRadius: 10,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: "rgba(80,255,150,0.20)",
+              padding: 10,
+              flexDirection: "row" as const,
+              alignItems: "center" as const,
+              gap: 10,
+              opacity: pressed ? 0.8 : 1,
+            }]}
+          >
+            {alert.image ? (
+              <Image source={{ uri: alert.image }} style={{ width: 40, height: 40, borderRadius: 6 }} />
+            ) : (
+              <View style={{ width: 40, height: 40, borderRadius: 6, backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center", justifyContent: "center" }}>
+                <Ionicons name="pricetag-outline" size={18} color="rgba(255,255,255,0.3)" />
+              </View>
+            )}
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: "white", fontWeight: "700", fontSize: 12 }} numberOfLines={1}>{alert.query}</Text>
+              <Text style={{ color: "#50ff96", fontSize: 11, fontWeight: "600" }}>
+                {alert.verdict} · ${alert.bestPrice.toFixed(2)}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.3)" />
+          </Pressable>
+        ))}
+      </View>
+    )}
 
     {/* Feature 5: Hyperlocal pricing — zip code input */}
     <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,0.10)" }}>
@@ -13062,7 +13320,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
   </View>
 </RNAnimated.View>
 
- {/* PROFILE */}
+ {/* PROFILE — hard-isolated */}
 <RNAnimated.View
   style={[
     styles.tabFull,
@@ -13073,14 +13331,15 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
   left: 0,
   right: 0,
   bottom: 0,
-  opacity: tab === "profile" ? 1 : 0,
+  opacity: tab === "profile" ? tabFade : 0,
   zIndex: tab === "profile" ? 30 : -1,
+  display: tab === "profile" ? "flex" : "none",
+  overflow: "hidden",
 }
   ]}
   pointerEvents={tab === "profile" && tabInteractable ? "auto" : "none"}
 >
-  {/* ✅ fade ONLY the content, not the actual tab container */}
-  <RNAnimated.View style={{ flex: 1, opacity: tab === "profile" ? tabFade : 0 }}>
+  <RNAnimated.View style={{ flex: 1 }}>
 
 <ScrollView
   ref={profileScrollRef}
@@ -13095,7 +13354,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
   keyboardShouldPersistTaps="handled"
 >
 
-        <View style={styles.page}>
+        <View style={[styles.page, { paddingTop: TOP + 32 }]}>
 <View
   style={{
     marginTop: 18,
@@ -13186,7 +13445,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
 
 {/* Feature 14: Public Savings Profile Card */}
 {(savingsTotal > 0 || scansUsed > 0) ? (
-  <View style={{
+  <Reanimated.View entering={FadeInDown.duration(340).delay(120)} style={{
     marginTop: 14,
     padding: 16,
     borderRadius: 18,
@@ -13242,7 +13501,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
     <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 10, fontWeight: "500", textAlign: "center" }}>
       Tap Share to show your savings · powered by Evan AI
     </Text>
-  </View>
+  </Reanimated.View>
 ) : null}
 
 {/* Feature 1: P&L Tracker */}
@@ -16699,6 +16958,7 @@ function TabButton({ active, icon, onPress, badge = 0, dot = false }) {
         RNAnimated.spring(scaleAnim, { toValue: 1, damping: 14, stiffness: 300, mass: 0.9, useNativeDriver: true }).start();
       }}
       onPress={onPress}
+      style={{ width: 60, height: 50, alignItems: "center", justifyContent: "center" }}
     >
       <RNAnimated.View
         style={[
@@ -16719,7 +16979,7 @@ function TabButton({ active, icon, onPress, badge = 0, dot = false }) {
       >
         <Ionicons
           name={icon}
-          size={26}
+          size={28}
           color={active ? "white" : "rgba(255,255,255,0.55)"}
         />
         {/* Active glow dot */}
@@ -19453,9 +19713,9 @@ tabBar: {
   backgroundColor: "rgba(10,10,10,0.78)",
 },
 tabBtn: {
-    width: 56,
-    height: 46,
-    borderRadius: 16,
+    width: 60,
+    height: 50,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
   },
