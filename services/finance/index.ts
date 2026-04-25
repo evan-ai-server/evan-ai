@@ -34,6 +34,12 @@ export type {
   BusinessMetricsSnapshot,
 } from "./FinanceAnalytics";
 
-// React hook
+// React hooks
 export { useFinanceState } from "./useFinanceState";
 export type { UseFinanceStateResult } from "./useFinanceState";
+
+export { useUpgradeIntelligence } from "./useUpgradeIntelligence";
+export type {
+  UpgradeIntelligenceInput,
+  UpgradeIntelligenceResult,
+} from "./useUpgradeIntelligence";

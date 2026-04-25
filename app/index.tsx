@@ -29,6 +29,7 @@ import { AutonomousDealHunter, type DealAlert } from "../services/scanService";
 import { EventTracker } from "../services/revenue/EventTracker";
 import { FinanceAnalytics } from "../services/finance/FinanceAnalytics";
 import { useFinanceState } from "../services/finance/useFinanceState";
+import { useUpgradeIntelligence } from "../services/finance/useUpgradeIntelligence";
 
 import {
   View,
@@ -1328,6 +1329,8 @@ const {
   state:       financeState,
   recordScan:  recordFinanceScan,
 } = useFinanceState();
+// Track paywall impressions so upgrade intelligence can factor in fatigue
+const [paywallImpressions, setPaywallImpressions] = React.useState(0);
 
 // ─── SPATIAL ENGINE ──────────────────────────────────────────────────────────
 const {
@@ -3329,6 +3332,7 @@ useEffect(() => {
         isPro ? "plus" : "free",
         "scan_limit"
       );
+      setPaywallImpressions((n) => n + 1);
     } catch {}
 
     paywallPop.setValue(0);
@@ -3641,6 +3645,20 @@ useEffect(() => {
 
 
 const isFreeLimitReached = !hasUnlimited && scansUsed >= FREE_SCAN_LIMIT_SAFE;
+
+// ─── Upgrade Intelligence ─────────────────────────────────────────────────────
+const upgradeIntel = useUpgradeIntelligence({
+  financeState,
+  isPro,
+  scansToday:         scansUsed,
+  freeScanLimit:      FREE_SCAN_LIMIT_SAFE,
+  hitFreeLimitToday:  isFreeLimitReached,
+  watchlistCount:     (watchlist || []).length,
+  paywallImpressions,
+  daysSinceLastScan:  financeState.lastScanTs
+    ? Math.floor((Date.now() - financeState.lastScanTs) / 86_400_000)
+    : 0,
+});
 
 // -------------------------
 // ✅ Profile status label (prevents runtime crash)

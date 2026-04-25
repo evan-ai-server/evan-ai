@@ -17,6 +17,8 @@ import {
 import { BlurView } from "expo-blur";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C, SP, R, TY, IOS, fmtMoney } from "../design/DS";
+import { FinanceValueCard } from "../finance/FinanceValueCard";
+import { useFinanceState } from "../../services/finance/useFinanceState";
 
 interface ProfitDashboardProps {
   visible: boolean;
@@ -78,6 +80,7 @@ export default function ProfitDashboard({
 }: ProfitDashboardProps) {
   const insets = useSafeAreaInsets();
   const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const { state: financeState } = useFinanceState();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -139,12 +142,19 @@ export default function ProfitDashboard({
           <Text style={styles.emptyText}>
             After scanning an item, tap &quot;Bought it&quot; to start tracking your flips.
           </Text>
+          {/* Still show value moments even if no server P&L data */}
+          <View style={{ width: "100%", marginTop: SP.lg }}>
+            <FinanceValueCard state={financeState} maxMoments={2} />
+          </View>
         </View>
       ) : (
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          {/* ── Finance Value Summary (local, always available) */}
+          <FinanceValueCard state={financeState} maxMoments={3} />
+
           {/* ── Primary P&L row */}
           <View style={styles.statsGrid}>
             <StatBox
