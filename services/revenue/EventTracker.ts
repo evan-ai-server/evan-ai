@@ -94,16 +94,27 @@ class _EventTracker {
   }
 
   private async _postBatch(events: BehaviorEvent[]): Promise<void> {
-    try {
-      await fetch(`${this._apiBase}/analytics/event`, {
+    // Server /analytics/event accepts one event per request: { userId, event, payload, ts }
+    // Fire in parallel — max BATCH_SIZE concurrent requests, all fire-and-forget.
+    const requests = events.map((e) =>
+      fetch(`${this._apiBase}/analytics/event`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ events }),
+        body: JSON.stringify({
+          userId:  e.userId,
+          event:   e.type,
+          payload: {
+            scanId:   e.scanId,
+            itemName: e.itemName,
+            price:    e.price,
+            ...e.metadata,
+          },
+          ts: e.ts,
+        }),
         signal: AbortSignal.timeout(FLUSH_TIMEOUT_MS),
-      });
-    } catch {
-      // Non-critical — analytics loss is acceptable
-    }
+      }).catch(() => {})  // individual failure is acceptable
+    );
+    await Promise.allSettled(requests);
   }
 
   // ── Convenience helpers ───────────────────────────────────────────────────
