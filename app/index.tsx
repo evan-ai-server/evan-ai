@@ -27,6 +27,8 @@ import { SingularityPipelineModal } from "../components/onboarding/SingularityPi
 import { useSpatialZone, type ZoneKey } from "../components/spatial/SpatialContext";
 import { AutonomousDealHunter, type DealAlert } from "../services/scanService";
 import { EventTracker } from "../services/revenue/EventTracker";
+import { FinanceAnalytics } from "../services/finance/FinanceAnalytics";
+import { useFinanceState } from "../services/finance/useFinanceState";
 
 import {
   View,
@@ -1321,6 +1323,12 @@ function AppInner({
   intelState,
   setIntelState,
 }: any) {
+// ─── FINANCE STATE ────────────────────────────────────────────────────────────
+const {
+  state:       financeState,
+  recordScan:  recordFinanceScan,
+} = useFinanceState();
+
 // ─── SPATIAL ENGINE ──────────────────────────────────────────────────────────
 const {
   setZone: setSpatialZone, setVerdict: setSpatialVerdict, setLaserActive: setSpatialLaser,
@@ -3052,6 +3060,18 @@ useEffect(() => {
   EventTracker.init(resolvedApiBase || SAFE_API_BASE, userId ?? null);
 }, [resolvedApiBase, userId]);
 
+// ── FinanceAnalytics init — load persisted events + start session ─────────────
+useEffect(() => {
+  FinanceAnalytics.load().catch(() => {});
+}, []);
+useEffect(() => {
+  if (!userId) return;
+  const tier = isPro ? "plus" : "free";
+  FinanceAnalytics.startSession(userId, tier);
+  return () => { FinanceAnalytics.endSession(); };
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [userId]); // start once per userId, not on every isPro change
+
 useEffect(() => {
   const hunter = _dealHunterRef.current;
   if (!hunter) return;
@@ -3302,6 +3322,15 @@ const paywallPop = useRef(new RNAnimated.Value(0)).current;
 
 useEffect(() => {
   if (showPaywall) {
+    // ── Finance Analytics: paywall impression ────────────────────────────
+    try {
+      FinanceAnalytics.recordPaywallShown(
+        userId ?? null,
+        isPro ? "plus" : "free",
+        "scan_limit"
+      );
+    } catch {}
+
     paywallPop.setValue(0);
     RNAnimated.timing(paywallPop, {
       toValue: 1,
@@ -8910,11 +8939,34 @@ try {
 
 // ── Revenue: track scan complete ──────────────────────────────────────────
 try {
-  EventTracker.trackScanComplete(
-    String((card as any)?.scanId || Date.now()),
-    card?.itemName || card?.visionQuery || "",
-    Number.isFinite(Number(card?.price)) ? Number(card.price) : null,
-    card?.buyVerdict ?? null
+  const _scanId   = String((card as any)?.scanId || Date.now());
+  const _itemName = card?.itemName || card?.visionQuery || "";
+  const _price    = Number.isFinite(Number(card?.price)) ? Number(card.price) : null;
+  const _verdict  = card?.buyVerdict ?? null;
+  const _saved    = Number.isFinite(card?.savedAmount) ? Number(card.savedAmount) : 0;
+  const _flip     = Number.isFinite(card?.expectedProfit) ? Number(card.expectedProfit) : null;
+  const _tier     = isPro ? ("plus" as const) : ("free" as const);
+
+  EventTracker.trackScanComplete(_scanId, _itemName, _price, _verdict);
+
+  // ── Finance Layer: record into persistent finance state ────────────────
+  recordFinanceScan(
+    _saved,
+    _flip,
+    _verdict,
+    Number.isFinite(card?.scannedPrice) ? Number(card.scannedPrice) : null
+  );
+
+  // ── Finance Analytics: funnel event ───────────────────────────────────
+  FinanceAnalytics.recordScanCompleted(
+    userId ?? null,
+    _scanId,
+    _tier,
+    _itemName,
+    _price,
+    _saved,
+    _flip,
+    _verdict
   );
 } catch {}
 
@@ -14644,10 +14696,12 @@ safeOpenUrl(activeResult.buyLink, activeResult.itemName || "Listing" );
 <SubscriptionModal
   visible={profileModal === "subscription"}
   onClose={() => setProfileModal(null)}
-  onPurchased={(isPro) => {
-    if (isPro) {
+  onPurchased={(newIsPro) => {
+    if (newIsPro) {
       setIsPro(true);
       setIsSignedIn(true);
+      // ── Finance Analytics: purchase conversion ────────────────────────
+      try { FinanceAnalytics.recordPurchased(userId ?? null, "subscription"); } catch {}
     }
     setProfileModal(null);
   }}
@@ -14987,10 +15041,12 @@ const store =
 <SubscriptionModal
   visible={showPaywall}
   onClose={() => setShowPaywall(false)}
-  onPurchased={(isPro) => {
-    if (isPro) {
+  onPurchased={(newIsPro) => {
+    if (newIsPro) {
       setIsPro(true);
       setIsSignedIn(true);
+      // ── Finance Analytics: purchase conversion (from scan-limit paywall) ─
+      try { FinanceAnalytics.recordPurchased(userId ?? null, "plus"); } catch {}
     }
     setShowPaywall(false);
   }}
