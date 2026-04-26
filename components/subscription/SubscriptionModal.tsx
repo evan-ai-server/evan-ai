@@ -387,7 +387,6 @@ export function SubscriptionModal({
         stiffness: 180,
         mass: 1.1,
         overshootClamping: false,
-        restDisplacementThreshold: 0.5,
       });
       backdropOp.value = withTiming(1, { duration: 320 });
     }

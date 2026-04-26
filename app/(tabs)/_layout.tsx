@@ -1,6 +1,7 @@
 import React from "react";
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { HapticTab } from "../../components/haptic-tab";
 
 export default function TabsLayout() {
   return (
@@ -8,20 +9,24 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         freezeOnBlur: true,
+        lazy: true,
+        tabBarButton: HapticTab,
         tabBarStyle: {
           backgroundColor: "#0b0b0f",
           borderTopColor: "rgba(255,255,255,0.08)",
         },
         tabBarActiveTintColor: "#ffffff",
         tabBarInactiveTintColor: "rgba(255,255,255,0.55)",
+        // Lock tab buttons to exact dimensions — prevents layout reflow
+        tabBarItemStyle: { width: 60, height: 50 },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: "Home",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="home" color={color} size={size} />
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="home" color={color} size={28} />
           ),
         }}
       />
@@ -30,8 +35,8 @@ export default function TabsLayout() {
         name="explore"
         options={{
           title: "Explore",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="paper-plane" color={color} size={size} />
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="paper-plane" color={color} size={28} />
           ),
         }}
       />
@@ -40,8 +45,8 @@ export default function TabsLayout() {
         name="history"
         options={{
           title: "History",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="time-outline" color={color} size={size} />
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="time-outline" color={color} size={28} />
           ),
         }}
       />
@@ -50,8 +55,8 @@ export default function TabsLayout() {
         name="profit"
         options={{
           title: "Profit",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="bar-chart-outline" color={color} size={size} />
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="bar-chart-outline" color={color} size={28} />
           ),
         }}
       />

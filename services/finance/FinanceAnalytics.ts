@@ -240,6 +240,35 @@ class _FinanceAnalytics {
     this.record("listing_clicked", { userId, tier, itemName, price });
   }
 
+  /**
+   * Record Deal Engine _meta for monetization tracking.
+   * Fire-and-forget — persists to AsyncStorage for dashboard reads.
+   */
+  recordDealMeta(
+    scanId: string,
+    potentialCommission: number,
+    roiPercentage: number,
+    processingMs: number
+  ): void {
+    AsyncStorage.getItem("EVAN_DEAL_META_V1")
+      .then((raw) => {
+        const entries: any[] = raw ? JSON.parse(raw) : [];
+        entries.unshift({
+          scanId,
+          potentialCommission,
+          roiPercentage,
+          processingMs,
+          ts: Date.now(),
+        });
+        // Keep last 200 entries
+        return AsyncStorage.setItem(
+          "EVAN_DEAL_META_V1",
+          JSON.stringify(entries.slice(0, 200))
+        );
+      })
+      .catch(() => {});
+  }
+
   // ── Metrics computation ──────────────────────────────────────────────────────
 
   /**

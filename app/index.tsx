@@ -26,6 +26,7 @@ import { OnboardingFlow, type SurveyAnswers } from "../components/onboarding/Onb
 import { SingularityPipelineModal } from "../components/onboarding/SingularityPipeline";
 import { useSpatialZone, type ZoneKey } from "../components/spatial/SpatialContext";
 import { AutonomousDealHunter, type DealAlert } from "../services/scanService";
+import { runDealEngine, type DealResult } from "../services/dealEngine";
 import { EventTracker } from "../services/revenue/EventTracker";
 import { FinanceAnalytics } from "../services/finance/FinanceAnalytics";
 import { useFinanceState } from "../services/finance/useFinanceState";
@@ -8874,6 +8875,45 @@ scanWhy: [
     return null;
   })(),
 };
+
+// ── Deal Engine: two-phase verdict + guardrails + _meta ─────────────────────
+try {
+  const dealResult: DealResult = runDealEngine({
+    scannedPrice: Number.isFinite(scannedPrice) ? scannedPrice : null,
+    cheapestPrice: Number.isFinite(cheapestPrice) ? cheapestPrice : null,
+    avgMarket: stats.avgMarket ?? null,
+    spreadLow: spread?.low ?? null,
+    spreadHigh: spread?.high ?? null,
+    estimatedResale: Number.isFinite(expectedResale) ? expectedResale : null,
+    expectedProfit: Number.isFinite(expectedProfit) ? expectedProfit : null,
+    visionConfidence,
+    visionSource: visionIdentity?.source ?? null,
+    totalMatches: combined.length,
+    store: cheapest.source || null,
+    category,
+    buyScore: insights.buyScore,
+    buyVerdict: insights.buyVerdict,
+    resaleVelocity: insights.resaleVelocity,
+    liquidity,
+    dataTimestamp: Date.now(),
+  });
+
+  (card as any).dealResult = dealResult;
+
+  // Upgrade verdict when Deal Engine has higher conviction than heuristic
+  if (
+    dealResult.fast.verdict === "BUY" &&
+    card.buyVerdict !== "GREAT FLIP"
+  ) {
+    (card as any).buyVerdict = insights.buyScore >= 82 ? "GREAT FLIP" : "GOOD BUY";
+  } else if (
+    dealResult.fast.verdict === "PASS" &&
+    card.buyVerdict !== "RISKY"
+  ) {
+    (card as any).buyVerdict = "RISKY";
+  }
+} catch {}
+
 // =========================
 // SAVE + COUNT SCAN (ONCE)
 // =========================
@@ -8986,6 +9026,17 @@ try {
     _flip,
     _verdict
   );
+
+  // ── Deal Engine _meta: commission/ROI tracking ─────────────────────────
+  const _dealMeta = (card as any)?.dealResult?._meta;
+  if (_dealMeta) {
+    FinanceAnalytics.recordDealMeta?.(
+      _scanId,
+      _dealMeta.potential_commission,
+      _dealMeta.roi_percentage,
+      _dealMeta.processing_ms
+    );
+  }
 } catch {}
 
 // Track for Flip Fatigue + Rivalry + Dead Stock
