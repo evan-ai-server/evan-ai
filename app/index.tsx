@@ -26,11 +26,16 @@ import { OnboardingFlow, type SurveyAnswers } from "../components/onboarding/Onb
 import { SingularityPipelineModal } from "../components/onboarding/SingularityPipeline";
 import { useSpatialZone, type ZoneKey } from "../components/spatial/SpatialContext";
 import { AutonomousDealHunter, type DealAlert } from "../services/scanService";
-import { runDealEngine, type DealResult } from "../services/dealEngine";
+import { runDealEngine, computePaywallSignal, type DealResult, type HotDeal, type PaywallSignal, type PaywallTriggerReason, type ViralHook } from "../services/dealEngine";
+import { computeValueMirror, updateSessionMomentum, emptySessionMomentum, type SessionMomentum, type ValueMirrorResult } from "../services/finance/ValueMirror";
+import type { AspirationContext } from "../components/subscription/SubscriptionModal";
+import { DopamineLayer } from "../components/results/DopamineLayer";
 import { EventTracker } from "../services/revenue/EventTracker";
 import { FinanceAnalytics } from "../services/finance/FinanceAnalytics";
 import { useFinanceState } from "../services/finance/useFinanceState";
 import { useUpgradeIntelligence } from "../services/finance/useUpgradeIntelligence";
+import { MarketTruthService } from "../services/MarketTruthService";
+import { TuningService } from "../services/TuningService";
 
 import {
   View,
@@ -970,7 +975,7 @@ const TUTORIAL_STEPS = [
     accentColor: "#82c8ff",
     subtitle: "FREE TO START",
     title: "You're ready\nto go.",
-    body: "Start with 2 free scans per day — no credit card, no commitment. Upgrade to Pro for unlimited scans, price alerts, and watchlist sync.",
+    body: "Start with 3 free scans per day — no credit card, no commitment. Upgrade to Pro for unlimited scans, price alerts, and watchlist sync.",
   },
 ] as const;
 
@@ -1419,7 +1424,7 @@ const I_STEPS = useMemo(() => [
     tab: "camera" as string | null,
     title: "Track your\ndeal intelligence.",
     subtitle: "SCAN COUNTER",
-    body: "Your scan count and Pro status live here. 2 free scans per day, resets at midnight. Tap to upgrade for unlimited access.",
+    body: "Your scan count and Pro status live here. 3 free scans per day, resets at midnight. Tap to upgrade for unlimited access.",
     accentColor: "#50ff96",
     iconColor: "#50ff96",
     icon: "pulse-outline" as const,
@@ -1705,6 +1710,7 @@ const tabFade = useRef(new RNAnimated.Value(1)).current; // ✅ never start hidd
   const [showRetryWhileLoading, setShowRetryWhileLoading] = useState(false);
   const [slowNetwork, setSlowNetwork] = useState(false);
   const [activeResult, setActiveResult] = useState(null);
+  const [activeHotDeal, setActiveHotDeal] = useState<HotDeal | null>(null);
   const activeScanReqIdRef = useRef<number>(0);
 
 const loadingOpacity = useSharedValue(0);
@@ -2034,10 +2040,10 @@ const [scanResetAt, setScanResetAt] = useState<string | null>(null); // ISO stri
 // isOnline / pendingCount / offlineItems now come from useNetworkStatus + useOfflineQueue hooks
 // (declared after resolvedApiBase below)
 
-// Global FREE_SCAN_LIMIT — 2 free scans per day (server-side enforced)
+// Global FREE_SCAN_LIMIT — 3 free scans per day (server-side enforced)
 // ✅ crash-proof: FREE_SCAN_LIMIT may be declared later in this file
 
-const FREE_SCAN_LIMIT_SAFE = 2;
+const FREE_SCAN_LIMIT_SAFE = 3;
 
 const freeScansRemaining = Math.max(0, FREE_SCAN_LIMIT_SAFE + (bonusScans || 0) - scansUsed);
 const hasUnlimited = isPro === true;
@@ -3067,6 +3073,8 @@ useEffect(() => {
 // ── FinanceAnalytics init — load persisted events + start session ─────────────
 useEffect(() => {
   FinanceAnalytics.load().catch(() => {});
+  // ── SITT init — load truth buffer + dynamic thresholds ──────────────────
+  MarketTruthService.load().then(() => TuningService.load()).catch(() => {});
 }, []);
 useEffect(() => {
   if (!userId) return;
@@ -3303,6 +3311,9 @@ const [priceChangeBanner, setPriceChangeBanner] = useState(null);
   const authBtnPulse = useRef(new RNAnimated.Value(1)).current;
   const [authOtpShort, setAuthOtpShort] = useState(true);
   const [showPaywall, setShowPaywall] = useState(false);
+  // ── Aspiration Engine state ────────────────────────────────────────────
+  const [aspirationCtx, setAspirationCtx] = useState<AspirationContext | null>(null);
+  const sessionMomentumRef = useRef<SessionMomentum>(emptySessionMomentum());
   // Auth button pulse — starts looping while authSending, resets otherwise
   useEffect(() => {
     authBtnPulse.stopAnimation();
@@ -3326,12 +3337,14 @@ const paywallPop = useRef(new RNAnimated.Value(0)).current;
 
 useEffect(() => {
   if (showPaywall) {
-    // ── Finance Analytics: paywall impression ────────────────────────────
+    // ── Finance Analytics: paywall impression with A/B variant ───────────
     try {
+      const variant = aspirationCtx?.triggerType ?? "scan_limit";
       FinanceAnalytics.recordPaywallShown(
         userId ?? null,
         isPro ? "plus" : "free",
-        "scan_limit"
+        variant === "NONE" ? "scan_limit" : "aspiration",
+        variant,
       );
       setPaywallImpressions((n) => n + 1);
     } catch {}
@@ -4207,6 +4220,17 @@ const handlePlMarkSold = (id: string, soldPrice: number) => {
       const soldFlip = updated.find((f) => f.id === id);
       if (soldFlip) Promise.resolve().then(() => syncFlipToServer(soldFlip, userId!));
     }
+    // ── SITT: Feed realized outcome into MarketTruthService ──────────────
+    const flip = updated.find((f) => f.id === id);
+    if (flip && flip.soldPrice != null) {
+      MarketTruthService.recordOutcome({
+        scanId: flip.id,
+        boughtPrice: flip.boughtPrice,
+        soldPrice: flip.soldPrice,
+        platform: flip.platform,
+        boughtAt: new Date(flip.date).getTime(),
+      }).catch(() => {});
+    }
     return updated;
   });
 };
@@ -4395,6 +4419,7 @@ const runBarcodeLookup = async (code: string) => {
   setLoadingPhotoUri(null);
   setShowRetryWhileLoading(false);
   setActiveResult(null);
+  setActiveHotDeal(null);
   setResults([]);
   setSeeMoreListings([]);
   setLastScan(null);
@@ -7694,6 +7719,7 @@ const successHapticTimer = setTimeout(() => {
 
   setUiError(null);
   setActiveResult(null);
+  setActiveHotDeal(null);
   setResults([]);
   setSeeMoreListings([]);
   setLastScan(null);
@@ -8900,6 +8926,58 @@ try {
 
   (card as any).dealResult = dealResult;
 
+  // ── Hot Deal Layer: surface emotional tier ─────────────────────────────
+  (card as any).hotDeal = dealResult.hot_deal;
+  setActiveHotDeal(dealResult.hot_deal);
+
+  // ── Viral Hook: attach share text for HOT+ deals ─────────────────────
+  if (dealResult.viralHook) {
+    (card as any).viralHook = dealResult.viralHook;
+  }
+
+  // ── Paywall Signal: quantify opportunity cost for free users ──────────
+  if (!isPro) {
+    const paywallSig = computePaywallSignal(
+      scansUsed,
+      FREE_SCAN_LIMIT_SAFE,
+      dealResult.deep.expected_profit,
+      dealResult.hot_deal.tier,
+    );
+    (card as any).paywallSignal = paywallSig;
+
+    // ── Aspiration Engine: momentum-based paywall trigger ──────────────
+    sessionMomentumRef.current = updateSessionMomentum(
+      sessionMomentumRef.current,
+      dealResult.hot_deal.tier,
+      dealResult.deep.expected_profit,
+      Math.max(0, FREE_SCAN_LIMIT_SAFE - scansUsed),
+    );
+
+    const valueMirror = computeValueMirror(
+      dealResult.hot_deal.tier,
+      dealResult.deep.expected_profit,
+      sessionMomentumRef.current,
+      false,
+      scansUsed,
+      FREE_SCAN_LIMIT_SAFE,
+    );
+
+    if (valueMirror.shouldTrigger && paywallSig.isAspirationTrigger) {
+      // Fire aspiration paywall after results render (800ms delay)
+      const aspirationData: AspirationContext = {
+        winFrame: valueMirror.winFrameText,
+        gapFrame: valueMirror.gapFrameText,
+        lossFrame: valueMirror.lossFrameText,
+        lastProfit: dealResult.deep.expected_profit,
+        triggerType: valueMirror.trigger,
+      };
+      setTimeout(() => {
+        setAspirationCtx(aspirationData);
+        setShowPaywall(true);
+      }, 1800); // show after results land + dopamine layer fires
+    }
+  }
+
   // Upgrade verdict when Deal Engine has higher conviction than heuristic
   if (
     dealResult.fast.verdict === "BUY" &&
@@ -9035,6 +9113,17 @@ try {
       _dealMeta.potential_commission,
       _dealMeta.roi_percentage,
       _dealMeta.processing_ms
+    );
+  }
+
+  // ── Hot Deal Layer: tier engagement tracking ────────────────────────────
+  const _hotDeal = (card as any)?.hotDeal;
+  if (_hotDeal?.tier) {
+    FinanceAnalytics.recordHotDealTier(
+      _scanId,
+      _hotDeal.tier,
+      _hotDeal.score,
+      _hotDeal.isTriggered
     );
   }
 } catch {}
@@ -14554,7 +14643,38 @@ ${shareLink}`
 >
   {String(activeResult?.buyVerdict || "GOOD BUY").toUpperCase()}
 </Text>
+{activeHotDeal && activeHotDeal.tier !== "COLD" ? (
+  <View style={{
+    marginLeft: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    backgroundColor: activeHotDeal.tier === "VIRAL" ? "rgba(255,80,0,0.18)"
+      : activeHotDeal.tier === "HOT" ? "rgba(255,185,0,0.14)"
+      : "rgba(255,255,255,0.08)",
+    borderColor: activeHotDeal.tier === "VIRAL" ? "rgba(255,120,0,0.50)"
+      : activeHotDeal.tier === "HOT" ? "rgba(255,200,0,0.40)"
+      : "rgba(255,255,255,0.16)",
+  }}>
+    <Text style={{
+      fontWeight: "900",
+      fontSize: 11,
+      letterSpacing: 0.8,
+      color: activeHotDeal.tier === "VIRAL" ? "rgba(255,180,100,1)"
+        : activeHotDeal.tier === "HOT" ? "rgba(255,210,80,1)"
+        : "rgba(255,255,255,0.78)",
+    }}>
+      {activeHotDeal.tier === "VIRAL" ? "\uD83D\uDD25 VIRAL FLIP" : activeHotDeal.tier === "HOT" ? "\uD83D\uDD25 HIGH DEMAND" : "WARM"}
+    </Text>
+  </View>
+) : null}
 </View>
+{activeHotDeal?.hooks?.loss_framing && activeHotDeal.tier !== "COLD" ? (
+  <Text style={{ color: "rgba(255,255,255,0.68)", fontWeight: "700", fontSize: 12, marginBottom: 6 }}>
+    {activeHotDeal.hooks.loss_framing}
+  </Text>
+) : null}
 <View style={styles.confidenceBreakdown}>
   {getConfidenceBreakdown({
     confidence: activeResult.visionConfidence,
@@ -15106,20 +15226,21 @@ const store =
   </View>
 </Modal>
 
-{/* PAYWALL MODAL — routes directly to SubscriptionModal */}
+{/* PAYWALL MODAL — Aspiration Engine + SubscriptionModal */}
 <SubscriptionModal
   visible={showPaywall}
-  onClose={() => setShowPaywall(false)}
+  onClose={() => { setShowPaywall(false); setAspirationCtx(null); }}
   onPurchased={(newIsPro) => {
     if (newIsPro) {
       setIsPro(true);
       setIsSignedIn(true);
-      // ── Finance Analytics: purchase conversion (from scan-limit paywall) ─
       try { FinanceAnalytics.recordPurchased(userId ?? null, "plus"); } catch {}
     }
     setShowPaywall(false);
+    setAspirationCtx(null);
   }}
   initialPlan="plus"
+  aspiration={aspirationCtx}
 />
 
       {/* PROFILE MODAL: REVIEW */}
@@ -16855,6 +16976,8 @@ const snapshot = {
 </Modal>
 </View>
   </RNAnimated.View>
+  {/* ── Hot Deal Dopamine Layer (overlay, no layout shift) ────────────── */}
+  <DopamineLayer hotDeal={activeHotDeal} />
   </GestureHandlerRootView>
 );
 }
@@ -18519,7 +18642,7 @@ const WATCH_POLL_LAST_KEY = "EVAN_WATCH_POLL_LAST_V1";
 const REF_REWARD_FREE_SCANS = 3;
 
 // ✅ unify scan-limit naming (prevents crashes)
-const FREE_SCAN_LIMIT_FALLBACK = 2;
+const FREE_SCAN_LIMIT_FALLBACK = 3;
 
 const REFERRAL_CODE_POOL = [
   "EVAN7K3Q9M2A",
@@ -19592,7 +19715,7 @@ loadingCard: {
     backgroundColor: "rgba(255,255,255,0.06)",
   },
   secondaryActionText: { color: "white", fontWeight: "900" },
-verdictRow: { marginBottom: 10 },
+verdictRow: { marginBottom: 10, flexDirection: "row", alignItems: "center", flexWrap: "wrap" },
 verdictChip: {
   alignSelf: "flex-start",
   paddingVertical: 8,

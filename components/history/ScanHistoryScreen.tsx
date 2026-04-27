@@ -26,6 +26,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C, SP, R, TY, IOS, verdictStyle, fmtMoney } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
+import { MarketTruthService } from "../../services/MarketTruthService";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -111,6 +112,8 @@ function OutcomeSheet({
   userId,
   itemName,
   apiBase,
+  purchasePrice,
+  boughtAt,
   onClose,
   onComplete,
 }: {
@@ -119,6 +122,10 @@ function OutcomeSheet({
   userId: string;
   itemName: string | null;
   apiBase: string;
+  /** Original purchase price — used by SITT to record realized outcome */
+  purchasePrice: number | null;
+  /** When the item was bought (ms since epoch) — used to compute hold time */
+  boughtAt: number | null;
   onClose: () => void;
   onComplete: () => void;
 }) {
@@ -160,13 +167,23 @@ function OutcomeSheet({
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error ?? `Server error ${res.status}`);
       }
+      // ── SITT: Feed realized outcome into MarketTruthService ──────────────
+      if (status === "SOLD" && purchasePrice != null && purchasePrice > 0) {
+        MarketTruthService.recordOutcome({
+          scanId,
+          boughtPrice: purchasePrice,
+          soldPrice: parseFloat(soldPrice),
+          platform,
+          boughtAt: boughtAt ?? Date.now(),
+        }).catch(() => {});
+      }
       onComplete();
       onClose();
     } catch (err: any) {
       setError(err?.message ?? "Couldn't save — try again");
       setLoading(false);
     }
-  }, [scanId, userId, apiBase, status, soldPrice, platform, fees, shipping, onComplete, onClose]);
+  }, [scanId, userId, apiBase, status, soldPrice, platform, fees, shipping, purchasePrice, boughtAt, onComplete, onClose]);
 
   if (!visible) return null;
 
@@ -394,6 +411,8 @@ function ScanCard({
           userId={userId}
           itemName={item.itemName}
           apiBase={apiBase}
+          purchasePrice={item.source?.purchasePrice ?? null}
+          boughtAt={item.source?.capturedAt ?? item.ts ?? null}
           onClose={() => setOutcomeOpen(false)}
           onComplete={() => { setOutcomeOpen(false); onOutcomeRecorded(); }}
         />
