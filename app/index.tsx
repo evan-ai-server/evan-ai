@@ -26,9 +26,7 @@ import { OnboardingFlow, type SurveyAnswers } from "../components/onboarding/Onb
 import { SingularityPipelineModal } from "../components/onboarding/SingularityPipeline";
 import { useSpatialZone, type ZoneKey } from "../components/spatial/SpatialContext";
 import { AutonomousDealHunter, type DealAlert } from "../services/scanService";
-import { runDealEngine, computePaywallSignal, type DealResult, type HotDeal, type PaywallSignal, type PaywallTriggerReason, type ViralHook } from "../services/dealEngine";
-import { computeValueMirror, updateSessionMomentum, emptySessionMomentum, type SessionMomentum, type ValueMirrorResult } from "../services/finance/ValueMirror";
-import type { AspirationContext } from "../components/subscription/SubscriptionModal";
+// Deal engine types flow through brain store + orchestrator — no direct import needed
 import { DopamineLayer } from "../components/results/DopamineLayer";
 import { EventTracker } from "../services/revenue/EventTracker";
 import { FinanceAnalytics } from "../services/finance/FinanceAnalytics";
@@ -36,6 +34,8 @@ import { useFinanceState } from "../services/finance/useFinanceState";
 import { useUpgradeIntelligence } from "../services/finance/useUpgradeIntelligence";
 import { MarketTruthService } from "../services/MarketTruthService";
 import { TuningService } from "../services/TuningService";
+import { useEvanBrain, selectHotSignal, selectPaywallVisible, selectAspirationContext } from "../hooks/useEvanBrain";
+import { useEvanOrchestrator } from "../hooks/useEvanOrchestrator";
 
 import {
   View,
@@ -1710,7 +1710,11 @@ const tabFade = useRef(new RNAnimated.Value(1)).current; // ✅ never start hidd
   const [showRetryWhileLoading, setShowRetryWhileLoading] = useState(false);
   const [slowNetwork, setSlowNetwork] = useState(false);
   const [activeResult, setActiveResult] = useState(null);
-  const [activeHotDeal, setActiveHotDeal] = useState<HotDeal | null>(null);
+  // ── Brain store subscriptions (single source of truth) ──────────────────
+  const brainHotSignal = useEvanBrain(selectHotSignal);
+  const brainPaywallVisible = useEvanBrain(selectPaywallVisible);
+  const brainAspirationCtx = useEvanBrain(selectAspirationContext);
+
   const activeScanReqIdRef = useRef<number>(0);
 
 const loadingOpacity = useSharedValue(0);
@@ -2822,7 +2826,7 @@ if (profileModalRef.current) {
     }
 
     if (showPaywallRef.current) {
-      setShowPaywall(false);
+      useEvanBrain.getState().hidePaywall();
       return true;
     }
 
@@ -3074,7 +3078,10 @@ useEffect(() => {
 useEffect(() => {
   FinanceAnalytics.load().catch(() => {});
   // ── SITT init — load truth buffer + dynamic thresholds ──────────────────
-  MarketTruthService.load().then(() => TuningService.load()).catch(() => {});
+  MarketTruthService.load().then(() => TuningService.load()).then(() => {
+    // Mirror SITT thresholds into the brain store for UI visibility
+    useEvanBrain.getState().setTuningThresholds(TuningService.getThresholds());
+  }).catch(() => {});
 }, []);
 useEffect(() => {
   if (!userId) return;
@@ -3310,10 +3317,7 @@ const [priceChangeBanner, setPriceChangeBanner] = useState(null);
   // Auth button pulse animation — pulses while sending, dims when disabled
   const authBtnPulse = useRef(new RNAnimated.Value(1)).current;
   const [authOtpShort, setAuthOtpShort] = useState(true);
-  const [showPaywall, setShowPaywall] = useState(false);
-  // ── Aspiration Engine state ────────────────────────────────────────────
-  const [aspirationCtx, setAspirationCtx] = useState<AspirationContext | null>(null);
-  const sessionMomentumRef = useRef<SessionMomentum>(emptySessionMomentum());
+  // showPaywall, aspirationCtx, sessionMomentum → brain store (single source of truth)
   // Auth button pulse — starts looping while authSending, resets otherwise
   useEffect(() => {
     authBtnPulse.stopAnimation();
@@ -3336,10 +3340,10 @@ const paywallPop = useRef(new RNAnimated.Value(0)).current;
 
 
 useEffect(() => {
-  if (showPaywall) {
+  if (brainPaywallVisible) {
     // ── Finance Analytics: paywall impression with A/B variant ───────────
     try {
-      const variant = aspirationCtx?.triggerType ?? "scan_limit";
+      const variant = brainAspirationCtx?.triggerType ?? "scan_limit";
       FinanceAnalytics.recordPaywallShown(
         userId ?? null,
         isPro ? "plus" : "free",
@@ -3364,7 +3368,7 @@ useEffect(() => {
       useNativeDriver: true,
     }).start();
   }
-}, [showPaywall, paywallPop]);
+}, [brainPaywallVisible, paywallPop]);
 const [_showHowDifferent, _setShowHowDifferent] = useState(false);
 // ✅ PREVIEW LAYOUT (prevents previewBottom crash)
 // keeps the buttons above the keyboard
@@ -3497,8 +3501,8 @@ useEffect(() => {
   haggleOpenRef.current = haggleOpen;
 }, [haggleOpen]);
 useEffect(() => {
-  showPaywallRef.current = showPaywall;
-}, [showPaywall]);
+  showPaywallRef.current = brainPaywallVisible;
+}, [brainPaywallVisible]);
 useEffect(() => {
   freePassInfoOpenRef.current = freePassInfoOpen;
 }, [freePassInfoOpen]);
@@ -3551,6 +3555,8 @@ useEffect(() => {
 
   if (tab === "camera") {
     setCameraDelayedActive(true);
+    // ── Brain: camera is live — SITT reads isSITTAllowed() from brain store
+    useEvanBrain.getState().setCameraActive(true);
     if (cameraReady) {
       // Camera was warm — restore overlay to transparent immediately
       cameraReadyOp.setValue(1);
@@ -3567,6 +3573,8 @@ useEffect(() => {
   } else {
     // Leaving camera: hide overlay, defer camera deactivation
     cameraReadyOp.setValue(0);
+    // ── Brain: camera inactive — SITT reads isSITTAllowed() from brain store
+    useEvanBrain.getState().setCameraActive(false);
     const t = setTimeout(() => {
       setCameraDelayedActive(false);
       setCameraReady(false);
@@ -3659,6 +3667,13 @@ useEffect(() => {
 
 
 const isFreeLimitReached = !hasUnlimited && scansUsed >= FREE_SCAN_LIMIT_SAFE;
+
+// ── Orchestrator: single entry point for scan pipeline ────────────────────────
+const orchestrator = useEvanOrchestrator({
+  isPro,
+  scansUsed,
+  freeLimit: FREE_SCAN_LIMIT_SAFE,
+});
 
 // ─── Upgrade Intelligence ─────────────────────────────────────────────────────
 const upgradeIntel = useUpgradeIntelligence({
@@ -4419,7 +4434,7 @@ const runBarcodeLookup = async (code: string) => {
   setLoadingPhotoUri(null);
   setShowRetryWhileLoading(false);
   setActiveResult(null);
-  setActiveHotDeal(null);
+  useEvanBrain.getState().scanStarted(); // Brain: reset deal state + hotSignal for new scan
   setResults([]);
   setSeeMoreListings([]);
   setLastScan(null);
@@ -4725,7 +4740,7 @@ const takePhoto = async () => {
 
   if (isFreeLimitReached) {
 requestAnimationFrame(() => {
-  setShowPaywall(true);
+  useEvanBrain.getState().showLimitPaywall();
 });
     return;
   }
@@ -4881,7 +4896,7 @@ const closeAllOverlays = () => {
   setProfileModal(null);
   setAuthModalOpen(false);
   setHelpOpen(false);
-  setShowPaywall(false);
+  useEvanBrain.getState().hidePaywall();
   setResultModalOpen(false);
   setSeeMoreOpen(false);
   setHaggleOpen(false);
@@ -6998,7 +7013,7 @@ const goTab = (next) => {
   const pickFromRoll = async () => {
     if (isFreeLimitReached) {
 requestAnimationFrame(() => {
-  setShowPaywall(true);
+  useEvanBrain.getState().showLimitPaywall();
 });
       return;
     }
@@ -7620,7 +7635,7 @@ if (!isPro) {
 
   if (effectiveUsed >= FREE_SCAN_LIMIT_SAFE) {
     requestAnimationFrame(() => {
-      setShowPaywall(true);
+      useEvanBrain.getState().showLimitPaywall();
     });
     return;
   }
@@ -7637,7 +7652,7 @@ if (!isPro) {
       if (checkRes?.ok && !checkRes.canScan) {
         if (checkRes.resetAt) setScanResetAt(checkRes.resetAt);
         setScansUsed(FREE_SCAN_LIMIT_SAFE); // sync local state
-        requestAnimationFrame(() => { setShowPaywall(true); });
+        requestAnimationFrame(() => { useEvanBrain.getState().showLimitPaywall(); });
         return;
       }
       if (checkRes?.resetAt) setScanResetAt(checkRes.resetAt);
@@ -7719,7 +7734,7 @@ const successHapticTimer = setTimeout(() => {
 
   setUiError(null);
   setActiveResult(null);
-  setActiveHotDeal(null);
+  useEvanBrain.getState().scanStarted(); // Brain: reset deal state + hotSignal for new scan
   setResults([]);
   setSeeMoreListings([]);
   setLastScan(null);
@@ -8902,9 +8917,11 @@ scanWhy: [
   })(),
 };
 
-// ── Deal Engine: two-phase verdict + guardrails + _meta ─────────────────────
+// ── Deal Engine: orchestrator-driven pipeline ────────────────────────────────
+// All business logic (deal engine, paywall, momentum, phase transitions)
+// flows through the orchestrator → brain store. Zero local state.
 try {
-  const dealResult: DealResult = runDealEngine({
+  const dealInput = {
     scannedPrice: Number.isFinite(scannedPrice) ? scannedPrice : null,
     cheapestPrice: Number.isFinite(cheapestPrice) ? cheapestPrice : null,
     avgMarket: stats.avgMarket ?? null,
@@ -8922,73 +8939,36 @@ try {
     resaleVelocity: insights.resaleVelocity,
     liquidity,
     dataTimestamp: Date.now(),
-  });
+  };
 
-  (card as any).dealResult = dealResult;
+  // ── Orchestrator: single entry point for the entire scan pipeline ──────
+  // Runs deal engine → fast verdict → dopamine phase → deep analysis →
+  // aspiration → paywall decision. All state goes through brain store.
+  const scanOutcome = orchestrator.handleScan(dealInput);
 
-  // ── Hot Deal Layer: surface emotional tier ─────────────────────────────
-  (card as any).hotDeal = dealResult.hot_deal;
-  setActiveHotDeal(dealResult.hot_deal);
+  if (scanOutcome) {
+    const { dealResult } = scanOutcome;
 
-  // ── Viral Hook: attach share text for HOT+ deals ─────────────────────
-  if (dealResult.viralHook) {
-    (card as any).viralHook = dealResult.viralHook;
-  }
+    (card as any).dealResult = dealResult;
+    (card as any).hotDeal = dealResult.hot_deal;
 
-  // ── Paywall Signal: quantify opportunity cost for free users ──────────
-  if (!isPro) {
-    const paywallSig = computePaywallSignal(
-      scansUsed,
-      FREE_SCAN_LIMIT_SAFE,
-      dealResult.deep.expected_profit,
-      dealResult.hot_deal.tier,
-    );
-    (card as any).paywallSignal = paywallSig;
-
-    // ── Aspiration Engine: momentum-based paywall trigger ──────────────
-    sessionMomentumRef.current = updateSessionMomentum(
-      sessionMomentumRef.current,
-      dealResult.hot_deal.tier,
-      dealResult.deep.expected_profit,
-      Math.max(0, FREE_SCAN_LIMIT_SAFE - scansUsed),
-    );
-
-    const valueMirror = computeValueMirror(
-      dealResult.hot_deal.tier,
-      dealResult.deep.expected_profit,
-      sessionMomentumRef.current,
-      false,
-      scansUsed,
-      FREE_SCAN_LIMIT_SAFE,
-    );
-
-    if (valueMirror.shouldTrigger && paywallSig.isAspirationTrigger) {
-      // Fire aspiration paywall after results render (800ms delay)
-      const aspirationData: AspirationContext = {
-        winFrame: valueMirror.winFrameText,
-        gapFrame: valueMirror.gapFrameText,
-        lossFrame: valueMirror.lossFrameText,
-        lastProfit: dealResult.deep.expected_profit,
-        triggerType: valueMirror.trigger,
-      };
-      setTimeout(() => {
-        setAspirationCtx(aspirationData);
-        setShowPaywall(true);
-      }, 1800); // show after results land + dopamine layer fires
+    // ── Viral Hook: attach share text for HOT+ deals ─────────────────
+    if (dealResult.viralHook) {
+      (card as any).viralHook = dealResult.viralHook;
     }
-  }
 
-  // Upgrade verdict when Deal Engine has higher conviction than heuristic
-  if (
-    dealResult.fast.verdict === "BUY" &&
-    card.buyVerdict !== "GREAT FLIP"
-  ) {
-    (card as any).buyVerdict = insights.buyScore >= 82 ? "GREAT FLIP" : "GOOD BUY";
-  } else if (
-    dealResult.fast.verdict === "PASS" &&
-    card.buyVerdict !== "RISKY"
-  ) {
-    (card as any).buyVerdict = "RISKY";
+    // Upgrade verdict when Deal Engine has higher conviction than heuristic
+    if (
+      dealResult.fast.verdict === "BUY" &&
+      card.buyVerdict !== "GREAT FLIP"
+    ) {
+      (card as any).buyVerdict = insights.buyScore >= 82 ? "GREAT FLIP" : "GOOD BUY";
+    } else if (
+      dealResult.fast.verdict === "PASS" &&
+      card.buyVerdict !== "RISKY"
+    ) {
+      (card as any).buyVerdict = "RISKY";
+    }
   }
 } catch {}
 
@@ -9510,7 +9490,7 @@ useEffect(() => {
     const cheapestAlt = Number.isFinite(cheapestAltRaw) && cheapestAltRaw > 0 ? cheapestAltRaw : null;
     if (isFreeLimitReached) {
 requestAnimationFrame(() => {
-  setShowPaywall(true);
+  useEvanBrain.getState().showLimitPaywall();
 });
       return;
     }
@@ -13630,7 +13610,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
         AsyncStorage.removeItem("evan_jwt_v1").catch(() => {});
         // NOTE: isPro is NOT cleared on sign-out — subscription is tied to
         // the device/app install. User keeps access after signing back in.
-        setShowPaywall(false);
+        useEvanBrain.getState().hidePaywall();
       } else {
         setAuthModalOpen(true);
       }
@@ -14643,36 +14623,36 @@ ${shareLink}`
 >
   {String(activeResult?.buyVerdict || "GOOD BUY").toUpperCase()}
 </Text>
-{activeHotDeal && activeHotDeal.tier !== "COLD" ? (
+{brainHotSignal && brainHotSignal.tier !== "COLD" ? (
   <View style={{
     marginLeft: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 999,
     borderWidth: 1,
-    backgroundColor: activeHotDeal.tier === "VIRAL" ? "rgba(255,80,0,0.18)"
-      : activeHotDeal.tier === "HOT" ? "rgba(255,185,0,0.14)"
+    backgroundColor: brainHotSignal.tier === "VIRAL" ? "rgba(255,80,0,0.18)"
+      : brainHotSignal.tier === "HOT" ? "rgba(255,185,0,0.14)"
       : "rgba(255,255,255,0.08)",
-    borderColor: activeHotDeal.tier === "VIRAL" ? "rgba(255,120,0,0.50)"
-      : activeHotDeal.tier === "HOT" ? "rgba(255,200,0,0.40)"
+    borderColor: brainHotSignal.tier === "VIRAL" ? "rgba(255,120,0,0.50)"
+      : brainHotSignal.tier === "HOT" ? "rgba(255,200,0,0.40)"
       : "rgba(255,255,255,0.16)",
   }}>
     <Text style={{
       fontWeight: "900",
       fontSize: 11,
       letterSpacing: 0.8,
-      color: activeHotDeal.tier === "VIRAL" ? "rgba(255,180,100,1)"
-        : activeHotDeal.tier === "HOT" ? "rgba(255,210,80,1)"
+      color: brainHotSignal.tier === "VIRAL" ? "rgba(255,180,100,1)"
+        : brainHotSignal.tier === "HOT" ? "rgba(255,210,80,1)"
         : "rgba(255,255,255,0.78)",
     }}>
-      {activeHotDeal.tier === "VIRAL" ? "\uD83D\uDD25 VIRAL FLIP" : activeHotDeal.tier === "HOT" ? "\uD83D\uDD25 HIGH DEMAND" : "WARM"}
+      {brainHotSignal.tier === "VIRAL" ? "\uD83D\uDD25 VIRAL FLIP" : brainHotSignal.tier === "HOT" ? "\uD83D\uDD25 HIGH DEMAND" : "WARM"}
     </Text>
   </View>
 ) : null}
 </View>
-{activeHotDeal?.hooks?.loss_framing && activeHotDeal.tier !== "COLD" ? (
+{brainHotSignal?.hooks?.loss_framing && brainHotSignal.tier !== "COLD" ? (
   <Text style={{ color: "rgba(255,255,255,0.68)", fontWeight: "700", fontSize: 12, marginBottom: 6 }}>
-    {activeHotDeal.hooks.loss_framing}
+    {brainHotSignal.hooks.loss_framing}
   </Text>
 ) : null}
 <View style={styles.confidenceBreakdown}>
@@ -15226,21 +15206,20 @@ const store =
   </View>
 </Modal>
 
-{/* PAYWALL MODAL — Aspiration Engine + SubscriptionModal */}
+{/* PAYWALL MODAL — brain store is single source of truth */}
 <SubscriptionModal
-  visible={showPaywall}
-  onClose={() => { setShowPaywall(false); setAspirationCtx(null); }}
+  visible={brainPaywallVisible}
+  onClose={() => { orchestrator.dismissPaywall(); }}
   onPurchased={(newIsPro) => {
     if (newIsPro) {
       setIsPro(true);
       setIsSignedIn(true);
       try { FinanceAnalytics.recordPurchased(userId ?? null, "plus"); } catch {}
     }
-    setShowPaywall(false);
-    setAspirationCtx(null);
+    orchestrator.dismissPaywall();
   }}
   initialPlan="plus"
-  aspiration={aspirationCtx}
+  aspiration={brainAspirationCtx}
 />
 
       {/* PROFILE MODAL: REVIEW */}
@@ -16977,7 +16956,7 @@ const snapshot = {
 </View>
   </RNAnimated.View>
   {/* ── Hot Deal Dopamine Layer (overlay, no layout shift) ────────────── */}
-  <DopamineLayer hotDeal={activeHotDeal} />
+  <DopamineLayer hotDeal={brainHotSignal} />
   </GestureHandlerRootView>
 );
 }

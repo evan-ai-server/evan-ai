@@ -16,11 +16,27 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { InteractionManager } from "react-native";
 import {
   MarketTruthService,
   type RealFlipOutcome,
   type FlipPerformance,
 } from "./MarketTruthService";
+
+// Lazy import to avoid circular dependency — brain store imports TuningService types
+let _getBrainSITTAllowed: (() => boolean) | null = null;
+function isSITTAllowed(): boolean {
+  if (!_getBrainSITTAllowed) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { useEvanBrain } = require("../hooks/useEvanBrain");
+      _getBrainSITTAllowed = () => useEvanBrain.getState().isSITTAllowed();
+    } catch {
+      return true; // fail open if store not available yet
+    }
+  }
+  return _getBrainSITTAllowed();
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -191,9 +207,24 @@ class _TuningService {
     const currentCount = perf.totalFlips;
     const flipsSinceLastTune = currentCount - this._lastTunedAtFlipCount;
 
-    if (flipsSinceLastTune >= TUNING_INTERVAL) {
-      this._runTuning(perf);
+    if (flipsSinceLastTune < TUNING_INTERVAL) return;
+
+    // ── Store-level guard: only run when scan pipeline is idle/complete
+    // and camera is not active. Enforced by brain store, not local flags.
+    if (!isSITTAllowed()) {
+      console.log("[SITT] Tuning deferred — scan pipeline active or camera live.");
+      return;
     }
+
+    // Yield to any in-flight animations/interactions before running math
+    InteractionManager.runAfterInteractions(() => {
+      // Re-check — state may have changed during the yield
+      if (!isSITTAllowed()) {
+        console.log("[SITT] Tuning cancelled — scan pipeline became active.");
+        return;
+      }
+      this._runTuning(perf);
+    });
   }
 
   private _runTuning(perf: FlipPerformance): ThresholdSnapshot {
