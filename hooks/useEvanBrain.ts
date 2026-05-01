@@ -27,6 +27,7 @@ import type { ValueMirrorResult, SessionMomentum } from "../services/finance/Val
 import { emptySessionMomentum } from "../services/finance/ValueMirror";
 import type { AspirationContext } from "../components/subscription/SubscriptionModal";
 import type { DynamicThresholds } from "../services/TuningService";
+import { ScanObserver } from "../services/ScanObserver";
 
 // ── Scan Phase (deterministic state machine) ───────────────────────────────
 
@@ -70,7 +71,12 @@ export type BrainEventType =
   | "SITT_EXECUTED"
   | "ABORT_TRIGGERED"
   | "STALE_WRITE_REJECTED"
-  | "MOMENTUM_UPDATED";
+  | "MOMENTUM_UPDATED"
+  // OPUS 4.7 — PhaseContract escalation events
+  | "SCANNING_STALL"
+  | "DOPAMINE_STALL_WARNING"
+  | "DEEP_ANALYSIS_STALL"
+  | "ASPIRATION_STALL";
 
 export interface BrainEvent {
   type: BrainEventType;
@@ -162,8 +168,8 @@ export interface EvanBrainState {
     mirror: ValueMirrorResult,
   ) => boolean;
 
-  /** Dismiss the paywall */
-  hidePaywall: () => void;
+  /** Dismiss the paywall. Pass scanId to prevent cross-scan race. */
+  hidePaywall: (dismissScanId?: string) => void;
 
   /** Update session momentum after a scan */
   updateMomentum: (scanId: string, momentum: SessionMomentum) => boolean;
@@ -246,12 +252,20 @@ export const useEvanBrain = create<EvanBrainState>((set, get) => ({
     });
     // Log after set so the event captures the new state
     get().logEvent("SCAN_STARTED", { newScanId: id });
+    ScanObserver.scanStarted(id);
+    ScanObserver.recordTransition("idle", "scanning", id);
     return id;
   },
 
   fastVerdictReady: (scanId, result) => {
-    if (!isCurrentScan(get(), scanId)) {
+    const s = get();
+    if (!isCurrentScan(s, scanId)) {
       get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "fastVerdictReady" });
+      return false;
+    }
+    // Phase guard: only valid from "scanning"
+    if (s.phase !== "scanning") {
+      get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "fastVerdictReady", reason: `invalid phase: ${s.phase}` });
       return false;
     }
     set({
@@ -265,16 +279,29 @@ export const useEvanBrain = create<EvanBrainState>((set, get) => ({
       hotTier: result.hot_deal.tier,
       hotScore: result.hot_deal.score,
     });
+    ScanObserver.recordTransition("scanning", "fast_verdict", scanId, {
+      verdict: result.fast.verdict,
+      hotTier: result.hot_deal.tier,
+    });
+    ScanObserver.markFastVerdict(scanId);
     return true;
   },
 
   enterDopaminePhase: (scanId) => {
-    if (!isCurrentScan(get(), scanId)) {
+    const s = get();
+    if (!isCurrentScan(s, scanId)) {
       get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "enterDopaminePhase" });
+      return false;
+    }
+    // Phase guard: only valid from "fast_verdict"
+    if (s.phase !== "fast_verdict") {
+      get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "enterDopaminePhase", reason: `invalid phase: ${s.phase}` });
       return false;
     }
     set({ phase: "dopamine_phase", dopamineRendered: false });
     get().logEvent("DOPAMINE_ENTERED");
+    ScanObserver.recordTransition("fast_verdict", "dopamine_phase", scanId);
+    ScanObserver.markDopamineEntered(scanId);
     return true;
   },
 
@@ -284,12 +311,19 @@ export const useEvanBrain = create<EvanBrainState>((set, get) => ({
     if (s.phase !== "dopamine_phase") return false;
     set({ dopamineRendered: true });
     get().logEvent("DOPAMINE_RENDERED");
+    ScanObserver.markDopamineRendered(scanId);
     return true;
   },
 
   deepAnalysisReady: (scanId, result) => {
-    if (!isCurrentScan(get(), scanId)) {
+    const s = get();
+    if (!isCurrentScan(s, scanId)) {
       get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "deepAnalysisReady" });
+      return false;
+    }
+    // Phase guard: only valid from "dopamine_phase" (after dopamine ack)
+    if (s.phase !== "dopamine_phase") {
+      get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "deepAnalysisReady", reason: `invalid phase: ${s.phase}` });
       return false;
     }
     set({
@@ -302,32 +336,60 @@ export const useEvanBrain = create<EvanBrainState>((set, get) => ({
       expectedProfit: result.deep.expected_profit,
       riskLevel: result.deep.risk_level,
     });
+    ScanObserver.recordTransition("dopamine_phase", "deep_analysis", scanId, {
+      expectedProfit: result.deep.expected_profit,
+    });
+    ScanObserver.markDeepAnalysis(scanId);
     return true;
   },
 
   enterAspirationPhase: (scanId) => {
-    if (!isCurrentScan(get(), scanId)) {
+    const s = get();
+    if (!isCurrentScan(s, scanId)) {
       get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "enterAspirationPhase" });
+      return false;
+    }
+    // Phase guard: only valid from "deep_analysis"
+    if (s.phase !== "deep_analysis") {
+      get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "enterAspirationPhase", reason: `invalid phase: ${s.phase}` });
       return false;
     }
     set({ phase: "aspiration_phase" });
     get().logEvent("ASPIRATION_ENTERED");
+    ScanObserver.recordTransition("deep_analysis", "aspiration_phase", scanId);
+    ScanObserver.markAspirationEntered(scanId);
     return true;
   },
 
   scanComplete: (scanId) => {
-    if (!isCurrentScan(get(), scanId)) {
+    const s = get();
+    if (!isCurrentScan(s, scanId)) {
       get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "scanComplete" });
       return false;
     }
+    // Phase guard: only valid from deep_analysis, aspiration_phase, or paywall
+    const validFrom: ScanPhase[] = ["deep_analysis", "aspiration_phase", "paywall"];
+    if (!validFrom.includes(s.phase)) {
+      get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "scanComplete", reason: `invalid phase: ${s.phase}` });
+      return false;
+    }
+    const prevPhase = s.phase;
     set({ phase: "complete" });
     get().logEvent("SCAN_COMPLETED");
+    ScanObserver.recordTransition(prevPhase, "complete", scanId);
+    ScanObserver.scanEnded(scanId, "complete");
     return true;
   },
 
   showPaywall: (scanId, aspiration, signal, mirror) => {
-    if (!isCurrentScan(get(), scanId)) {
+    const s = get();
+    if (!isCurrentScan(s, scanId)) {
       get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "showPaywall" });
+      return false;
+    }
+    // Phase guard: only valid from "aspiration_phase"
+    if (s.phase !== "aspiration_phase") {
+      get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: scanId, action: "showPaywall", reason: `invalid phase: ${s.phase}` });
       return false;
     }
     set({
@@ -341,16 +403,31 @@ export const useEvanBrain = create<EvanBrainState>((set, get) => ({
       triggerType: mirror.trigger,
       profitUnlocked: mirror.profitUnlocked,
     });
+    ScanObserver.recordTransition("aspiration_phase", "paywall", scanId, {
+      trigger: mirror.trigger,
+    });
+    ScanObserver.markPaywallTriggered(scanId);
     return true;
   },
 
-  hidePaywall: () => {
+  hidePaywall: (dismissScanId?: string) => {
     const s = get();
     // Only transition to "complete" if we're actually in the paywall phase.
     // A late-firing dismiss (e.g. 240ms animation delay in SubscriptionModal)
     // must not overwrite a new scan's phase.
     if (s.phase !== "paywall") {
       set({ paywallVisible: false, aspirationContext: null });
+      return;
+    }
+    // If a scanId was provided (from the dismiss callback), verify it matches
+    // the current scan. A late-firing dismiss from scan N must not close
+    // scan N+1's paywall if N+1 also reached the paywall phase.
+    if (dismissScanId != null && s.scanId !== dismissScanId) {
+      get().logEvent("STALE_WRITE_REJECTED", {
+        rejectedScanId: dismissScanId,
+        action: "hidePaywall",
+        reason: "cross-scan paywall dismiss blocked",
+      });
       return;
     }
     set({
@@ -373,13 +450,22 @@ export const useEvanBrain = create<EvanBrainState>((set, get) => ({
 
   setTuningThresholds: (t) => set({ tuningThresholds: t }),
 
-  showLimitPaywall: () =>
+  showLimitPaywall: () => {
+    const s = get();
+    // Guard: only show limit paywall when idle or complete — never during an active scan
+    if (s.phase !== "idle" && s.phase !== "complete") {
+      get().logEvent("STALE_WRITE_REJECTED", { rejectedScanId: s.scanId, action: "showLimitPaywall", reason: `invalid phase: ${s.phase}` });
+      return;
+    }
     set({
+      phase: "paywall",
       paywallVisible: true,
       aspirationContext: null,
       paywallSignal: null,
       valueMirror: null,
-    }),
+    });
+    get().logEvent("PAYWALL_TRIGGERED", { triggerType: "LIMIT_REACHED" });
+  },
 
   setError: (scanId, message) => {
     const s = get();
@@ -411,6 +497,9 @@ export const useEvanBrain = create<EvanBrainState>((set, get) => ({
       failedPhase,
       failedScanId: scanId,
     });
+    ScanObserver.recordTransition(failedPhase, "error", scanId, { message });
+    ScanObserver.pipelineError(scanId, failedPhase, "setError", message);
+    ScanObserver.scanEnded(scanId, "error");
   },
 
   resetScan: () => {
@@ -442,12 +531,20 @@ export const useEvanBrain = create<EvanBrainState>((set, get) => ({
       timestamp: Date.now(),
       payload,
     };
-    set((prev) => ({
-      _eventLog:
-        prev._eventLog.length >= MAX_EVENT_LOG
-          ? [...prev._eventLog.slice(-MAX_EVENT_LOG + 1), event]
-          : [...prev._eventLog, event],
-    }));
+    // O(1) append — reuse the same array reference, only splice when full.
+    // The old [...spread, event] allocated a new 200-element array per log,
+    // creating GC pressure under rapid scanning. This mutates in place for
+    // the common case and only copies when React needs the new reference.
+    set((prev) => {
+      const log = prev._eventLog;
+      if (log.length >= MAX_EVENT_LOG) {
+        // Drop oldest, push new — single splice + push, no full copy
+        log.splice(0, log.length - MAX_EVENT_LOG + 1);
+      }
+      log.push(event);
+      // Return new array reference so Zustand detects the change
+      return { _eventLog: log };
+    });
   },
 
   // ── Guards ─────────────────────────────────────────────────────────────

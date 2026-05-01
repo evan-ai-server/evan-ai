@@ -1,31 +1,34 @@
 /**
- * Evan AI — useEvanOrchestrator (The Event Horizon)
+ * Evan AI — useEvanOrchestrator (The Event Horizon) [OPUS 4.7 MAX]
  *
  * SINGLE ENTRY POINT for the entire scan-complete pipeline.
  * No UI code may call runDealEngine, fastVerdictReady, showPaywall,
  * or updateMomentum directly — everything flows through here.
  *
+ * OPUS 4.7 Upgrades:
+ *   - All state mutations routed through ScanGovernor (pre-flight validation)
+ *   - 8s dopamine watchdog replaced by PhaseContract (liveness guarantees)
+ *   - ScanScheduler notified on scan completion (backpressure control)
+ *   - Every phase has a contract with tiered escalation
+ *   - Abort tracking enforced by Governor (no writes after abort)
+ *
  * Architecture:
- *   - State-driven phase transitions (no setTimeout for business logic)
- *   - Every scan gets a unique scanId — stale scans are rejected
- *   - All state writes go through useEvanBrain (single source of truth)
- *   - UI subscribes to brain store via selectors — never writes
- *   - AbortController per scan — all stale computation actively cancelled
- *   - Deterministic transitions — dopamine waits for render acknowledgment
- *   - Full try/catch coverage — any failure → error phase, never dead state
+ *   UI → ScanScheduler → handleScan → ScanGovernor → useEvanBrain
+ *                                   → PhaseContractManager (liveness)
+ *                                   → ScanObserver (observability)
  *
  * Phase flow:
- *   1. handleScan(input) → scanId generated, brain enters "scanning"
- *   2. Deal Engine runs → fastVerdictReady (brain: "fast_verdict")
- *   3. Brain enters "dopamine_phase" → DopamineLayer renders + acknowledges
- *   4. Brain.dopamineRendered = true → orchestrator advances to "deep_analysis"
- *   5. Momentum + ValueMirror computed → brain enters "aspiration_phase"
- *   6. If shouldTrigger → brain enters "paywall" (showPaywall)
- *   7. Otherwise → brain enters "complete"
+ *   1. handleScan(input) → Governor validates + brain enters "scanning"
+ *   2. Deal Engine runs → Governor.fastVerdictReady (brain: "fast_verdict")
+ *   3. Governor.enterDopaminePhase → PhaseContract monitors dopamine ack
+ *   4. DopamineLayer acks → contract fulfilled → advancePastDopamine
+ *   5. Contract timeout (8s) → force-advance (last resort, not primary)
+ *   6. Momentum + ValueMirror → aspiration → paywall or complete
  *
  * Cancellation guarantee:
- *   When a new scan starts, ALL previous AbortControllers are aborted.
- *   Every async boundary checks signal.aborted before proceeding.
+ *   When a new scan starts, ALL previous AbortControllers are aborted,
+ *   Governor marks the old scan as aborted (blocking future writes),
+ *   and all active PhaseContracts are cancelled.
  */
 
 import { useCallback, useRef, useEffect } from "react";
@@ -42,6 +45,9 @@ import {
 } from "../services/finance/ValueMirror";
 import type { AspirationContext } from "../components/subscription/SubscriptionModal";
 import { useEvanBrain } from "./useEvanBrain";
+import { ScanGovernor } from "../services/ScanGovernor";
+import { PhaseContractManager } from "../services/PhaseContract";
+import { ScanScheduler } from "../services/ScanScheduler";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -71,12 +77,10 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
   // Zustand unsubscribe handle for dopamine render watch
   const dopamineUnsubRef = useRef<(() => void) | null>(null);
 
+  // NOTE: dopamineTimeoutRef REMOVED — replaced by PhaseContract system.
+  // The 8s watchdog is now a contract timeout with tiered escalation.
+
   // ── Config ref — always holds the latest config values ──────────────
-  // The dopamine subscription captures advancePastDopamine at setup time.
-  // If config changes during the dopamine phase (e.g. RevenueCat confirms
-  // a purchase), the closure would use stale isPro/scansUsed/freeLimit.
-  // Reading from this ref inside advancePastDopamine guarantees we always
-  // use the current config, not the config at subscription creation time.
   const configRef = useRef(config);
   configRef.current = config;
 
@@ -89,17 +93,27 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
       interactionHandleRef.current = null;
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
+      // Cancel any active phase contract to prevent timer leaks
+      PhaseContractManager.exit();
     };
   }, []);
 
   /**
    * Cancel all pending work from a previous scan.
-   * Aborts the controller, cancels InteractionManager handles,
-   * and tears down any Zustand subscriptions.
+   * Aborts the controller, cancels PhaseContract, marks abort in Governor,
+   * and tears down Zustand subscriptions.
    */
   const cancelSequence = useCallback(() => {
     const previousScanId = activeScanIdRef.current;
     activeScanIdRef.current = null;
+
+    // ── Governor: mark scan as aborted (blocks future writes) ─────────
+    if (previousScanId) {
+      ScanGovernor.markAborted(previousScanId);
+    }
+
+    // ── PhaseContract: cancel active contract ─────────────────────────
+    PhaseContractManager.exit();
 
     // Abort all in-flight async work
     if (abortControllerRef.current) {
@@ -131,6 +145,7 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
    * NOT by timers or InteractionManager assumptions.
    *
    * This is the ONLY way to exit the dopamine phase.
+   * All mutations go through ScanGovernor for pre-flight validation.
    */
   const advancePastDopamine = useCallback(
     (scanId: string, dealResult: DealResult, signal: AbortSignal) => {
@@ -143,27 +158,56 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
       if (brain.scanId !== scanId) return;
 
       // Read LATEST config from ref — not from stale closure.
-      // The dopamine subscription captures this function at setup time.
-      // If isPro/scansUsed/freeLimit change during the dopamine phase
-      // (e.g. RevenueCat webhook, scan counter increment), we must use
-      // the current values, not the values at subscription creation.
       const cfg = configRef.current;
 
       try {
-        // ── Deep Analysis phase ──────────────────────────────────────
-        // Deal engine runs both phases synchronously in current architecture.
-        // We still transition through deep_analysis for state machine correctness.
-        brain.deepAnalysisReady(scanId, dealResult);
+        // ── Deep Analysis phase (via Governor) ──────────────────────
+        ScanGovernor.deepAnalysisReady(scanId, dealResult);
+
+        // ── PhaseContract: deep_analysis ────────────────────────────
+        PhaseContractManager.exit();
+        PhaseContractManager.enter("deep_analysis", scanId, {
+          onEscalation: (_p, _s, signals) => {
+            useEvanBrain.getState().logEvent("DEEP_ANALYSIS_STALL", {
+              source: "contract_escalation",
+              signals,
+            });
+          },
+          onTimeout: (_p, sid) => {
+            if (!signal.aborted && useEvanBrain.getState().scanId === sid) {
+              ScanGovernor.setError(sid, "Deep analysis phase contract timeout");
+              PhaseContractManager.exit();
+              ScanScheduler.scanFinished();
+            }
+          },
+        });
 
         // ── Abort check after phase transition ───────────────────────
         if (signal.aborted) return;
 
         // ── Aspiration Engine (free users only) ──────────────────────
         if (!cfg.isPro) {
-          brain.enterAspirationPhase(scanId);
+          ScanGovernor.enterAspirationPhase(scanId);
+
+          // ── PhaseContract: aspiration_phase ────────────────────────
+          PhaseContractManager.exit();
+          PhaseContractManager.enter("aspiration_phase", scanId, {
+            onEscalation: (_p, _s, signals) => {
+              useEvanBrain.getState().logEvent("ASPIRATION_STALL", {
+                source: "contract_escalation",
+                signals,
+              });
+            },
+            onTimeout: (_p, sid) => {
+              if (!signal.aborted && useEvanBrain.getState().scanId === sid) {
+                ScanGovernor.setError(sid, "Aspiration phase contract timeout");
+                PhaseContractManager.exit();
+                ScanScheduler.scanFinished();
+              }
+            },
+          });
 
           // Yield to UI thread before computing value math.
-          // InteractionManager is used ONLY to yield — not as a timer.
           interactionHandleRef.current =
             InteractionManager.runAfterInteractions(() => {
               interactionHandleRef.current = null;
@@ -180,7 +224,9 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
 
               // If user became Pro during the yield, skip paywall entirely
               if (latestCfg.isPro) {
-                useEvanBrain.getState().scanComplete(scanId);
+                ScanGovernor.scanComplete(scanId);
+                PhaseContractManager.exit();
+                ScanScheduler.scanFinished();
                 return;
               }
 
@@ -228,37 +274,47 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
                     triggerType: mirror.trigger,
                   };
 
-                  useEvanBrain.getState().showPaywall(
+                  ScanGovernor.showPaywall(
                     scanId,
                     aspirationData,
                     paywallSig,
                     mirror,
                   );
+                  PhaseContractManager.exit();
+                  // Don't call scanFinished — paywall is still active
                 } else {
                   // No paywall — scan is complete
-                  useEvanBrain.getState().scanComplete(scanId);
+                  ScanGovernor.scanComplete(scanId);
+                  PhaseContractManager.exit();
+                  ScanScheduler.scanFinished();
                 }
               } catch (err: any) {
                 // Aspiration computation failed — transition to error
                 if (!signal.aborted) {
-                  useEvanBrain.getState().setError(
+                  ScanGovernor.setError(
                     scanId,
                     `Aspiration computation failed: ${err?.message || "unknown error"}`,
                   );
+                  PhaseContractManager.exit();
+                  ScanScheduler.scanFinished();
                 }
               }
             });
         } else {
           // Pro user — no paywall logic, scan is complete
-          useEvanBrain.getState().scanComplete(scanId);
+          ScanGovernor.scanComplete(scanId);
+          PhaseContractManager.exit();
+          ScanScheduler.scanFinished();
         }
       } catch (err: any) {
         // Deep analysis / phase transition failed
         if (!signal.aborted) {
-          useEvanBrain.getState().setError(
+          ScanGovernor.setError(
             scanId,
             `Post-dopamine pipeline failed: ${err?.message || "unknown error"}`,
           );
+          PhaseContractManager.exit();
+          ScanScheduler.scanFinished();
         }
       }
     },
@@ -272,11 +328,12 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
    * Returns the ScanOutcome synchronously (dealResult for card attachment),
    * then drives the full phase sequence asynchronously via brain store.
    *
-   * Guarantees:
-   *   - Previous scan is fully cancelled (AbortController + InteractionManager)
-   *   - All async work checks signal.aborted at every boundary
+   * OPUS 4.7 Guarantees:
+   *   - Previous scan fully cancelled (AbortController + Governor + PhaseContract)
+   *   - All state mutations pre-validated by Governor (TransitionValidator)
+   *   - Every phase has a liveness contract (no infinite stalls)
+   *   - Scheduler notified on completion (backpressure control)
    *   - Any throw transitions to error phase — no dead states
-   *   - Dopamine → deep transition waits for render acknowledgment
    */
   const handleScan = useCallback(
     (input: DealInput): ScanOutcome | null => {
@@ -288,41 +345,60 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
       abortControllerRef.current = controller;
       const signal = controller.signal;
 
-      // ── Generate scanId + enter scanning phase ──────────────────────
-      const scanId = useEvanBrain.getState().scanStarted();
+      // ── Governor: validate + execute scan start ─────────────────────
+      const scanId = ScanGovernor.scanStarted();
+      if (!scanId) return null;
       activeScanIdRef.current = scanId;
+
+      // ── PhaseContract: scanning ─────────────────────────────────────
+      PhaseContractManager.enter("scanning", scanId, {
+        onEscalation: (_p, _s, signals) => {
+          useEvanBrain.getState().logEvent("SCANNING_STALL", {
+            source: "contract_escalation",
+            signals,
+          });
+        },
+        onTimeout: (_p, sid) => {
+          if (!signal.aborted && useEvanBrain.getState().scanId === sid) {
+            ScanGovernor.setError(sid, "Scanning phase contract timeout");
+            PhaseContractManager.exit();
+            ScanScheduler.scanFinished();
+          }
+        },
+      });
 
       // ── Run Deal Engine (synchronous, <2ms) ─────────────────────────
       let dealResult: DealResult;
       try {
         dealResult = runDealEngine(input);
       } catch (err: any) {
-        useEvanBrain.getState().setError(
+        ScanGovernor.setError(
           scanId,
           `Deal engine failed: ${err?.message || "unknown error"}`,
         );
+        PhaseContractManager.exit();
+        ScanScheduler.scanFinished();
         return null;
       }
 
       // ══════════════════════════════════════════════════════════════════
       // PHASE A: FAST VERDICT (T=0)
       // ══════════════════════════════════════════════════════════════════
-      //
-      // Write fast verdict + hot signal to brain store IMMEDIATELY.
-      // DopamineLayer subscribes to hotSignal via Zustand selector —
-      // it fires Reanimated animations + haptics on the native thread.
 
       try {
-        const accepted = useEvanBrain.getState().fastVerdictReady(scanId, dealResult);
+        const accepted = ScanGovernor.fastVerdictReady(scanId, dealResult);
+        PhaseContractManager.exit(); // Exit scanning contract
         if (!accepted) return null; // scan was superseded
 
         // Enter dopamine phase — animation window is now open.
-        useEvanBrain.getState().enterDopaminePhase(scanId);
+        ScanGovernor.enterDopaminePhase(scanId);
       } catch (err: any) {
-        useEvanBrain.getState().setError(
+        ScanGovernor.setError(
           scanId,
           `Fast verdict transition failed: ${err?.message || "unknown error"}`,
         );
+        PhaseContractManager.exit();
+        ScanScheduler.scanFinished();
         return null;
       }
 
@@ -334,10 +410,53 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
       // When DopamineLayer calls markDopamineRendered(scanId),
       // the subscription fires and we advance the pipeline.
       //
-      // This replaces the old InteractionManager-as-timer approach
-      // with a truth-based transition: UI confirms render → we proceed.
+      // LIVENESS: PhaseContract replaces the raw 8s setTimeout.
+      // - Escalation at 4s: warning logged with diagnostic signals
+      // - Timeout at 8s: force-advance (last resort, not primary)
+      // - Progress signals tracked: component_mounted, ack_received
 
       dopamineUnsubRef.current?.();
+
+      // ── PhaseContract: dopamine_phase (replaces 8s watchdog) ───────
+      PhaseContractManager.enter("dopamine_phase", scanId, {
+        onEscalation: (_p, sid, signals) => {
+          // ── 4s warning: dopamine stalling ─────────────────────────
+          useEvanBrain.getState().logEvent("DOPAMINE_STALL_WARNING", {
+            source: "contract_escalation",
+            signals,
+            message: "Dopamine ack not received within escalation window",
+          });
+        },
+        onTimeout: (_p, sid, signals) => {
+          // ── 8s last resort: force-advance ─────────────────────────
+          // Same behavior as old watchdog, but with diagnostic context.
+          if (signal.aborted) return;
+
+          const brain = useEvanBrain.getState();
+          if (brain.scanId !== sid) return;
+          if (brain.dopamineRendered) return; // ack arrived via another path
+
+          // Force-acknowledge and advance
+          brain.logEvent("DOPAMINE_RENDERED", {
+            source: "contract_timeout",
+            signals,
+            timeoutMs: 8000,
+          });
+          ScanGovernor.markDopamineRendered(sid);
+
+          // Tear down subscription if still active
+          dopamineUnsubRef.current?.();
+          dopamineUnsubRef.current = null;
+
+          interactionHandleRef.current =
+            InteractionManager.runAfterInteractions(() => {
+              interactionHandleRef.current = null;
+              if (signal.aborted) return;
+              advancePastDopamine(sid, dealResult, signal);
+            });
+        },
+      });
+
       dopamineUnsubRef.current = useEvanBrain.subscribe(
         (state, prevState) => {
           // Only react when dopamineRendered transitions false → true
@@ -348,6 +467,9 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
           // Tear down this subscription — one-shot
           dopamineUnsubRef.current?.();
           dopamineUnsubRef.current = null;
+
+          // ── Signal contract: ack received ──────────────────────────
+          PhaseContractManager.signal("ack_received");
 
           // Yield to UI thread, then advance
           interactionHandleRef.current =
@@ -360,8 +482,6 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
       );
 
       // ── Synchronous return for backward compat ──────────────────────
-      // Caller can attach dealResult to card object immediately.
-      // Read from configRef for latest isPro value
       const willShowPaywall =
         !configRef.current.isPro &&
         dealResult.hot_deal.isTriggered;
@@ -379,7 +499,9 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
    * Dismiss the paywall and complete the scan.
    */
   const dismissPaywall = useCallback(() => {
-    useEvanBrain.getState().hidePaywall();
+    ScanGovernor.hidePaywall();
+    PhaseContractManager.exit();
+    ScanScheduler.scanFinished();
   }, []);
 
   /**
@@ -389,7 +511,9 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
   const retryFromError = useCallback(() => {
     const brain = useEvanBrain.getState();
     if (brain.phase === "error") {
-      brain.resetScan();
+      ScanGovernor.resetScan();
+      PhaseContractManager.exit();
+      ScanScheduler.scanFinished();
     }
   }, []);
 
@@ -397,7 +521,6 @@ export function useEvanOrchestrator(config: OrchestratorConfig) {
     handleScan,
     cancelSequence,
     dismissPaywall,
-    advancePastDopamine,
     retryFromError,
   };
 }
