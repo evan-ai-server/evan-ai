@@ -73,6 +73,39 @@ import {
 } from "react-native-gesture-handler";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+// Phase 4/5 — canonical verdict authority + presentation + migration.
+// Anything in this file that resolves a verdict-shaped value MUST go
+// through these helpers; anything that needs colour/haptics/sound MUST
+// derive it from the canonical Verdict via verdictPresentation. No
+// substring/regex interpretation, no score-based fallback styling.
+import {
+  normalizeVerdict,
+  isCanonicalVerdict,
+  assertVerdict,
+  VerdictLeakError,
+} from "../shared/verdict.js";
+import {
+  verdictColorHex,
+  verdictHaptics,
+  verdictSound,
+  verdictLighting,
+  verdictPresentation,
+} from "../shared/verdictPresentation.js";
+import { migrateScanIfNeeded, normalizeStoredScan } from "../shared/scanMigration.js";
+import {
+  reportCacheDrift,
+  reportServerClientMismatch,
+  setVerdictTelemetrySink,
+} from "../shared/verdictTelemetry.js";
+
+// Phase 6: client-side telemetry sink. Production deployments should
+// replace this with their analytics pipe (Segment / Amplitude / etc).
+// For now we log to console + the structured event JSON so engineers
+// can grep for [verdict_disagreement_event] in dev logs.
+setVerdictTelemetrySink((event) => {
+  // eslint-disable-next-line no-console
+  console.warn("[verdict_disagreement_event]", JSON.stringify(event));
+});
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -420,12 +453,23 @@ const computeInsights = ({
       liquidityScore * 0.15 +
       spreadScore * 0.10
   );
-  // Verdict engine (Good/Risky/Great Flip)
-  let buyVerdict = "RISKY";
-  if (buyScore >= 82) buyVerdict = "GREAT FLIP";
-  else if (buyScore >= 62) buyVerdict = "GOOD BUY";
-  else if (buyScore >= 46) buyVerdict = "MEH";
-  else buyVerdict = "RISKY";
+  // Three-state verdict — BUY / HOLD / PASS. No qualifiers.
+  // BUY  ≥ 62  : signals support the purchase.
+  // HOLD ≥ 40  : not enough signal to lock the call.
+  // PASS < 40  : signals do not support the purchase.
+  //
+  // Phase 5 NOTE — LEGACY LOCAL VERDICT.
+  // This is a frontend-only score→verdict computation, used as an
+  // offline / no-server fallback. The canonical truth is the server's
+  // buyOrPass.verdict; whenever a card has it, callers MUST prefer it
+  // over this local computation. The output type is canonical, so the
+  // contract gate downstream is satisfied — but having two sources of
+  // verdict is exactly what Phase 0 set out to prevent. Track this on
+  // the Phase 6 telemetry hook (verdict_disagreement_event).
+  let buyVerdict: "BUY" | "HOLD" | "PASS" = "PASS";
+  if (buyScore >= 62) buyVerdict = "BUY";
+  else if (buyScore >= 40) buyVerdict = "HOLD";
+  else buyVerdict = "PASS";
   return {
     buyScore,
     buyVerdict,
@@ -1470,16 +1514,22 @@ const I_STEPS = useMemo(() => [
   },
 ], [SW, SH, TOP, CAMERA_CONTROLS_BOTTOM]);
 
+// Phase 5: this used to emit "STEAL"/"FAIR"/"OVERPRICED" — pure score-
+// based legacy verdict that drove tone/colour by string interpretation.
+// Replaced with canonical Verdict + presentation lookup. The buy
+// thresholds are intentionally permissive here (offline / no-server
+// fallback only); whenever a server-derived buyOrPass.verdict is
+// available, the call site MUST prefer it over this local computation.
 const getVerdict = ({ scannedPrice, cheapestPrice }) => {
   if (!Number.isFinite(scannedPrice) || !Number.isFinite(cheapestPrice)) {
     return null;
   }
-
   const diffPct = ((scannedPrice - cheapestPrice) / scannedPrice) * 100;
-
-  if (diffPct >= 30) return { label: "STEAL", tone: "green" };
-  if (diffPct >= 10) return { label: "FAIR", tone: "yellow" };
-  return { label: "OVERPRICED", tone: "red" };
+  const verdict = diffPct >= 30 ? "BUY"
+                 : diffPct >= 10 ? "HOLD"
+                 : "PASS";
+  const p = verdictPresentation(verdict);
+  return { verdict, label: p.label, tone: p.color, colorHex: p.colorHex };
 };
 
 const copyText = async (text: string) => {
@@ -1890,6 +1940,9 @@ const [saturation, setSaturation] = useState<{ saturationPct: number; level: str
 const [intelExpanded, setIntelExpanded] = useState(false);
 const _intelExpandOp = useRef(new RNAnimated.Value(0)).current;
 const _intelExpandH = useRef(new RNAnimated.Value(0)).current;
+
+// Results "More details" — collapses all secondary panels under one toggle
+const [moreDetailsOpen, setMoreDetailsOpen] = useState(false);
 
 const [showSplash, setShowSplash] = useState(true);
 // ✅ Keep splash visible minimum time
@@ -4665,10 +4718,10 @@ intuitionLine: buildIntuitionLine({
 
     setResults(top3);
     setActiveResult(card);
-    // Spatial FX: set verdict lighting based on buy score
+    // Spatial FX: BUY → buy lighting, PASS → pass lighting, HOLD → neutral.
     try {
-      const vStr = String(card?.buyVerdict || "").toUpperCase();
-      setSpatialVerdict(/GREAT|GOOD|FLIP/.test(vStr) ? "buy" : "pass");
+      const v = String(card?.buyVerdict || "").toUpperCase();
+      setSpatialVerdict(v === "BUY" ? "buy" : v === "PASS" ? "pass" : null);
     } catch {}
     try {
   const acb = Number(card?.alreadyCheaperBy || 0);
@@ -5786,16 +5839,38 @@ if (intelRaw) {
       if (parsed?.activeResult) setActiveResult(parsed.activeResult);
       if (parsed?.lastScan) setLastScan(parsed.lastScan);
 
-      // Local-first result cache: restore last scan result (Subway Mode / crash recovery)
+      // Local-first result cache: restore last scan result (Subway Mode / crash recovery).
+      // Phase 4/5: every cached card passes through migrateScanIfNeeded so legacy
+      // verdicts (STRONG_BUY / GOOD_DEAL / GREAT_FLIP / etc.) are normalized to
+      // canonical BEFORE the UI reads them. Migration is version-gated, so a
+      // card already at _schemaVersion: 3 is a no-op. The original payload is
+      // preserved under _backup for forensic audit.
       try {
         const lastResultRaw = await AsyncStorage.getItem("EVAN_LAST_RESULT_V1");
         if (lastResultRaw) {
           const lastResult = JSON.parse(lastResultRaw);
           const ageMs = Date.now() - (lastResult?.savedAt || 0);
-          // Only restore if less than 30 minutes old and no active result
           if (ageMs < 30 * 60 * 1000 && lastResult?.card && !parsed?.activeResult) {
-            setActiveResult(lastResult.card);
-            setResults([lastResult.card]);
+            // Use the lower-level normalizeStoredScan so we get the
+            // verdictChanges trace for Phase 6 telemetry.
+            const migrationResult = normalizeStoredScan(lastResult.card);
+            const migratedCard = migrationResult.scan;
+            if (migrationResult.migrated) {
+              const next = { ...lastResult, card: migratedCard };
+              AsyncStorage.setItem("EVAN_LAST_RESULT_V1", JSON.stringify(next)).catch(() => {});
+              // Fire cache-drift telemetry for every verdict-bearing field
+              // that was non-canonical on disk. Each field becomes one
+              // verdict_disagreement_event so we can locate the writer.
+              for (const change of migrationResult.verdictChanges) {
+                if (change.normalized !== null && change.normalized !== change.raw) {
+                  reportCacheDrift(`EVAN_LAST_RESULT_V1:${change.path}`, change.raw, {
+                    fromVersion: migrationResult.fromVersion,
+                  });
+                }
+              }
+            }
+            setActiveResult(migratedCard);
+            setResults([migratedCard]);
           }
         }
       } catch { /* non-fatal */ }
@@ -8040,10 +8115,10 @@ if (scanCacheRef.current.has(cacheKey)) {
 
       setResults(cachedTop3);
       setActiveResult(cachedCard);
-      // Spatial FX: verdict lighting for cached result
+      // Spatial FX: BUY → buy lighting, PASS → pass lighting, HOLD → neutral.
       try {
-        const vStr = String(cachedCard?.buyVerdict || "").toUpperCase();
-        setSpatialVerdict(/GREAT|GOOD|FLIP/.test(vStr) ? "buy" : "pass");
+        const v = String(cachedCard?.buyVerdict || "").toUpperCase();
+        setSpatialVerdict(v === "BUY" ? "buy" : v === "PASS" ? "pass" : null);
       } catch {}
       setLastScan(cached?.lastScan || null);
       goTab("results");
@@ -8957,17 +9032,13 @@ try {
       (card as any).viralHook = dealResult.viralHook;
     }
 
-    // Upgrade verdict when Deal Engine has higher conviction than heuristic
-    if (
-      dealResult.fast.verdict === "BUY" &&
-      card.buyVerdict !== "GREAT FLIP"
-    ) {
-      (card as any).buyVerdict = insights.buyScore >= 82 ? "GREAT FLIP" : "GOOD BUY";
-    } else if (
-      dealResult.fast.verdict === "PASS" &&
-      card.buyVerdict !== "RISKY"
-    ) {
-      (card as any).buyVerdict = "RISKY";
+    // Deal Engine has higher conviction than the heuristic — let it override.
+    // Only BUY and PASS override; HOLD is reached only when nothing else fires,
+    // so the engine's "CHECK" intentionally does not promote.
+    if (dealResult.fast.verdict === "BUY" && card.buyVerdict !== "BUY") {
+      (card as any).buyVerdict = "BUY";
+    } else if (dealResult.fast.verdict === "PASS" && card.buyVerdict !== "PASS") {
+      (card as any).buyVerdict = "PASS";
     }
   }
 } catch {}
@@ -9047,10 +9118,10 @@ if (countScan && !scanLockRef.current) {
 
 setResults(top3);
 setActiveResult(card);
-// Spatial FX: verdict lighting
+// Spatial FX: BUY → buy lighting, PASS → pass lighting, HOLD → neutral.
 try {
-  const vStr = String(card?.buyVerdict || "").toUpperCase();
-  setSpatialVerdict(/GREAT|GOOD|FLIP/.test(vStr) ? "buy" : "pass");
+  const v = String(card?.buyVerdict || "").toUpperCase();
+  setSpatialVerdict(v === "BUY" ? "buy" : v === "PASS" ? "pass" : null);
 } catch {}
 
 // ── Revenue: track scan complete ──────────────────────────────────────────
@@ -9150,6 +9221,7 @@ setHaggleResult(null);
 setDupeScan(null);
 setSaturation(null);
 setIntelExpanded(false);
+setMoreDetailsOpen(false);
 
 // Feature 13: duplicate scan warning
 if (card?.itemName) checkDuplicateScan(card.itemName, card.price ?? 0);
@@ -12660,6 +12732,37 @@ style={[
   isNet={netProfitEnabled}
 />
 
+{/* "More details" toggle — collapses every secondary panel under one tap. */}
+{activeResult && !loadingResults ? (
+  <View style={{ paddingHorizontal: 18, paddingTop: 8, paddingBottom: 4 }}>
+    <Pressable
+      onPress={() => { try { Haptics.selectionAsync(); } catch {} setMoreDetailsOpen(o => !o); }}
+      style={({ pressed }) => [{
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        backgroundColor: "rgba(255,255,255,0.04)",
+        borderRadius: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "rgba(255,255,255,0.10)",
+        paddingVertical: 12,
+        opacity: pressed ? 0.7 : 1,
+      }]}
+    >
+      <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, fontWeight: "800", letterSpacing: 1.4, textTransform: "uppercase" }}>
+        {moreDetailsOpen ? "Hide details" : "More details"}
+      </Text>
+      <Ionicons
+        name={moreDetailsOpen ? "chevron-up" : "chevron-down"}
+        size={13}
+        color="rgba(255,255,255,0.45)"
+      />
+    </Pressable>
+  </View>
+) : null}
+
+{moreDetailsOpen ? (<>
 {/* Feature 8: Set Alert row — visible below results when item is loaded */}
 {activeResult && !loadingResults ? (
   <View style={{ paddingHorizontal: 18, paddingTop: 6 }}>
@@ -13053,6 +13156,7 @@ style={[
     </View>
   );
 })() : null}
+</>) : null}
 
 </ScrollView>
 </SafeAreaView>
@@ -14614,14 +14718,14 @@ ${shareLink}`
 <Text
   style={[
     styles.verdictChip,
-    activeResult?.buyVerdict === "GREAT FLIP"
+    activeResult?.buyVerdict === "BUY"
       ? styles.verdict_green
-      : activeResult?.buyVerdict === "RISKY"
+      : activeResult?.buyVerdict === "PASS"
       ? styles.verdict_red
       : styles.verdict_yellow,
   ]}
 >
-  {String(activeResult?.buyVerdict || "GOOD BUY").toUpperCase()}
+  {String(activeResult?.buyVerdict || "HOLD").toUpperCase()}
 </Text>
 {brainHotSignal && brainHotSignal.tier !== "COLD" ? (
   <View style={{
@@ -15886,7 +15990,8 @@ const pick = await ImagePicker.launchImageLibraryAsync({
           price: item.marketPrice ?? item.paid,
           scannedPrice: item.paid,
           savedAmount: item.delta != null && item.delta < 0 ? Math.abs(item.delta) : 0,
-          buyVerdict: item.overpaid ? "OVERPRICED" : "FAIR",
+          // Phase 5: emit canonical Verdict only. Was "OVERPRICED"/"FAIR".
+          buyVerdict: item.overpaid ? "PASS" : "HOLD",
         },
       }));
     if (newEntries.length) {
@@ -18760,7 +18865,11 @@ function weeklyStats(events: IntelEvent[]) {
   const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const scans = (events || []).filter((e) => e.type === "scan" && e.t >= since);
   const savings = scans.reduce((s, x) => s + (safeNum(x.savings) || 0), 0);
-  const avoided = scans.filter((s) => s.verdict === "overpriced").length;
+  // Phase 5: count by canonical PASS, with normalization for any legacy-
+  // shaped verdicts that may still live in cached event streams. Was a
+  // direct === "overpriced" check, which produced silent zero-counts
+  // for any scan stored in canonical form.
+  const avoided = scans.filter((s) => normalizeVerdict(s.verdict) === "PASS").length;
   return { weeklySavings: Math.round(savings), avoidedCount: avoided };
 }
 function computeIQ(events: IntelEvent[]) {
