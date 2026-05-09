@@ -93,18 +93,52 @@ import {
 } from "../shared/verdictPresentation.js";
 import { migrateScanIfNeeded, normalizeStoredScan } from "../shared/scanMigration.js";
 import {
+  hydrateStoredScan,
+  isStoredScanFresh,
+  normalizeStoredScan as normalizeStoredScanV3,
+  STORED_SCAN_SCHEMA_VERSION,
+} from "../shared/storedScan.js";
+import {
+  buildNotification,
+  buildNotificationFromVerdict,
+  REASON_CODES,
+} from "../shared/notification.js";
+import {
+  buildVerdictAnalyticsEvent,
   reportCacheDrift,
   reportServerClientMismatch,
   setVerdictTelemetrySink,
 } from "../shared/verdictTelemetry.js";
 
-// Phase 6: client-side telemetry sink. Production deployments should
-// replace this with their analytics pipe (Segment / Amplitude / etc).
-// For now we log to console + the structured event JSON so engineers
-// can grep for [verdict_disagreement_event] in dev logs.
+// Phase 6 + Phase 11: client-side telemetry sink. Mirrors every
+// verdict_disagreement_event into the dev console AND ships it to the
+// server's /telemetry/verdict-disagreement endpoint so server + client
+// drift land in the same dashboard. Sink is fire-and-forget — a
+// network failure must not break a user request.
 setVerdictTelemetrySink((event) => {
-  // eslint-disable-next-line no-console
-  console.warn("[verdict_disagreement_event]", JSON.stringify(event));
+  try {
+    // eslint-disable-next-line no-console
+    console.warn("[verdict_disagreement_event]", JSON.stringify(event));
+  } catch { /* console may be missing in some test harnesses */ }
+  try {
+    const baseUrl = (typeof SAFE_API_BASE === "string" && SAFE_API_BASE.length > 0)
+      ? SAFE_API_BASE
+      : null;
+    if (!baseUrl) return;
+    fetch(`${baseUrl}/telemetry/verdict-disagreement`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        source:        event?.source        ?? "client",
+        trigger:       event?.trigger       ?? "server-vs-client",
+        serverVerdict: event?.expectedRaw   ?? event?.expected ?? null,
+        clientVerdict: event?.receivedRaw   ?? event?.received ?? null,
+        scanId:        event?.meta?.scanId  ?? null,
+        userId:        event?.meta?.userId  ?? null,
+        platform:      "rn",
+      }),
+    }).catch(() => { /* telemetry is best-effort */ });
+  } catch { /* never propagate */ }
 });
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -5851,16 +5885,22 @@ if (intelRaw) {
           const lastResult = JSON.parse(lastResultRaw);
           const ageMs = Date.now() - (lastResult?.savedAt || 0);
           if (ageMs < 30 * 60 * 1000 && lastResult?.card && !parsed?.activeResult) {
-            // Use the lower-level normalizeStoredScan so we get the
-            // verdictChanges trace for Phase 6 telemetry.
+            // Phase 4/5: legacy verdict-field normalizer (untouched).
             const migrationResult = normalizeStoredScan(lastResult.card);
-            const migratedCard = migrationResult.scan;
-            if (migrationResult.migrated) {
+            // Phase 7: hydrate against the v3 contract — convert legacy
+            // verdicts to canonical at the TOP LEVEL, archive legacy
+            // strings under .legacy, drop unrecoverable docs entirely.
+            const v3Result = normalizeStoredScanV3(migrationResult.scan, {
+              source: "EVAN_LAST_RESULT_V1",
+            });
+            const migratedCard = v3Result.dropped ? null : v3Result.scan;
+            const dirty = migrationResult.migrated || v3Result.changed;
+
+            if (dirty && migratedCard) {
               const next = { ...lastResult, card: migratedCard };
               AsyncStorage.setItem("EVAN_LAST_RESULT_V1", JSON.stringify(next)).catch(() => {});
-              // Fire cache-drift telemetry for every verdict-bearing field
-              // that was non-canonical on disk. Each field becomes one
-              // verdict_disagreement_event so we can locate the writer.
+              // Phase 6 telemetry: each non-canonical verdict-bearing field
+              // emits one verdict_disagreement_event so we can locate the writer.
               for (const change of migrationResult.verdictChanges) {
                 if (change.normalized !== null && change.normalized !== change.raw) {
                   reportCacheDrift(`EVAN_LAST_RESULT_V1:${change.path}`, change.raw, {
@@ -5868,9 +5908,16 @@ if (intelRaw) {
                   });
                 }
               }
+            } else if (v3Result.dropped) {
+              // Cache held an unrecoverable scan — wipe so the UI doesn't
+              // try to render a contradictory card on next load.
+              AsyncStorage.removeItem("EVAN_LAST_RESULT_V1").catch(() => {});
             }
-            setActiveResult(migratedCard);
-            setResults([migratedCard]);
+
+            if (migratedCard) {
+              setActiveResult(migratedCard);
+              setResults([migratedCard]);
+            }
           }
         }
       } catch { /* non-fatal */ }
@@ -9080,10 +9127,22 @@ if (countScan && !scanLockRef.current) {
     setScansUsed((prev) => prev + 1);
   }
 
-  // Result persistence: save to AsyncStorage for Subway Mode / crash recovery
-  AsyncStorage.setItem("EVAN_LAST_RESULT_V1", JSON.stringify({
-    card, savedAt: Date.now(), photoUri,
-  })).catch(() => {});
+  // Phase 7: persist the card under the v3 contract — top-level
+  // canonical verdict, _schemaVersion: 3, legacy strings archived
+  // under .legacy. normalizeStoredScanV3 returns dropped:true if no
+  // canonical verdict can be derived; in that case we skip the write
+  // rather than persisting a record the next load would reject.
+  try {
+    const v3 = normalizeStoredScanV3(card, { source: "save:EVAN_LAST_RESULT_V1", telemetry: false });
+    const cardForDisk = v3.dropped ? card : v3.scan;
+    AsyncStorage.setItem("EVAN_LAST_RESULT_V1", JSON.stringify({
+      card: cardForDisk, savedAt: Date.now(), photoUri,
+    })).catch(() => {});
+  } catch {
+    AsyncStorage.setItem("EVAN_LAST_RESULT_V1", JSON.stringify({
+      card, savedAt: Date.now(), photoUri,
+    })).catch(() => {});
+  }
 
   if (Number.isFinite(card.savedAmount)) {
     setSavingsTotal((prev) => {

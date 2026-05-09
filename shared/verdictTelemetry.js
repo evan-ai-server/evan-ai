@@ -245,3 +245,39 @@ export function buildAnalyticsPayload({ verdict, source, legacy, extra }) {
   }
   return payload;
 }
+
+/**
+ * Phase 10 — strict analytics event builder. Same contract as the
+ * server: verdict (canonical) + source ("server"|"client"|"cache") +
+ * optional legacy + optional extra. Throws on legacy verdicts or
+ * unknown sources so analytics drift surfaces at emit time.
+ *
+ * @param {object} args
+ * @param {string} args.event
+ * @param {unknown} args.verdict
+ * @param {"server"|"client"|"cache"} args.source
+ * @param {Record<string, unknown>} [args.legacy]
+ * @param {Record<string, unknown>} [args.extra]
+ */
+export function buildVerdictAnalyticsEvent({ event, verdict, source, legacy, extra }) {
+  if (typeof event !== "string" || event.length === 0) {
+    throw new Error("buildVerdictAnalyticsEvent: `event` must be a non-empty string");
+  }
+  if (source !== "server" && source !== "client" && source !== "cache") {
+    throw new Error(`buildVerdictAnalyticsEvent: invalid source ${JSON.stringify(source)}`);
+  }
+  if (!isCanonicalVerdict(verdict)) {
+    throw new Error(`buildVerdictAnalyticsEvent: non-canonical verdict ${JSON.stringify(verdict)}`);
+  }
+  const payload = {
+    event,
+    verdict,
+    source,
+    ts: Date.now(),
+    ...(extra ?? {}),
+  };
+  if (legacy && Object.keys(legacy).length > 0) {
+    payload.legacy = legacy;
+  }
+  return payload;
+}

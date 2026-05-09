@@ -262,6 +262,40 @@ export function verdictForPrompt(value, _source) {
   return normalizeVerdict(value);
 }
 
+/**
+ * Phase 9 — sanitize a prompt context object before it lands in an LLM
+ * call. Mutates the context defensively (returns a NEW object) so that:
+ *
+ *   - Every verdict-shaped field is either canonical or `null`.
+ *   - Legacy strings like "STRONG_BUY", "GREAT_FLIP", "BUY_WITH_CAUTION"
+ *     are scrubbed out — never handed to the model.
+ *
+ * @param {Record<string, unknown>} ctx
+ * @returns {{ ctx: Record<string, unknown>, drifted: Array<{ field: string, raw: unknown, canonical: Verdict | null }> }}
+ */
+export function sanitizePromptContext(ctx) {
+  if (ctx == null || typeof ctx !== "object" || Array.isArray(ctx)) {
+    return { ctx: {}, drifted: [] };
+  }
+  const VERDICT_FIELDS = ["verdict", "buyVerdict", "buySignal", "primaryAction", "dealVerdict"];
+  const out = { ...ctx };
+  const drifted = [];
+  for (const field of VERDICT_FIELDS) {
+    if (!(field in out)) continue;
+    const raw = out[field];
+    if (raw == null) continue;
+    const canonical = normalizeVerdict(raw);
+    if (canonical === null) {
+      out[field] = null;
+      drifted.push({ field, raw, canonical: null });
+    } else if (!isCanonicalVerdict(raw)) {
+      out[field] = canonical;
+      drifted.push({ field, raw, canonical });
+    }
+  }
+  return { ctx: out, drifted };
+}
+
 // ── Internal ─────────────────────────────────────────────────────────
 
 /**
