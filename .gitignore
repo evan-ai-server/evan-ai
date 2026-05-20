@@ -34,6 +34,13 @@ yarn-error.*
 .env
 .env*.local
 
+# Editor / shell backup files — these can contain secrets (nano writes .save
+# copies of whatever's in the buffer, including .env). NEVER track them.
+*.save
+*~
+*.swp
+*.bak
+
 # typescript
 *.tsbuildinfo
 
