@@ -358,13 +358,19 @@ export function CardDeck({
   const handleCardPress = useCallback((idx: number) => {
     const card = cards[idx];
     if (!card) return;
-    const url   = card.buyLink || (card as any).url || null;
+    // Prefer the hardened directUrl (Phase 2/8) — falls through to legacy
+    // fields only if the resolver couldn't pick a real merchant URL.
+    const url =
+      (card as any).directUrl ||
+      card.buyLink ||
+      (card as any).url ||
+      null;
     const title = card.itemName || (card as any).title || "Listing";
-    // Feature 5: try deep link → in-app browser → fallback
-    if (url) {
-      openProductLink(url);
-      onPressCard?.(url, title); // notify parent (e.g. for analytics)
-    }
+    // openProductLink handles null by falling back to an eBay search built
+    // from the title, and rejects google.com/aclk/search wrappers even if
+    // they slip past the trusted-domain check.
+    openProductLink(url, { titleHint: title });
+    if (url) onPressCard?.(url, title);
   }, [cards, onPressCard]);
 
   const isWatchlisted = useCallback((card: CardData) => {

@@ -2,6 +2,8 @@
  * openProductLink — smart trusted product URL opener.
  *
  * - Only opens URLs from the trusted resale platform list
+ * - HARD-rejects Google redirect / search / aclk / shopping-aggregator URLs
+ *   even if they sneak past the trusted-domain whitelist (Phase 8 hardening)
  * - Falls back to eBay search if URL is null or untrusted
  * - No warning dialogs, no "unverified link" UI — just opens cleanly
  * - Uses SFSafariViewController (iOS) / Chrome Custom Tabs (Android)
@@ -9,6 +11,37 @@
  */
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
+
+// ── Google redirect / search / aclk rejection ──────────────────────────────
+// We refuse to open these no matter what. They are the #1 source of "I tapped
+// the listing and it took me to a Google search page" complaints.
+const GOOGLE_HOSTS_RE = /(^|\.)(google\.|googleadservices\.|googlesyndication\.|googleusercontent\.com|doubleclick\.net)/i;
+
+function isGoogleRedirectUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const host = (u.hostname || "").toLowerCase();
+    const path = (u.pathname || "").toLowerCase();
+    if (/\/aclk(\?|\/|$)/i.test(url)) return true;
+    if (!GOOGLE_HOSTS_RE.test(host)) return false;
+    return (
+      path === "/url" ||
+      path === "/search" ||
+      path.startsWith("/aclk") ||
+      path.startsWith("/shopping/product")
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Dev-only log helper. Stripped in production builds.
+const devLog = (event: string, payload?: Record<string, unknown>) => {
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    // eslint-disable-next-line no-console
+    console.log(`[openProductLink] ${event}`, payload || "");
+  }
+};
 
 // Trusted resale + marketplace domains
 const TRUSTED_DOMAINS = [
@@ -119,12 +152,23 @@ export async function openProductLink(
 ): Promise<void> {
   const { preferDeepLink = true, titleHint = null } = opts;
 
-  // Resolve URL: use provided URL if trusted, otherwise build eBay fallback
+  // Resolve URL:
+  // 1. Reject Google redirect / search / aclk / shopping-aggregator URLs
+  //    outright — never let one of these reach the browser.
+  // 2. Open as-is if trusted.
+  // 3. Otherwise silently fall back to an eBay search built from the title.
   let resolvedUrl: string;
-  if (url && isTrustedUrl(url)) {
+  if (!url) {
+    devLog("MISSING_DIRECT_URL", { titleHint });
+    resolvedUrl = ebayFallbackUrl(titleHint);
+  } else if (isGoogleRedirectUrl(url)) {
+    devLog("BLOCKED_GOOGLE_REDIRECT", { url, titleHint });
+    resolvedUrl = ebayFallbackUrl(titleHint);
+  } else if (isTrustedUrl(url)) {
+    devLog("OPEN_DIRECT_PRODUCT_URL", { url });
     resolvedUrl = url;
   } else {
-    // Silently fall back to eBay search — no warning shown to user
+    devLog("UNTRUSTED_URL_FALLBACK", { url, titleHint });
     resolvedUrl = ebayFallbackUrl(titleHint);
   }
 
@@ -135,4 +179,27 @@ export async function openProductLink(
   }
 
   await openInBrowser(resolvedUrl);
+}
+
+/**
+ * pickDirectUrl — caller helper that returns the safest URL for an item.
+ *
+ * Prefers item.directUrl (hardened, Phase 2) over legacy buyLink/link/url.
+ * Returns null if no usable direct URL exists — callers should disable the
+ * "Open listing" button or fall back to manual search in that case.
+ */
+export function pickDirectUrl(item: {
+  directUrl?: string | null;
+  buyLink?: string | null;
+  link?: string | null;
+  url?: string | null;
+} | null | undefined): string | null {
+  if (!item) return null;
+  const candidates = [item.directUrl, item.buyLink, item.link, item.url];
+  for (const c of candidates) {
+    if (!c || typeof c !== "string") continue;
+    if (isGoogleRedirectUrl(c)) continue;
+    if (isTrustedUrl(c)) return c;
+  }
+  return null;
 }
