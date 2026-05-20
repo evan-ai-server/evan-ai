@@ -4975,6 +4975,14 @@ if (batchMode) {
   setScanPriceInput("");
   setPriceSubmitted(false);
 
+  // Clear any prior scan result the moment a new photo is captured.
+  // Without this, the result card from the last scan can bleed through
+  // until handleUsePhoto fires, which reads as "it scanned instantly"
+  // even though the new scan hasn't started.
+  setActiveResult(null);
+  setResults([]);
+  setResultModalOpen(false);
+
   setIsCapturing(false);
   scanLockRef.current = false;
 };

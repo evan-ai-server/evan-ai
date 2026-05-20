@@ -22,13 +22,17 @@ function isGoogleRedirectUrl(url: string): boolean {
     const u = new URL(url);
     const host = (u.hostname || "").toLowerCase();
     const path = (u.pathname || "").toLowerCase();
+    // /aclk is an ad-click redirect on any host.
     if (/\/aclk(\?|\/|$)/i.test(url)) return true;
     if (!GOOGLE_HOSTS_RE.test(host)) return false;
+    // Only reject *pure redirect* paths. /shopping/product/ is a browsable
+    // aggregator page that lists real merchant offers — strictly better than
+    // a title-built eBay search fallback when the server can't extract a
+    // direct merchant URL.
     return (
       path === "/url" ||
       path === "/search" ||
-      path.startsWith("/aclk") ||
-      path.startsWith("/shopping/product")
+      path.startsWith("/aclk")
     );
   } catch {
     return false;
@@ -91,7 +95,22 @@ function getDomain(url: string): string | null {
 function isTrustedUrl(url: string): boolean {
   const domain = getDomain(url);
   if (!domain) return false;
-  return TRUSTED_DOMAINS.some((trusted) => domain === trusted || domain.endsWith("." + trusted));
+  if (TRUSTED_DOMAINS.some((trusted) => domain === trusted || domain.endsWith("." + trusted))) {
+    return true;
+  }
+  // Google Shopping product aggregator pages are browsable — the server
+  // surfaces them as a low-confidence fallback when no direct merchant URL
+  // could be resolved. Treat them as trusted so the user lands on the
+  // aggregator instead of an eBay search built from the title.
+  try {
+    const u = new URL(url);
+    const host = (u.hostname || "").toLowerCase();
+    const path = (u.pathname || "").toLowerCase();
+    if (/(^|\.)google\./.test(host) && path.startsWith("/shopping/product")) {
+      return true;
+    }
+  } catch {}
+  return false;
 }
 
 /** Build an eBay search URL as fallback for any item title */
