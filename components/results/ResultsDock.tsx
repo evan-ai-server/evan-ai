@@ -36,6 +36,14 @@ interface ResultsDockProps {
   onScanAgain?: () => void;
   onAskAI?: () => void;
   onAutoList?: () => void;
+  /** Lowball Generator — opens index.tsx's lowball sheet (existing impl). */
+  onLowball?: () => void;
+  /**
+   * Bought It — fires when the user confirms a purchase.
+   * Parent should both open DecisionSheet and trigger ConfettiBurst.
+   * If omitted, falls back to the local DecisionSheet without confetti.
+   */
+  onBoughtIt?: () => void;
 }
 
 export function ResultsDock({
@@ -52,6 +60,8 @@ export function ResultsDock({
   onScanAgain,
   onAskAI,
   onAutoList,
+  onLowball,
+  onBoughtIt,
 }: ResultsDockProps) {
   const insets = useSafeAreaInsets();
   const [decisionOpen, setDecisionOpen] = useState(false);
@@ -142,28 +152,43 @@ export function ResultsDock({
         </View>
       ) : null}
 
-      {/* Primary row: Open + New Scan */}
+      {/* Primary row: Open + New Scan.
+          Open button is intentionally compact (flex 2:2). When the merchant
+          name is long (eBay – frankshop21s, etc.) we drop the store name and
+          show the generic "View listing" so the chip never billboard-dominates
+          the dock. The full merchant attribution lives in the card's store
+          line, not this CTA. */}
       <View style={styles.primaryRow}>
         <PressableScale onPress={onOpenListing} style={styles.openBtn} scale={0.96} haptic>
-          <Ionicons name="open-outline" size={17} color="#000" />
+          <Ionicons name="open-outline" size={16} color="#000" />
           <Text style={styles.openText} allowFontScaling={false} numberOfLines={1}>
-            {store ? `View on ${store}` : "View listing"}
+            {store && String(store).length <= 9 ? `View on ${store}` : "View listing"}
           </Text>
         </PressableScale>
 
         <PressableScale onPress={onNewScan} style={styles.newScanBtn} scale={0.96} haptic>
-          <Ionicons name="camera-outline" size={17} color={C.text} />
+          <Ionicons name="camera-outline" size={16} color={C.text} />
           <Text style={styles.newScanText} allowFontScaling={false} numberOfLines={1}>New scan</Text>
         </PressableScale>
       </View>
 
-      {/* Secondary row: Bought · Ask AI · Track · Copy · Profit · Details */}
+      {/* Action grid — restored. Layout: 3 columns, wraps to 3 rows on phones.
+          `Bought it` and `Ask AI` are highlighted (premium chips); everything
+          else is the quiet secondary treatment. Each chip is rendered only
+          when its callback is wired, so a parent that doesn't pass `onAskAI`
+          (e.g. legacy host) gets a graceful tighter grid instead of dead taps. */}
       <View style={styles.secondaryRow}>
         <ActionChip
           icon="bag-check-outline"
           label="Bought it"
-          onPress={() => setDecisionOpen(true)}
           highlight
+          onPress={() => {
+            // Confetti is parent-owned (it overlays the entire results screen);
+            // the dock just signals the intent. The DecisionSheet stays as the
+            // attribution capture path below.
+            if (onBoughtIt) onBoughtIt();
+            setDecisionOpen(true);
+          }}
         />
         {onAskAI ? (
           <ActionChip icon="sparkles" label="Ask AI" onPress={onAskAI} highlight />
@@ -171,10 +196,13 @@ export function ResultsDock({
         {onAutoList ? (
           <ActionChip icon="document-text-outline" label="List it" onPress={onAutoList} highlight />
         ) : null}
-        <ActionChip icon="bookmark-outline" label="Track"   onPress={onTrack} />
+        <ActionChip icon="bookmark-outline" label="Track" onPress={onTrack} />
         <ActionChip icon="copy-outline"     label="Copy"    onPress={onCopy} />
         {onScanAgain ? (
           <ActionChip icon="refresh-outline"  label="Rescan"  onPress={onScanAgain} />
+        ) : null}
+        {onLowball ? (
+          <ActionChip icon="chatbubbles-outline" label="Lowball" onPress={onLowball} />
         ) : null}
         {onProfitCalc ? (
           <ActionChip icon="calculator-outline" label="Profit" onPress={onProfitCalc} />
@@ -271,27 +299,29 @@ const styles = StyleSheet.create({
     gap: SP.sm,
     marginBottom: SP.sm,
   },
+  // Open + New scan share the row 50/50 so the white CTA never billboards.
   openBtn: {
-    flex: 3,
-    minHeight: 52,
+    flex: 1,
+    minHeight: 48,
     borderRadius: R.lg,
     backgroundColor: "#ffffff",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: SP.sm,
+    gap: 6,
+    paddingHorizontal: SP.sm,
     borderTopWidth: 1,
     borderTopColor: "rgba(255,255,255,0.45)",
   },
   openText: {
     ...TY.bodyBold,
     color: "#000",
-    fontSize: 15,
-    fontWeight: "900",
+    fontSize: 14,
+    fontWeight: "800",
   },
   newScanBtn: {
-    flex: 2,
-    minHeight: 52,
+    flex: 1,
+    minHeight: 48,
     borderRadius: R.lg,
     backgroundColor: C.s2,
     borderWidth: 1,
@@ -299,42 +329,51 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: SP.sm,
+    gap: 6,
+    paddingHorizontal: SP.sm,
   },
   newScanText: {
     ...TY.bodyBold,
     color: C.text,
-    fontSize: 14,
+    fontSize: 13,
   },
 
-  // Secondary chips
+  // Secondary chip grid — wraps cleanly across 2–3 rows on phones.
+  // Each chip claims ~28% of the row width so 3 fit per line with the gap.
+  // minWidth keeps the chips visually equal even when labels are 4–8 chars.
   secondaryRow: {
     flexDirection: "row",
     gap: SP.sm,
     flexWrap: "wrap",
+    rowGap: SP.sm,
   },
   chip: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 5,
     paddingHorizontal: SP.md,
-    paddingVertical: 9,
+    paddingVertical: 10,
     borderRadius: R.md,
     backgroundColor: C.s1,
     borderWidth: 1,
     borderColor: C.border,
+    minWidth: 96,
+    flexGrow: 1,
+    flexBasis: "28%",
   },
   chipText: {
     ...TY.label,
     color: C.text2,
     fontSize: 12,
+    fontWeight: "600" as const,
   },
   chipHighlight: {
     backgroundColor: "rgba(255,255,255,0.10)",
     borderColor: "rgba(255,255,255,0.22)",
   },
   chipTextHighlight: {
-    color: "rgba(255,255,255,0.90)",
-    fontWeight: "600" as const,
+    color: "rgba(255,255,255,0.92)",
+    fontWeight: "700" as const,
   },
 });

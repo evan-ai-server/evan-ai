@@ -29,7 +29,6 @@ import { Ionicons } from "@expo/vector-icons";
 import Reanimated, {
   useSharedValue,
   useAnimatedStyle,
-  useAnimatedReaction,
   withSequence,
   withSpring,
   withTiming,
@@ -44,7 +43,6 @@ import * as Haptics from "expo-haptics";
 import {
   C, SP, R, TY, SH,
   CARD, IOS,
-  verdictStyle, confidenceLabel,
   fmtMoney, Feedback,
 } from "../design/DS";
 import { PriceHistoryChart, PriceChartPoint } from "./PriceHistoryChart";
@@ -252,8 +250,8 @@ type VelocityComps = NonNullable<CardData["ebaySoldComps"]>;
 const VELOCITY_STYLES: Record<string, { bg: string; border: string; icon: string; color: string }> = {
   hot:    { bg: "rgba(255,80,50,0.16)",    border: "rgba(255,80,50,0.35)",    icon: "flame",          color: "rgba(255,140,100,0.95)" },
   active: { bg: "rgba(0,210,120,0.14)",   border: "rgba(0,210,120,0.30)",   icon: "trending-up",    color: "rgba(100,255,170,0.95)" },
-  steady: { bg: "rgba(100,180,255,0.12)", border: "rgba(100,180,255,0.26)", icon: "pulse",           color: "rgba(140,210,255,0.92)" },
-  slow:   { bg: "rgba(255,200,60,0.12)",  border: "rgba(255,200,60,0.26)",  icon: "time-outline",    color: "rgba(255,215,100,0.88)" },
+  steady: { bg: "rgba(255,255,255,0.06)", border: "rgba(255,255,255,0.14)", icon: "pulse",           color: "rgba(255,255,255,0.72)" },
+  slow:   { bg: "rgba(255,255,255,0.05)", border: "rgba(255,255,255,0.12)", icon: "time-outline",    color: "rgba(255,255,255,0.58)" },
   rare:   { bg: "rgba(255,255,255,0.06)", border: "rgba(255,255,255,0.14)", icon: "hourglass-outline", color: "rgba(200,200,200,0.70)" },
 };
 
@@ -381,110 +379,34 @@ function cardLabel(
   isLowest: boolean,
   verdict?: string,
 ): { text: string; bg: string; border: string; color: string; heavy?: boolean } | null {
+  // Restrained palette: dark backings with tinted text so badges remain
+  // crisp against bright product photos (the prior 10%-opacity green-on-green
+  // washed out completely over the white sunglasses image in screenshot 2).
   if (isHero) {
     if (isLowest)
-      return { text: "VALUE FLOOR", bg: "rgba(255,200,60,0.16)", border: "rgba(255,200,60,0.35)", color: "rgba(255,225,100,0.96)" };
+      return { text: "LOWEST", bg: "rgba(8,18,12,0.78)", border: "rgba(180,255,200,0.45)", color: "rgba(180,255,200,1)" };
     if (/GREAT|FLIP/i.test(verdict || ""))
-      return { text: "BEST FLIP",  bg: "rgba(0,210,120,0.18)", border: "rgba(0,210,120,0.35)", color: "rgba(150,255,190,0.95)" };
-    return { text: "BEST DEAL", bg: "rgba(255,255,255,0.12)", border: "rgba(255,255,255,0.28)", color: "rgba(255,255,255,0.96)" };
+      return { text: "TOP FLIP", bg: "rgba(8,18,12,0.78)", border: "rgba(180,255,200,0.45)", color: "rgba(180,255,200,1)" };
+    return { text: "BEST DEAL", bg: "rgba(12,12,12,0.78)", border: "rgba(255,255,255,0.35)", color: "rgba(255,255,255,1)" };
   }
 
   if (price == null) return null;
 
-  // PREMIUM ANCHOR: >2.5x the scanned price (show market ceiling for context)
   if (Number.isFinite(scannedPrice) && price > scannedPrice! * 2.5)
-    return { text: "PREMIUM ANCHOR", bg: "rgba(180,140,255,0.10)", border: "rgba(180,140,255,0.32)", color: "rgba(210,185,255,0.88)", heavy: true };
+    return { text: "ANCHOR", bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.14)", color: "rgba(255,255,255,0.55)" };
 
-  // MARKET ALIGNMENT: within ±20% of scanned price
   if (Number.isFinite(scannedPrice) && price >= scannedPrice! * 0.80 && price <= scannedPrice! * 1.20)
-    return { text: "MARKET ALIGN", bg: "rgba(100,180,255,0.12)", border: "rgba(100,180,255,0.28)", color: "rgba(150,210,255,0.92)" };
+    return { text: "MATCH", bg: "rgba(255,255,255,0.06)", border: "rgba(255,255,255,0.16)", color: "rgba(255,255,255,0.75)" };
 
   if (heroPrice == null)
-    return { text: "CHEAPER ALT", bg: "rgba(0,210,120,0.12)", border: "rgba(0,210,120,0.28)", color: "rgba(120,255,160,0.92)" };
+    return { text: "CHEAPER", bg: "rgba(8,18,12,0.72)", border: "rgba(180,255,200,0.38)", color: "rgba(180,255,200,0.98)" };
   const pctDiff = ((heroPrice - price) / heroPrice) * 100;
   if (pctDiff >= 18)
-    return { text: "HIDDEN GEM",  bg: "rgba(255,200,60,0.14)", border: "rgba(255,200,60,0.30)", color: "rgba(255,215,100,0.95)" };
+    return { text: "HIDDEN GEM", bg: "rgba(8,18,12,0.78)", border: "rgba(180,255,200,0.45)", color: "rgba(180,255,200,1)" };
   if (pctDiff > 0)
-    return { text: "CHEAPER ALT", bg: "rgba(0,210,120,0.12)", border: "rgba(0,210,120,0.28)", color: "rgba(120,255,160,0.92)" };
-  return { text: "PREMIUM PICK", bg: "rgba(255,255,255,0.07)", border: "rgba(255,255,255,0.18)", color: "rgba(255,255,255,0.65)" };
+    return { text: "CHEAPER", bg: "rgba(8,18,12,0.72)", border: "rgba(180,255,200,0.38)", color: "rgba(180,255,200,0.98)" };
+  return { text: "PREMIUM", bg: "rgba(12,12,12,0.68)", border: "rgba(255,255,255,0.25)", color: "rgba(255,255,255,0.78)" };
 }
-
-// ─── Visual DNA match helper ──────────────────────────────────────────────────
-interface DnaAttr { label: string; pct: number }
-
-function computeDnaAttrs(vi: any, title: string): DnaAttr[] {
-  if (!vi || typeof vi !== "object") return [];
-  const t = (title || "").toLowerCase();
-  const candidates: { label: string; value: string }[] = [];
-  if (vi.brand)         candidates.push({ label: "Brand",  value: String(vi.brand) });
-  if (vi.style || vi.model)
-                        candidates.push({ label: "Model",  value: String(vi.style || vi.model) });
-  if (vi.color)         candidates.push({ label: "Color",  value: String(vi.color) });
-  return candidates
-    .map(({ label, value }) => {
-      const v     = value.toLowerCase();
-      const words = v.split(/\s+/).filter((w) => w.length > 2);
-      if (!words.length) return null;
-      const hits = words.filter((w) => t.includes(w)).length;
-      const pct  = Math.round((hits / words.length) * 100);
-      return pct > 0 ? { label, pct } : null;
-    })
-    .filter((a): a is DnaAttr => a !== null);
-}
-
-// ─── Avg Market Counter (Price Pulse) ────────────────────────────────────────
-function AvgMarketCounter({ value }: { value: number }) {
-  const anim = useSharedValue(0);
-  const [display, setDisplay] = useState("—");
-
-  const updateDisplay = useCallback((v: number) => {
-    setDisplay(fmtMoney(v));
-  }, []);
-
-  useEffect(() => {
-    anim.value = 0;
-    // Spring with slight overshoot: damping 8, stiffness 130 → overshoots ~4%
-    anim.value = withSpring(value, { damping: 8, stiffness: 130, mass: 0.9 });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
-
-  useAnimatedReaction(
-    () => Math.round(anim.value),
-    (v, prev) => {
-      if (v !== prev) runOnJS(updateDisplay)(v);
-    },
-  );
-
-  return (
-    <View style={avgStyles.row}>
-      <Ionicons name="stats-chart-outline" size={10} color="rgba(160,210,255,0.65)" />
-      <Text style={avgStyles.label} allowFontScaling={false} numberOfLines={1}>Avg Market</Text>
-      <Text style={avgStyles.value} allowFontScaling={false} numberOfLines={1}>{display}</Text>
-    </View>
-  );
-}
-
-const avgStyles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    marginTop: 3,
-    marginBottom: 1,
-  },
-  label: {
-    fontSize: 10,
-    fontWeight: "500",
-    color: "rgba(160,210,255,0.60)",
-    letterSpacing: 0.4,
-  },
-  value: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "rgba(200,230,255,0.92)",
-    letterSpacing: 0.2,
-  },
-});
 
 // ─── Price Ladder ─────────────────────────────────────────────────────────────
 const LADDER_TIERS = [
@@ -609,15 +531,7 @@ export function ResultCard({
     } catch {}
   }, [capturingShare, name, price, isHero, onShare, onVaultSave, data.avgMarket, data.scannedPrice, scannedPrice]);
 
-  // Confidence dot color
   const conf = Number(data.visionConfidence ?? 0);
-  const confDotColor =
-    conf >= 0.7 ? "rgba(120,255,180,0.85)" :
-    conf >= 0.5 ? "rgba(255,210,80,0.85)" :
-    "rgba(255,100,80,0.80)";
-
-  // Verdict style for hero card
-  const verdict = data.buyVerdict ? verdictStyle(data.buyVerdict) : null;
 
   // Savings (hero only)
   const saved     = Number.isFinite(Number(data.savedAmount)) ? Number(data.savedAmount) : null;
@@ -636,12 +550,7 @@ export function ResultCard({
     ? computeVelocitySignal(data.priceChartPoints)
     : null;
 
-  // Visual DNA — attribute-level match between vision identity and listing title
-  const dnaAttrs = (isHero && data.visionIdentity)
-    ? computeDnaAttrs(data.visionIdentity, name)
-    : [];
-
-  // Confidence Range — "Est. $X – $Y" (App Store compliant: no "Guaranteed" language)
+  // Margin range (App Store compliant: no "Guaranteed" language)
   const confLow  = Number.isFinite(Number(data.historicalLow))  ? Number(data.historicalLow)  : null;
   const confHigh = Number.isFinite(Number(data.historicalHigh)) ? Number(data.historicalHigh) : null;
   const hasConfRange = isHero && confLow != null && confHigh != null && confHigh > confLow;
@@ -709,8 +618,12 @@ export function ResultCard({
         <View style={[StyleSheet.absoluteFillObject, styles.panelOverlay]} />
 
         <View style={styles.panelContent}>
-          {/* Item name */}
-          <Text numberOfLines={1} allowFontScaling={false} style={styles.itemName}>{name}</Text>
+          {/* Item name — 2-line clamp so long titles ("Retro Oval Cat Eye
+              Sunglasses for Women — Black Plastic Frame…") wrap instead of
+              being chopped with an ellipsis after one word. Three+ lines
+              would push the price/store rows off the panel, so 2 is the
+              ceiling. */}
+          <Text numberOfLines={2} allowFontScaling={false} style={styles.itemName}>{name}</Text>
 
           {/* Price row — sub-pixel pinned: flex baseline + fixed line-height via TY.price/displayLg */}
           <View style={styles.priceRow}>
@@ -756,60 +669,18 @@ export function ResultCard({
             ) : null}
           </View>
 
-          {/* Store + verdict + condition + confidence row */}
+          {/* Store + condition — minimal context, no scoring labels */}
           <View style={styles.metaRow}>
             {store ? (
               <Text numberOfLines={1} allowFontScaling={false} style={styles.store}>{store}</Text>
             ) : null}
 
-            {isHero && verdict ? (
-              <>
-                {store ? <View style={styles.metaDot} /> : null}
-                <View style={[styles.verdictBadge, { backgroundColor: verdict.bg, borderColor: verdict.border }]}>
-                  <Text
-                    allowFontScaling={false}
-                    numberOfLines={1}
-                    style={[styles.verdictText, { color: verdict.text }]}
-                  >
-                    {data.buyVerdict}
-                  </Text>
-                </View>
-              </>
-            ) : null}
-
             {isHero && data.conditionLabel ? (
               <>
-                <View style={styles.metaDot} />
-                <View style={styles.conditionBadge}>
-                  <Text style={styles.conditionText} allowFontScaling={false} numberOfLines={1}>
-                    {data.conditionLabel}
-                  </Text>
-                </View>
-              </>
-            ) : null}
-
-            {isHero && conf > 0 ? (
-              <>
-                <View style={styles.metaDot} />
-                {conf < 0.5 ? (
-                  <View style={styles.lowConfRow}>
-                    <Ionicons name="warning-outline" size={11} color={C.warn} />
-                    <Text
-                      allowFontScaling={false}
-                      numberOfLines={1}
-                      style={[styles.confLabel, { color: C.warn }]}
-                    >
-                      Low confidence
-                    </Text>
-                  </View>
-                ) : (
-                  <>
-                    <View style={[styles.confDot, { backgroundColor: confDotColor }]} />
-                    <Text style={styles.confLabel} allowFontScaling={false} numberOfLines={1}>
-                      {confidenceLabel(conf)}
-                    </Text>
-                  </>
-                )}
+                {store ? <View style={styles.metaDot} /> : null}
+                <Text style={styles.conditionLine} allowFontScaling={false} numberOfLines={1}>
+                  {data.conditionLabel}
+                </Text>
               </>
             ) : null}
           </View>
@@ -824,17 +695,11 @@ export function ResultCard({
             />
           ) : null}
 
-          {/* Price Pulse — animated avg market count-up (hero only) */}
-          {isHero && data.avgMarket != null && Number(data.avgMarket) > 0 ? (
-            <AvgMarketCounter value={Number(data.avgMarket)} />
-          ) : null}
-
-          {/* Confidence Range — "Est. $X – $Y" (legally safe, no "Guaranteed" language) */}
+          {/* Margin range — quiet, single line */}
           {hasConfRange ? (
             <View style={styles.confRangeRow}>
-              <Ionicons name="analytics-outline" size={11} color="rgba(160,210,255,0.65)" />
-              <Text style={styles.confRangeText}>
-                {`Est. margin range  ${fmtMoney(confLow)} – ${fmtMoney(confHigh)}`}
+              <Text style={styles.confRangeText} allowFontScaling={false} numberOfLines={1}>
+                {`${fmtMoney(confLow)} – ${fmtMoney(confHigh)}`}
               </Text>
             </View>
           ) : null}
@@ -842,7 +707,7 @@ export function ResultCard({
           {/* Feature 8: Best time to buy signal */}
           {isHero && (data.seasonalFlip?.topSignal || data.trendIntel?.buyAdvice) ? (
             <View style={styles.intelRow}>
-              <Ionicons name="calendar-outline" size={11} color="rgba(130,200,255,0.7)" />
+              <Ionicons name="calendar-outline" size={11} color="rgba(255,255,255,0.50)" />
               <Text numberOfLines={2} style={styles.intelText}>
                 {data.seasonalFlip?.topSignal || data.trendIntel?.buyAdvice}
               </Text>
@@ -893,27 +758,6 @@ export function ResultCard({
               <Text numberOfLines={1} style={styles.intelText}>
                 {`Near ${data.localComps.location}: $${data.localComps.low}–$${data.localComps.high} · median $${data.localComps.median}`}
               </Text>
-            </View>
-          ) : null}
-
-          {/* Visual DNA — attribute match strip (hero only) */}
-          {isHero && dnaAttrs.length > 0 ? (
-            <View style={styles.dnaStrip}>
-              <Text style={styles.dnaHeaderText}>VISUAL DNA</Text>
-              <View style={styles.dnaChips}>
-                {dnaAttrs.slice(0, 3).map((a) => (
-                  <View key={a.label} style={styles.dnaChip}>
-                    <Ionicons
-                      name={a.pct >= 100 ? "checkmark-circle" : "radio-button-on"}
-                      size={9}
-                      color={a.pct >= 80 ? "rgba(80,255,150,0.85)" : "rgba(255,200,80,0.8)"}
-                    />
-                    <Text style={styles.dnaChipText}>
-                      {a.label}{a.pct >= 100 ? " · Exact" : ` · ${a.pct}%`}
-                    </Text>
-                  </View>
-                ))}
-              </View>
             </View>
           ) : null}
 
@@ -968,7 +812,7 @@ export function ResultCard({
               onPress={onSell}
               style={styles.sellBar}
             >
-              <Ionicons name="storefront-outline" size={12} color="rgba(255,210,80,0.75)" />
+              <Ionicons name="storefront-outline" size={12} color={C.text3} />
               <Text style={styles.sellBarText}>Want to sell this?  →</Text>
             </TouchableOpacity>
           ) : null}
@@ -1005,10 +849,6 @@ export function ResultCard({
               <Text style={styles.viewListingText}>View listing  →</Text>
             </TouchableOpacity>
           ) : null}
-        </View>
-        {/* Branding watermark — included in screenshot exports */}
-        <View style={styles.watermark} pointerEvents="none">
-          <Text style={styles.watermarkText}>EVAN AI · MARKET PRECISION</Text>
         </View>
       </View>
     </View>
@@ -1174,68 +1014,23 @@ const styles = StyleSheet.create({
     backgroundColor: C.text4,
     flexShrink: 0,
   },
-  confDot: {
-    width: 7,
-    height: 7,
-    borderRadius: R.pill,
-    flexShrink: 0,
-  },
-  confLabel: {
+  conditionLine: {
     ...TY.label,
     color: C.text3,
-    flexShrink: 0,
-  },
-  verdictBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: R.xs,
-    borderWidth: 1,
-    flexShrink: 0,
-  },
-  verdictText: {
-    ...TY.cap,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
+    flexShrink: 1,
   },
 
-  // ── Condition badge (Feature 4) ───────────────────────────────────────────
-  conditionBadge: {
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: R.xs,
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
-    flexShrink: 0,
-  },
-  conditionText: {
-    ...TY.cap,
-    color: C.text3,
-    fontSize: 9,
-  },
-
-  // ── Low confidence warning (Feature 3) ────────────────────────────────────
-  lowConfRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-  },
-
-  // ── Confidence Range (App-Store-safe "Est. margin" display) ─────────────
+  // ── Margin range — single quiet line, no "Est. margin" label ─────────────
   confRangeRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    marginTop: 3,
-    paddingLeft: 6,
-    borderLeftWidth: 1.5,
-    borderLeftColor: "rgba(100,180,255,0.22)",
+    marginTop: 4,
   },
   confRangeText: {
-    ...TY.cap,
-    color: "rgba(160,210,255,0.72)",
-    fontSize: 9,
-    flex: 1,
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.text3,
+    letterSpacing: 0.2,
   },
 
   // ── Intelligence rows (Features 8 & 10) ──────────────────────────────────
@@ -1296,30 +1091,13 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingTop: 6,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,210,80,0.10)",
+    borderTopColor: "rgba(255,255,255,0.08)",
   },
   sellBarText: {
     fontSize: 10,
     fontWeight: "700",
-    color: "rgba(255,210,80,0.60)",
+    color: C.text3,
     letterSpacing: 0.3,
-  },
-
-  // ── Watermark ────────────────────────────────────────────────────────────
-  watermark: {
-    position: "absolute",
-    bottom: 6,
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    pointerEvents: "none",
-  },
-  watermarkText: {
-    fontSize: 8,
-    fontWeight: "700" as const,
-    letterSpacing: 1.0,
-    color: "rgba(255,255,255,0.18)",
-    textTransform: "uppercase" as const,
   },
 
   // ── Card label badge ──────────────────────────────────────────────────────
@@ -1351,38 +1129,4 @@ const styles = StyleSheet.create({
     ...TY.displayLg,
   },
 
-  // ── Visual DNA strip ──────────────────────────────────────────────────────
-  dnaStrip: {
-    marginTop: 4,
-    gap: 4,
-  },
-  dnaHeaderText: {
-    ...TY.cap,
-    fontSize: 8,
-    fontWeight: "700",
-    letterSpacing: 1.2,
-    color: "rgba(130,200,255,0.42)",
-    textTransform: "uppercase",
-  },
-  dnaChips: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 4,
-  },
-  dnaChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: R.xs,
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.10)",
-  },
-  dnaChipText: {
-    ...TY.cap,
-    fontSize: 9,
-    color: "rgba(255,255,255,0.45)",
-  },
 });

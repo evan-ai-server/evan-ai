@@ -25,7 +25,6 @@ import Reanimated, {
   withSpring,
   withTiming,
   withDelay,
-  withSequence,
   interpolate,
   Extrapolation,
   Easing,
@@ -36,7 +35,8 @@ import { ResultsDock } from "./ResultsDock";
 import { AskAIDrawer, ScanContext } from "./AskAIDrawer";
 import { AutoListingDrawer } from "./AutoListingDrawer";
 import { OfflineBanner } from "./OfflineBanner";
-import { C, SP, R, TY, confidenceLabel, EASE_PANTHERE, SINGULARITY } from "../design/DS";
+import { ConfettiBurst } from "./ConfettiBurst";
+import { C, SP, R, TY, fmtMoney, EASE_PANTHERE, SINGULARITY } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
 
 const IS_ANDROID = Platform.OS === "android";
@@ -100,10 +100,18 @@ interface ResultsContentProps {
   onRefreshFromCache?: () => void;
   /** Base URL for API calls (e.g. http://192.168.1.x:3001) */
   apiBase?: string;
+  /** Lowball Generator — opens the index.tsx-owned lowball sheet. */
+  onLowball?: () => void;
+  /** Bought It — parent-side handler (record purchase, etc). */
+  onBoughtIt?: () => void;
 }
 
-// Dock approximate height + safe area buffer
-const DOCK_SAFE_HEIGHT = 200;
+// Dock approximate height + safe area buffer.
+// Bumped from 200 → 290 after restoring the 8-chip action grid (Bought it,
+// Ask AI, List it, Track, Copy, Rescan, Lowball, Profit, Details). The grid
+// wraps to ~3 rows on phones; the prior 200 left the bottom chip row
+// overlapping the last line of the active card on long titles.
+const DOCK_SAFE_HEIGHT = 290;
 
 export const ResultsContent = React.memo(function ResultsContent({
   activeResult,
@@ -147,6 +155,8 @@ export const ResultsContent = React.memo(function ResultsContent({
   offlineCachedAt,
   onRefreshFromCache,
   apiBase,
+  onLowball,
+  onBoughtIt,
 }: ResultsContentProps) {
   // Track which card is active in the deck (for dock's "Open" button)
   const [deckIndex, setDeckIndex] = useState(0);
@@ -155,6 +165,33 @@ export const ResultsContent = React.memo(function ResultsContent({
   const [askAIOpen, setAskAIOpen] = useState(false);
   // Auto-Listing drawer
   const [autoListOpen, setAutoListOpen] = useState(false);
+  // Confetti burst trigger (epoch ms; 0 = idle, set to Date.now() to fire once).
+  const [confettiKey, setConfettiKey] = useState(0);
+
+  // ── Single-focus rule ──────────────────────────────────────────────────────
+  // Only one drawer/sheet may be open at a time. Opening a new one closes the
+  // others. This prevents the "stacked panels" complaint (Ask AI on top of
+  // Details on top of action drawer on top of the keyboard, per screenshots).
+  // Closing is still explicit — via the drawer's own X / back-tap / scrim.
+  const openAskAI = useCallback(() => {
+    setAutoListOpen(false);
+    setAskAIOpen(true);
+  }, []);
+  const openAutoList = useCallback(() => {
+    setAskAIOpen(false);
+    setAutoListOpen(true);
+  }, []);
+  const openLowballExclusive = useCallback(() => {
+    setAskAIOpen(false);
+    setAutoListOpen(false);
+    if (onLowball) onLowball();
+  }, [onLowball]);
+  const handleBoughtIt = useCallback(() => {
+    setAskAIOpen(false);
+    setAutoListOpen(false);
+    setConfettiKey(Date.now());
+    if (onBoughtIt) onBoughtIt();
+  }, [onBoughtIt]);
   const resolvedApiBase = (apiBase
     ?? (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_API_URL))
     || (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
@@ -169,10 +206,11 @@ export const ResultsContent = React.memo(function ResultsContent({
   const resultsTranslateY = useSharedValue(loadingResults ? SINGULARITY.fromTranslateY : 0);
   const resultsScale    = useSharedValue(loadingResults ? SINGULARITY.fromScale : 1);
 
-  // Legacy entrance animations (used for header/content stagger within results)
-  const headerEntrance = useSharedValue(0);
-  const contentEntrance = useSharedValue(0);
-  const glowPulse = useSharedValue(0);
+  // Sub-element entrance — runs after the results container settles.
+  // Verdict hero owns its own internal choreography; this only stages
+  // the surrounding chrome (identity breadcrumb, deck) into the scene.
+  const chromeEntrance = useSharedValue(0);
+  const deckEntrance   = useSharedValue(0);
 
   // Track whether we have ever shown results (so loading container
   // only does its entrance animation once)
@@ -219,18 +257,12 @@ export const ResultsContent = React.memo(function ResultsContent({
         withTiming(1, { duration: SINGULARITY.duration, easing: panthere }),
       );
 
-      // 3. Legacy glow + staggered header/content
-      glowPulse.value = withSequence(
-        withTiming(1, { duration: 400, easing: panthere }),
-        withTiming(0, { duration: 600, easing: panthere }),
-      );
-      headerEntrance.value = 0;
-      contentEntrance.value = 0;
-      headerEntrance.value = withDelay(140, withSpring(1, { mass: 0.7, damping: 18, stiffness: 220 }));
-      contentEntrance.value = withDelay(
-        220,
-        withSpring(1, { mass: 0.8, damping: 20, stiffness: 200 }),
-      );
+      // 3. Stage the surrounding chrome — identity breadcrumb fades up first,
+      //    deck waits for the verdict to land. No pulse, no flourish.
+      chromeEntrance.value = 0;
+      deckEntrance.value   = 0;
+      chromeEntrance.value = withDelay(160, withSpring(1, { mass: 1.0, damping: 24, stiffness: 200 }));
+      deckEntrance.value   = withDelay(620, withSpring(1, { mass: 1.0, damping: 24, stiffness: 180 }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingResults, activeResult]);
@@ -249,36 +281,32 @@ export const ResultsContent = React.memo(function ResultsContent({
     ] as any,
   }));
 
-  const headerAnimStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(headerEntrance.value, [0, 0.5, 1], [0, 0.8, 1], Extrapolation.CLAMP),
+  const chromeAnimStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(chromeEntrance.value, [0, 1], [0, 1], Extrapolation.CLAMP),
     transform: [
       {
         translateY: interpolate(
-          headerEntrance.value,
+          chromeEntrance.value,
           [0, 1],
-          [14, 0],
+          [6, 0],
           Extrapolation.CLAMP,
         ),
       },
     ] as any,
   }));
 
-  const contentAnimStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(contentEntrance.value, [0, 0.5, 1], [0, 0.7, 1], Extrapolation.CLAMP),
+  const deckAnimStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(deckEntrance.value, [0, 1], [0, 1], Extrapolation.CLAMP),
     transform: [
       {
         translateY: interpolate(
-          contentEntrance.value,
+          deckEntrance.value,
           [0, 1],
-          [22, 0],
+          [12, 0],
           Extrapolation.CLAMP,
         ),
       },
     ] as any,
-  }));
-
-  const glowStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(glowPulse.value, [0, 1], [0, 0.08], Extrapolation.CLAMP),
   }));
 
   const handleSnap = useCallback((idx: number) => {
@@ -346,14 +374,6 @@ export const ResultsContent = React.memo(function ResultsContent({
           shouldRasterizeIOS={!IS_ANDROID}
           needsOffscreenAlphaCompositing={IS_ANDROID}
         >
-          {/* Animated depth glow sweep at top */}
-          <Reanimated.View
-            style={[styles.bgGlow, glowStyle as any]}
-            pointerEvents="none"
-            renderToHardwareTextureAndroid={IS_ANDROID}
-            shouldRasterizeIOS={!IS_ANDROID}
-          />
-
           {/* ── Error card (replaces results if present) */}
           {uiError ? (
             <View style={styles.errorCard}>
@@ -396,9 +416,9 @@ export const ResultsContent = React.memo(function ResultsContent({
                 />
               ) : null}
 
-              {/* Identity header: item name + intelligence signal */}
+              {/* Identity breadcrumb — quiet context above the verdict */}
               <Reanimated.View
-                style={headerAnimStyle as any}
+                style={chromeAnimStyle as any}
                 renderToHardwareTextureAndroid={IS_ANDROID}
                 shouldRasterizeIOS={!IS_ANDROID}
               >
@@ -410,9 +430,12 @@ export const ResultsContent = React.memo(function ResultsContent({
                 />
               </Reanimated.View>
 
-              {/* Horizontal card deck (has its own entrance animation) */}
+              {/* The decision moment — verdict hero with self-sequenced reveal */}
+              <VerdictHero activeResult={activeResult} results={results} />
+
+              {/* Card deck — proof, slid in after the verdict lands */}
               <Reanimated.View
-                style={contentAnimStyle as any}
+                style={deckAnimStyle as any}
                 renderToHardwareTextureAndroid={IS_ANDROID}
                 shouldRasterizeIOS={!IS_ANDROID}
               >
@@ -432,11 +455,6 @@ export const ResultsContent = React.memo(function ResultsContent({
             </>
           ) : null}
 
-          {/* Oracle's Tip — typewriter AI micro-copy */}
-          {activeResult && !uiError ? (
-            <TypeWriter text={oracleTip(activeResult)} />
-          ) : null}
-
           {/* ── Dock spacer (so scroll content isn't hidden under dock) */}
           {activeResult && !uiError ? <View style={{ height: DOCK_SAFE_HEIGHT }} /> : null}
 
@@ -454,10 +472,18 @@ export const ResultsContent = React.memo(function ResultsContent({
               onScanAgain={onScanAgain}
               onProfitCalc={onProfitCalc}
               onDetails={onDetails}
-              onAskAI={() => setAskAIOpen(true)}
-              onAutoList={() => setAutoListOpen(true)}
+              onAskAI={openAskAI}
+              onAutoList={openAutoList}
+              onLowball={onLowball ? openLowballExclusive : undefined}
+              onBoughtIt={handleBoughtIt}
             />
           ) : null}
+
+          {/* Premium confetti burst — fires on Bought It tap.
+              Sits above the dock (zIndex via render order) but pointerEvents
+              none so it never blocks subsequent taps mid-animation. */}
+          <ConfettiBurst fireKey={confettiKey} />
+
 
           {/* Ask AI slide-up drawer */}
           {activeResult ? (
@@ -527,29 +553,422 @@ export const ResultsContent = React.memo(function ResultsContent({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IDENTITY HEADER — compact item context above the card deck
+// VERDICT HERO — the decision moment.
+//
+// Visual hierarchy (Apple-level): the WORD lands first, the dollar follows,
+// the context is whispered. Generous breathing room. Restrained color.
+// Sequenced reveal so the result feels intelligent, not loaded.
+//
+// Confidence silence: when the signal is weak (few comps / low vision conf),
+// the verdict softens to neutral with "Need more comps" — trust through honesty.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type VerdictTone = {
+  word: "BUY" | "PASS" | "HOLD";
+  /** Tinted color for the verdict word — restrained, not neon */
+  wordColor: string;
+  /** Sign tint for the dollar number */
+  signColor: string;
+  /** Direction: "+" / "−" / "" */
+  sign: string;
+  /** Glow color under the verdict — barely visible */
+  glow: string;
+  /** Whether to render the dominant verdict layout vs. confidence-silence layout */
+  silent: boolean;
+};
+
+function resolveVerdictTone(activeResult: any, results: any[] | undefined): VerdictTone {
+  const rawVerdict = String(activeResult?.buyVerdict || "").toUpperCase();
+  const saved = Number(activeResult?.savedAmount);
+  const cheaperPct = Number(activeResult?.cheaperPct);
+  const scanned = Number(activeResult?.scannedPrice);
+  const avg = Number(activeResult?.avgMarket);
+  const conf = Number(activeResult?.visionConfidence ?? 0);
+  const totalMatches = Number(activeResult?.totalMatches ?? 0);
+  const compCount = (results || []).filter(r => Number.isFinite(Number(r?.price))).length;
+
+  // Confidence silence — earn trust by admitting uncertainty.
+  // Trigger on thin signal OR when the upstream verdict already says HOLD.
+  const tooFewComps = compCount < 2 && totalMatches < 3;
+  const lowVision = conf > 0 && conf < 0.45;
+  const upstreamHold = rawVerdict === "HOLD";
+  const silent = upstreamHold || tooFewComps || lowVision;
+
+  if (silent) {
+    return {
+      word: "HOLD",
+      wordColor: "rgba(255,255,255,0.55)",
+      signColor: C.text3,
+      sign: "",
+      glow: "rgba(255,255,255,0.04)",
+      silent: true,
+    };
+  }
+
+  // Prefer the upstream verdict when it lands cleanly. Fall back to the
+  // price-vs-market heuristic only when the string is missing/legacy.
+  const isBuy = rawVerdict === "BUY"
+    || (rawVerdict === "" && (
+         (Number.isFinite(saved) && saved > 0) ||
+         (Number.isFinite(cheaperPct) && cheaperPct > 5) ||
+         (Number.isFinite(avg) && Number.isFinite(scanned) && avg > scanned)
+       ));
+
+  if (isBuy) {
+    return {
+      word: "BUY",
+      wordColor: "rgba(180,255,200,0.96)",
+      signColor: "rgba(140,255,180,0.92)",
+      sign: "+",
+      glow: "rgba(80,255,160,0.10)",
+      silent: false,
+    };
+  }
+
+  return {
+    word: "PASS",
+    wordColor: "rgba(255,170,150,0.94)",
+    signColor: "rgba(255,140,120,0.90)",
+    sign: "−",
+    glow: "rgba(255,120,100,0.08)",
+    silent: false,
+  };
+}
+
+function VerdictHero({
+  activeResult,
+  results,
+}: {
+  activeResult: any;
+  results?: any[];
+}) {
+  const tone = resolveVerdictTone(activeResult, results);
+  const saved = Number(activeResult?.savedAmount);
+  const cheaperPct = Number(activeResult?.cheaperPct);
+  const scanned = Number(activeResult?.scannedPrice);
+  const avg = Number(activeResult?.avgMarket);
+
+  // Headline number: dollar delta vs market (the truth in one number)
+  let headlineAmount: number | null = null;
+  let contextLine = "";
+  if (Number.isFinite(saved) && saved > 0) {
+    headlineAmount = saved;
+    contextLine = Number.isFinite(cheaperPct) && cheaperPct > 0
+      ? `${Math.round(cheaperPct)}% UNDER MARKET`
+      : "UNDER MARKET";
+  } else if (Number.isFinite(avg) && Number.isFinite(scanned)) {
+    if (avg > scanned) {
+      headlineAmount = avg - scanned;
+      const pct = Math.round(((avg - scanned) / avg) * 100);
+      contextLine = pct > 0 ? `${pct}% UNDER MARKET` : "UNDER MARKET";
+    } else if (scanned > avg) {
+      headlineAmount = scanned - avg;
+      const pct = Math.round(((scanned - avg) / avg) * 100);
+      contextLine = pct > 0 ? `${pct}% ABOVE MARKET` : "ABOVE MARKET";
+    } else {
+      headlineAmount = 0;
+      contextLine = "MATCHES MARKET";
+    }
+  }
+
+  // Sold range across comps for the strip
+  const compPrices = (results || [])
+    .map(r => Number(r?.price))
+    .filter(n => Number.isFinite(n) && n > 0);
+  const median = compPrices.length
+    ? compPrices.slice().sort((a, b) => a - b)[Math.floor(compPrices.length / 2)]
+    : null;
+  const marketValue = median ?? (Number.isFinite(avg) ? avg : null);
+
+  // ── Sequenced reveal ──────────────────────────────────────────────────────
+  // Phase 1 (0–360ms):    verdict word fades+scales in (gentle spring)
+  // Phase 2 (200–520ms):  dollar amount lifts in
+  // Phase 3 (380–680ms):  context line whispers in
+  // Phase 4 (520–840ms):  strip slides up
+  // Glow:   80–560ms      barely-there spotlight under the word
+  const wordOpacity   = useSharedValue(0);
+  const wordScale     = useSharedValue(0.94);
+  const dollarOpacity = useSharedValue(0);
+  const dollarLift    = useSharedValue(8);
+  const subOpacity    = useSharedValue(0);
+  const stripOpacity  = useSharedValue(0);
+  const stripLift     = useSharedValue(6);
+  const glowOpacity   = useSharedValue(0);
+
+  useEffect(() => {
+    // Reset for each new scan — every decision gets its own moment
+    wordOpacity.value   = 0;
+    wordScale.value     = 0.94;
+    dollarOpacity.value = 0;
+    dollarLift.value    = 8;
+    subOpacity.value    = 0;
+    stripOpacity.value  = 0;
+    stripLift.value     = 6;
+    glowOpacity.value   = 0;
+
+    wordOpacity.value = withTiming(1, { duration: 360, easing: panthere });
+    wordScale.value   = withSpring(1, { damping: 18, stiffness: 200, mass: 1.0 });
+    glowOpacity.value = withDelay(80, withTiming(1, { duration: 480, easing: panthere }));
+
+    dollarOpacity.value = withDelay(200, withTiming(1, { duration: 320, easing: panthere }));
+    dollarLift.value    = withDelay(200, withSpring(0, { damping: 22, stiffness: 200, mass: 1.0 }));
+
+    subOpacity.value = withDelay(380, withTiming(1, { duration: 300, easing: panthere }));
+
+    stripOpacity.value = withDelay(520, withTiming(1, { duration: 320, easing: panthere }));
+    stripLift.value    = withDelay(520, withSpring(0, { damping: 24, stiffness: 200, mass: 1.0 }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeResult]);
+
+  const wordStyle = useAnimatedStyle(() => ({
+    opacity: wordOpacity.value,
+    transform: [{ scale: wordScale.value }] as any,
+  }));
+  const glowStyleHero = useAnimatedStyle(() => ({
+    opacity: glowOpacity.value,
+  }));
+  const dollarStyle = useAnimatedStyle(() => ({
+    opacity: dollarOpacity.value,
+    transform: [{ translateY: dollarLift.value }] as any,
+  }));
+  const subStyle = useAnimatedStyle(() => ({
+    opacity: subOpacity.value,
+  }));
+  const stripStyle = useAnimatedStyle(() => ({
+    opacity: stripOpacity.value,
+    transform: [{ translateY: stripLift.value }] as any,
+  }));
+
+  return (
+    <View style={heroStyles.outer}>
+      <View style={heroStyles.card}>
+        {/* Soft spotlight glow under the verdict — depth, not noise */}
+        <Reanimated.View
+          pointerEvents="none"
+          style={[
+            heroStyles.glow,
+            { backgroundColor: tone.glow },
+            glowStyleHero as any,
+          ]}
+          renderToHardwareTextureAndroid={IS_ANDROID}
+          shouldRasterizeIOS={!IS_ANDROID}
+        />
+
+        {/* The decision word — the eye lands here */}
+        <Reanimated.View
+          style={wordStyle as any}
+          renderToHardwareTextureAndroid={IS_ANDROID}
+          shouldRasterizeIOS={!IS_ANDROID}
+        >
+          <Text
+            allowFontScaling={false}
+            style={[heroStyles.verdict, { color: tone.wordColor }]}
+          >
+            {tone.word}
+          </Text>
+        </Reanimated.View>
+
+        {/* Confidence-silence layout — admit uncertainty cleanly */}
+        {tone.silent ? (
+          <Reanimated.View style={subStyle as any}>
+            <Text style={heroStyles.silentSub} allowFontScaling={false}>
+              Need more comps to lock the call
+            </Text>
+            {Number.isFinite(scanned) ? (
+              <Text style={heroStyles.silentPrice} allowFontScaling={false}>
+                {fmtMoney(scanned)}
+              </Text>
+            ) : null}
+          </Reanimated.View>
+        ) : (
+          <>
+            {/* Dollar amount — the truth in one number */}
+            {headlineAmount != null && headlineAmount > 0 ? (
+              <Reanimated.View
+                style={dollarStyle as any}
+                renderToHardwareTextureAndroid={IS_ANDROID}
+                shouldRasterizeIOS={!IS_ANDROID}
+              >
+                <Text style={heroStyles.dollar} allowFontScaling={false}>
+                  <Text style={[heroStyles.dollarSign, { color: tone.signColor }]}>
+                    {tone.sign}
+                  </Text>
+                  {fmtMoney(Math.abs(headlineAmount))}
+                </Text>
+              </Reanimated.View>
+            ) : Number.isFinite(scanned) ? (
+              <Reanimated.View
+                style={dollarStyle as any}
+                renderToHardwareTextureAndroid={IS_ANDROID}
+                shouldRasterizeIOS={!IS_ANDROID}
+              >
+                <Text style={heroStyles.dollar} allowFontScaling={false}>
+                  {fmtMoney(scanned)}
+                </Text>
+              </Reanimated.View>
+            ) : null}
+
+            {/* Context — whispered, not declared */}
+            {contextLine ? (
+              <Reanimated.View style={subStyle as any}>
+                <Text style={heroStyles.context} allowFontScaling={false}>
+                  {contextLine}
+                </Text>
+              </Reanimated.View>
+            ) : null}
+          </>
+        )}
+
+        {/* Price strip — proof, quiet */}
+        {(Number.isFinite(scanned) || marketValue != null) ? (
+          <Reanimated.View
+            style={[heroStyles.strip, stripStyle as any]}
+            renderToHardwareTextureAndroid={IS_ANDROID}
+            shouldRasterizeIOS={!IS_ANDROID}
+          >
+            {Number.isFinite(scanned) ? (
+              <View style={heroStyles.stripCell}>
+                <Text style={heroStyles.stripLabel} allowFontScaling={false}>COST</Text>
+                <Text style={heroStyles.stripValue} allowFontScaling={false}>
+                  {fmtMoney(scanned)}
+                </Text>
+              </View>
+            ) : null}
+            {marketValue != null ? (
+              <View style={heroStyles.stripCell}>
+                <Text style={heroStyles.stripLabel} allowFontScaling={false}>MARKET</Text>
+                <Text style={heroStyles.stripValue} allowFontScaling={false}>
+                  {fmtMoney(marketValue)}
+                </Text>
+              </View>
+            ) : null}
+          </Reanimated.View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+const heroStyles = StyleSheet.create({
+  outer: {
+    paddingHorizontal: SP.lg,
+    paddingTop: SP.lg,
+    paddingBottom: SP.md,
+  },
+  card: {
+    paddingHorizontal: SP.xl,
+    paddingTop: SP.xxxl,
+    paddingBottom: SP.xxl,
+    borderRadius: R.xl,
+    backgroundColor: "rgba(255,255,255,0.025)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.06)",
+    alignItems: "center",
+    overflow: "hidden",
+  },
+  glow: {
+    position: "absolute",
+    top: SP.xl,
+    left: "50%",
+    marginLeft: -160,
+    width: 320,
+    height: 120,
+    borderRadius: 160,
+  },
+  verdict: {
+    fontSize: 38,
+    fontWeight: "900",
+    letterSpacing: 5.5,
+    lineHeight: 44,
+    textAlign: "center",
+  },
+  dollar: {
+    marginTop: SP.lg,
+    fontSize: 42,
+    fontWeight: "900",
+    color: C.text,
+    letterSpacing: -1.0,
+    lineHeight: 46,
+    textAlign: "center",
+  },
+  dollarSign: {
+    fontSize: 42,
+    fontWeight: "900",
+    letterSpacing: -1.0,
+  },
+  context: {
+    marginTop: SP.sm,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 2.0,
+    color: C.text3,
+    textAlign: "center",
+  },
+  // Confidence-silence variants — quieter, smaller, honest
+  silentSub: {
+    marginTop: SP.lg,
+    fontSize: 13,
+    fontWeight: "600",
+    color: C.text3,
+    textAlign: "center",
+    letterSpacing: 0.2,
+  },
+  silentPrice: {
+    marginTop: SP.sm,
+    fontSize: 22,
+    fontWeight: "800",
+    color: C.text2,
+    textAlign: "center",
+    letterSpacing: -0.4,
+  },
+  strip: {
+    flexDirection: "row",
+    gap: SP.xxxl,
+    marginTop: SP.xxl,
+    paddingTop: SP.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.06)",
+    alignSelf: "stretch",
+    justifyContent: "center",
+  },
+  stripCell: {
+    alignItems: "center",
+  },
+  stripLabel: {
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.6,
+    color: C.text4,
+    marginBottom: 4,
+  },
+  stripValue: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: C.text2,
+    letterSpacing: -0.2,
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IDENTITY HEADER — quiet breadcrumb. Tells you what we identified without
+// competing with the verdict for attention. No INTEL badges, no scoring labels.
 // ─────────────────────────────────────────────────────────────────────────────
 function IdentityHeader({
   activeResult,
   lastScan,
-  weaponStats: _weaponStats,
-  intelLevel,
 }: {
   activeResult: any;
   lastScan?: any;
   weaponStats?: any;
   intelLevel?: number;
 }) {
-  const confidence  = Number(activeResult?.visionConfidence ?? 0);
-  const query       = activeResult?.visionQuery || lastScan?.query || null;
-  const confLabel   = confidenceLabel(confidence);
-  const totalMatches = activeResult?.totalMatches ?? 0;
-  const photoUri    = activeResult?.photoUri || null;
+  const query    = activeResult?.visionQuery || lastScan?.query || null;
+  const photoUri = activeResult?.photoUri || null;
+  const name     = activeResult?.itemName || query || "Scan result";
 
   return (
     <View style={styles.identityHeader}>
       <View style={styles.identityRow}>
-        {/* Scan thumbnail */}
         {photoUri ? (
           <View style={styles.thumbWrap}>
             <Image
@@ -561,59 +980,9 @@ function IdentityHeader({
         ) : null}
 
         <View style={styles.identityText}>
-          {/* Item name */}
           <Text numberOfLines={1} allowFontScaling={false} style={styles.identityName}>
-            {activeResult.itemName || "Scan result"}
+            {name}
           </Text>
-
-          {/* Intelligence badge */}
-          {(intelLevel ?? 0) >= 5 ? (
-            <View style={styles.intelBadge}>
-              <Text style={styles.intelBadgeText} allowFontScaling={false} numberOfLines={1}>
-                {(intelLevel ?? 0) >= 8 ? "FULL INTEL" : "INTEL"}
-              </Text>
-            </View>
-          ) : null}
-
-          {/* Meta row: confidence + query + match count */}
-          <View style={styles.identityMeta}>
-            {/* Confidence dot — 8px circle colored by confidence level */}
-            <View style={[
-              styles.confDot,
-              {
-                backgroundColor:
-                  confidence >= 0.7 ? "rgba(120,255,180,0.85)" :
-                  confidence >= 0.5 ? "rgba(255,210,80,0.85)" :
-                  "rgba(255,100,80,0.80)",
-              }
-            ]} />
-
-            <Text style={styles.identityMetaText} allowFontScaling={false} numberOfLines={1}>
-              {confLabel}
-            </Text>
-
-            {query ? (
-              <>
-                <Text style={styles.metaSep} allowFontScaling={false}>·</Text>
-                <Text
-                  numberOfLines={1}
-                  allowFontScaling={false}
-                  style={[styles.identityMetaText, { flex: 1 }]}
-                >
-                  &quot;{query}&quot;
-                </Text>
-              </>
-            ) : null}
-
-            {totalMatches > 0 ? (
-              <>
-                <Text style={styles.metaSep} allowFontScaling={false}>·</Text>
-                <Text style={styles.identityMetaText} allowFontScaling={false} numberOfLines={1}>
-                  {totalMatches} listings
-                </Text>
-              </>
-            ) : null}
-          </View>
         </View>
       </View>
     </View>
@@ -639,80 +1008,6 @@ function EmptyState({ onNewScan }: { onNewScan: () => void }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ORACLE'S TIP — AI micro-copy typewriter
-// ─────────────────────────────────────────────────────────────────────────────
-function oracleTip(data: any): string {
-  const hour = new Date().getHours();
-  if (hour >= 0 && hour < 5)
-    return "Night owl mode active. The quietest hours find the loudest profits.";
-  const verdict   = (data?.buyVerdict ?? "").toUpperCase();
-  const tier      = data?.ebaySoldComps?.velocityTier ?? "";
-  const conf      = Number(data?.visionConfidence ?? 0);
-  const avgM      = Number(data?.avgMarket ?? 0);
-  if (/GREAT|FLIP/i.test(verdict))
-    return "High flip potential detected — list within 48h for peak ROI.";
-  if (tier === "hot")
-    return "Hot category right now — buyers are moving fast. Don't wait.";
-  if (conf >= 0.90)
-    return "Strong ID match. Low competition on this brand — try the Top Tier price.";
-  if (tier === "slow" || tier === "rare")
-    return "Slow mover — hold for seasonal peak or price it to move today.";
-  if (avgM > 0 && avgM < 40)
-    return "Micro-priced item: volume is your edge. Stack and batch-ship.";
-  return "Market data locked in — list within 24h to capture current demand.";
-}
-
-function TypeWriter({ text }: { text: string }) {
-  const [displayed, setDisplayed] = useState("");
-
-  useEffect(() => {
-    setDisplayed("");
-    let i = 0;
-    const timer = setInterval(() => {
-      i += 1;
-      setDisplayed(text.slice(0, i));
-      if (i >= text.length) clearInterval(timer);
-    }, 26);
-    return () => clearInterval(timer);
-  }, [text]);
-
-  const cursor = displayed.length < text.length;
-  return (
-    <View style={oracleStyles.wrap}>
-      <Ionicons name="sparkles" size={9} color="rgba(255,200,60,0.7)" />
-      <Text style={oracleStyles.text}>
-        {displayed}
-        {cursor ? <Text style={oracleStyles.cursor}>|</Text> : null}
-      </Text>
-    </View>
-  );
-}
-
-const oracleStyles = StyleSheet.create({
-  wrap: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 5,
-    marginHorizontal: SP.xl,
-    marginTop: SP.sm,
-    marginBottom: 4,
-    opacity: 0.88,
-  },
-  text: {
-    flex: 1,
-    fontSize: 11,
-    fontWeight: "400",
-    color: "rgba(255,200,60,0.80)",
-    lineHeight: 16,
-    letterSpacing: 0.1,
-  },
-  cursor: {
-    opacity: 0.5,
-    color: "rgba(255,200,60,0.60)",
-  },
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // STYLES
 // ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
@@ -735,94 +1030,40 @@ const styles = StyleSheet.create({
     backgroundColor: C.bg,
   },
 
-  // Cinematic background depth glow
-  bgGlow: {
-    position: "absolute",
-    top: -120,
-    left: "50%",
-    marginLeft: -220,
-    width: 440,
-    height: 320,
-    borderRadius: 220,
-    backgroundColor: "rgba(255,255,255,0.04)",
-  },
-
-  // Identity header
+  // Identity header — quiet breadcrumb above the verdict
   identityHeader: {
     paddingHorizontal: SP.xl,
-    paddingTop: 16,
-    paddingBottom: SP.lg,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(255,255,255,0.08)",
+    paddingTop: SP.md,
+    paddingBottom: SP.xs,
   },
   identityRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: SP.md,
+    gap: SP.sm,
   },
   thumbWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: R.lg,
+    width: 32,
+    height: 32,
+    borderRadius: R.sm,
     overflow: "hidden",
     flexShrink: 0,
-    borderWidth: 1.5,
-    borderColor: "rgba(255,255,255,0.15)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.10)",
   },
   thumb: {
-    width: 52,
-    height: 52,
+    width: 32,
+    height: 32,
   },
   identityText: {
     flex: 1,
     minWidth: 0,
   },
   identityName: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#ffffff",
-    lineHeight: 25,
-    marginBottom: SP.xs,
-  },
-  identityMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flexWrap: "nowrap",
-    overflow: "hidden",
-  },
-  confDot: {
-    width: 8,
-    height: 8,
-    borderRadius: R.pill,
-    flexShrink: 0,
-  },
-  identityMetaText: {
-    ...TY.label,
+    fontSize: 13,
+    fontWeight: "700",
     color: C.text3,
-    flexShrink: 1,
-  },
-  metaSep: {
-    ...TY.label,
-    color: C.text4,
-    flexShrink: 0,
-  },
-  intelBadge: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(80,255,150,0.12)",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "rgba(80,255,150,0.28)",
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    marginTop: 4,
-  },
-  intelBadgeText: {
-    fontSize: 9,
-    fontWeight: "900",
-    letterSpacing: 1.4,
-    color: "rgba(120,255,170,0.9)",
-    textTransform: "uppercase",
+    lineHeight: 18,
+    letterSpacing: 0.1,
   },
 
   // Error card

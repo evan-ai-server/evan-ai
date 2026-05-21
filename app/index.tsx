@@ -2512,6 +2512,77 @@ const skipOnboard = async () => {
 
 // Survey complete — persist answers, optionally launch tutorial.
 // State-locked: cannot fire twice even if onComplete callback triggers rapidly.
+// Temporary debug helper — wipes local Evan state AND the server-side
+// scan quota for this actor so the survey + interactive tutorial
+// re-trigger on next mount and the user starts at 0/3 free scans
+// again. Uses DevSettings.reload() to force a clean re-mount when
+// available; otherwise falls back to flipping the gating state.
+const factoryReset = useCallback(async () => {
+  const EVAN_KEYS = [
+    "EVAN_AUTO_WATCH_V1",  "EVAN_DAILY_GOAL_V1",    "EVAN_FATIGUE_SCANS_V1",
+    "EVAN_FLIP_SESSIONS_V1","EVAN_GUEST_ID_V1",     "EVAN_INSTALL_ID_V1",
+    "EVAN_INVENTORY_V1",   "EVAN_LAST_PROFILE_OPEN","EVAN_LAST_RESULT_V1",
+    "EVAN_ONBOARD_V1",     "EVAN_PL_FLIPS_V1",      "EVAN_REF_STATE_V1",
+    "EVAN_REGRET_V1",      "EVAN_SCAN_HISTORY_V1",  "EVAN_SURVEY_V1",
+    "EVAN_VAULT_V1",
+  ];
+
+  // Reset server-side scan quota for the CURRENT identity first
+  // (before wiping EVAN_GUEST_ID_V1 — once the guestId is gone the
+  // server can't match the row, and the user looks reset on the
+  // client but stays at 3/3 on the next real scan).
+  try {
+    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    // Read installId directly from storage — the React state variable
+    // isn't declared until later in the component and TS flags the
+    // closure reference. The disk value is the source of truth anyway.
+    const iid = await AsyncStorage.getItem("EVAN_INSTALL_ID_V1").catch(() => null);
+    const body: Record<string, string> = {};
+    if (userId)  body.userId      = userId;
+    if (guestId) body.guestId     = guestId;
+    if (iid)     body.installId   = iid;
+    if (iid)     body.fingerprint = iid;
+    // Mirror identity in headers so getDeviceId() resolves server-side
+    // — middleware uses headers, not body, for quota identity.
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (iid)    headers["x-install-id"] = iid;
+    if (iid)    headers["x-device-id"]  = iid;
+    if (userId) headers["x-user-id"]    = userId;
+    await fetch(`${apiBase}/api/debug/reset-quota`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(4000),
+    }).catch(() => null);
+  } catch {}
+
+  try {
+    await Promise.all(EVAN_KEYS.map((k) => AsyncStorage.removeItem(k).catch(() => {})));
+  } catch {}
+
+  // Reload the JS bundle so every useEffect re-runs from scratch and
+  // the onboarding gate sees no AsyncStorage values.
+  try {
+    const RN = require("react-native");
+    const DevSettings = RN?.DevSettings;
+    if (DevSettings && typeof DevSettings.reload === "function") {
+      DevSettings.reload();
+      return;
+    }
+  } catch {}
+
+  // Fallback path (reload unavailable): flip the state in-place.
+  try { setScansUsed(0); } catch {}
+  try { setBonusScans(0); } catch {}
+  try { setShowSurvey(true); } catch {}
+  try { setShowOnboard(false); } catch {}
+  try { setShowITutorial(false); } catch {}
+  try { setTutorialStep(0); } catch {}
+  try { surveyCompleteLockRef.current = false; } catch {}
+  try { tutorialOpenLockRef.current = false; } catch {}
+}, [userId, guestId]); // eslint-disable-line react-hooks/exhaustive-deps
+
 const surveyCompleteLockRef = useRef(false);
 const handleSurveyComplete = useCallback(async (ans: SurveyAnswers, goTutorial: boolean) => {
   if (surveyCompleteLockRef.current) return;
@@ -4818,6 +4889,25 @@ const onBarcodeScanned = ({ data }: any) => {
 };
 
 
+// Hard gate for paywall — used by every scan-entry point (shutter,
+// "Use Photo", batch, replay). Aborts any in-flight work, clears the
+// loading UI so the user sees the paywall on a clean surface (not
+// overlaid on a half-running scan), and surfaces the paywall.
+const bailScanForPaywall = (origin: string) => {
+  try { scanAbortRef.current?.abort(); } catch {}
+  scanAbortRef.current = null;
+  scanLockRef.current = false;
+  try { setIsCapturing(false); } catch {}
+  try { setLoadingResults(false); } catch {}
+  try { setShowRetryWhileLoading(false); } catch {}
+  try { setLoadingPhotoUri(null); } catch {}
+  try { scanSessionRef.current = null; } catch {}
+  try { trackEvent?.("scan_blocked_by_paywall", { origin }); } catch {}
+  requestAnimationFrame(() => {
+    try { useEvanBrain.getState().showLimitPaywall(); } catch {}
+  });
+};
+
 const takePhoto = async () => {
 
   // HARD GUARD: prevents double-tap duplication + freezes
@@ -4825,10 +4915,32 @@ const takePhoto = async () => {
 
   if (!cameraRef.current) return;
 
+  // Tutorial gate. While the interactive tutorial is up, the shutter is
+  // visually highlighted (ripple, spotlight, ring) to teach the user
+  // where to tap — but it must NOT actually capture or burn a free
+  // scan. If the user taps it on the shutter-introduction step,
+  // advance the tutorial; otherwise no-op silently so accidental taps
+  // through the spotlight don't initiate a scan.
+  if (showITutorial) {
+    try { Haptics.selectionAsync(); } catch {}
+    const stepIdx = iTutStep;
+    const step = I_STEPS[Math.min(stepIdx, I_STEPS.length - 1)];
+    const isShutterStep =
+      !!step?.spotlight &&
+      Math.abs(step.spotlight.x + step.spotlight.w / 2 - SW / 2) < 80 &&
+      step.spotlight.y > SH * 0.5;
+    if (isShutterStep && stepIdx + 1 < I_STEPS.length) {
+      goToITutStep(stepIdx + 1);
+    }
+    return;
+  }
+
+  // Paywall preempts every scan path. If the local limit has been hit,
+  // the shutter must not capture, animate, or initiate any work — show
+  // the paywall and return immediately. Same gate is re-checked in
+  // handleUsePhoto and runScan so no later async path can bypass it.
   if (isFreeLimitReached) {
-requestAnimationFrame(() => {
-  useEvanBrain.getState().showLimitPaywall();
-});
+    bailScanForPaywall("shutter");
     return;
   }
 
@@ -5758,8 +5870,13 @@ const qualityFilterListings = (items: any[], query: string) => {
           score -= wantsBlue ? 0.55 : 0.38;
         }
 
-        if (wantsOrange) score += hasOrange ? 0.22 : -0.24;
-        if (wantsBlue) score += hasBlue ? 0.24 : -0.12;
+        // Color (orange) is a variant attribute, not identity. Reward
+        // presence but only mildly penalize absence so wrap-sunglasses
+        // comps without "orange" in the title still ride above the gate.
+        // Was -0.24, which combined with the 0.34 gate effectively
+        // required sim ≥ 0.58 — too strict for legitimate comps.
+        if (wantsOrange) score += hasOrange ? 0.22 : -0.06;
+        if (wantsBlue) score += hasBlue ? 0.24 : -0.06;
         if (wantsWrap) score += hasWrap ? 0.12 : -0.08;
         if (wantsShield) score += hasShield ? 0.12 : -0.08;
         if (wantsAviator) score += hasAviator ? 0.12 : -0.08;
@@ -5811,8 +5928,13 @@ const qualityFilterListings = (items: any[], query: string) => {
         titleNorm.includes("outdoor");
 
       if (eyewearMode && !wantsSun && hasSunwear && !hasBlue) return false;
-      if (wantsOrange && !hasOrange && it.__clientMatch < 0.62) return false;
-      if (wantsBlue && !hasBlue && it.__clientMatch < 0.70) return false;
+      // Color (orange/blue) is a variant attribute, not identity. Most
+      // sunglass listings omit it from the title (color is a SKU option).
+      // Requiring it in title at score < 0.62 drops valid wrap-sunglasses
+      // comps and starves the UI of inventory. Mirror the server's
+      // relaxed thresholds.
+      if (wantsOrange && !hasOrange && it.__clientMatch < 0.34) return false;
+      if (wantsBlue && !hasBlue && it.__clientMatch < 0.50) return false;
       if (wantsWrap && !hasWrap && it.__clientMatch < 0.58) return false;
 
       return true;
@@ -5826,9 +5948,14 @@ const qualityFilterListings = (items: any[], query: string) => {
   const strong = filtered.filter((it) => Number(it.__clientMatch || 0) >= 0.45);
   const medium = filtered.filter((it) => Number(it.__clientMatch || 0) >= 0.30);
 
-  if (strong.length >= 3) return strong;
+  // Greedier inclusion than before: if strong has fewer than 6, mix in
+  // medium so the UI sees a real comp distribution (median anchor needs
+  // breadth). Previously returned strong-only the moment strong>=3, which
+  // collapsed a 16-item pool down to 5 displayable items.
+  if (strong.length >= 6) return strong;
   if (medium.length >= 3) return medium;
-  return filtered.slice(0, 20);
+  if (filtered.length >= 1) return filtered.slice(0, 20);
+  return filtered;
 };
 
 // Load persisted state ONCE
@@ -6634,6 +6761,113 @@ body: JSON.stringify({
   }
 };
 
+// ─── XHR-based SSE consumer ───────────────────────────────────────────────────
+// React Native's fetch implementation does NOT expose Response.body as a
+// ReadableStream — `resp.body` is null on iOS/Android. XMLHttpRequest,
+// however, surfaces partial response data via xhr.responseText during
+// readyState 3 (LOADING). That's the only reliable way to consume
+// Server-Sent Events on-device in Expo/RN.
+// ─────────────────────────────────────────────────────────────────────────────
+type SSEHandler = (event: string, data: any) => void;
+
+function streamSSEViaXHR(
+  url:           string,
+  body:          string,
+  headers:       Record<string, string>,
+  signal:        AbortSignal | undefined,
+  onEvent:       SSEHandler,
+  chunkTimeoutMs = 15000,
+): Promise<{ status: number }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let parsedChars = 0;
+    let lineBuf     = "";
+    let lastEvent   = "";
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let settled  = false;
+    let onAbort: (() => void) | null = null;
+
+    const cleanup = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (signal && onAbort) {
+        try { signal.removeEventListener("abort", onAbort); } catch {}
+      }
+    };
+    const settleReject = (err: any) => {
+      if (settled) return;
+      settled = true;
+      try { xhr.abort(); } catch {}
+      cleanup();
+      reject(err);
+    };
+    const settleResolve = (val: { status: number }) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(val);
+    };
+    const armChunkTimer = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(
+        () => settleReject(new Error("stream_read_timeout")),
+        chunkTimeoutMs,
+      );
+    };
+
+    const drain = () => {
+      const text: string = xhr.responseText || "";
+      if (text.length <= parsedChars) return;
+      const chunk = text.slice(parsedChars);
+      parsedChars = text.length;
+      armChunkTimer();
+      lineBuf += chunk;
+      const lines = lineBuf.split("\n");
+      lineBuf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          lastEvent = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            onEvent(lastEvent || "message", data);
+          } catch { /* skip malformed line */ }
+          lastEvent = "";
+        }
+      }
+    };
+
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState === 3 || xhr.readyState === 4) drain();
+      if (xhr.readyState === 4) {
+        const status = xhr.status;
+        if (status >= 200 && status < 300) settleResolve({ status });
+        else settleReject(new Error(`xhr_status_${status}`));
+      }
+    };
+    xhr.onerror   = () => settleReject(new Error("xhr_network_error"));
+    xhr.ontimeout = () => settleReject(new Error("xhr_timeout"));
+
+    onAbort = () => settleReject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+    if (signal) {
+      if (signal.aborted) {
+        settleReject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+        return;
+      }
+      try { signal.addEventListener("abort", onAbort); } catch {}
+    }
+
+    try {
+      xhr.open("POST", url);
+      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+      try { (xhr as any).responseType = "text"; } catch {}
+      armChunkTimer();
+      xhr.send(body);
+    } catch (e: any) {
+      settleReject(e);
+    }
+  });
+}
+
 // ─── Staged market search via SSE stream ──────────────────────────────────────
 // Returns provisional results in ~4s (marketplace only), then complete in ~15s.
 // Falls back to legacy searchMarket() if streaming is unavailable.
@@ -6685,17 +6919,9 @@ const searchMarketStream = async (
   let lastProvisional: any = null;
   let finalData: any = null;
 
-  // Read with a per-chunk timeout to prevent network-partition hangs
-  const readWithTimeout = (reader: ReadableStreamDefaultReader<Uint8Array>, timeoutMs = 15000) =>
-    Promise.race<{ done: boolean; value: Uint8Array | undefined }>([
-      reader.read(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("stream_read_timeout")), timeoutMs)
-      ),
-    ]);
-
   for (const rawBase of API_BASE_CANDIDATES) {
     const base = String(rawBase || "").replace(/\/+$/, "");
+    const url  = `${base}/market/search/stream`;
     try {
       const streamHeaders: Record<string, string> = {
         "Content-Type": "application/json",
@@ -6706,100 +6932,85 @@ const searchMarketStream = async (
       } else if (_clientId) {
         streamHeaders["x-user-id"] = _clientId;
       }
-      const resp = await fetch(`${base}/market/search/stream`, {
-        method:  "POST",
-        headers: streamHeaders,
-        body,
-        signal,
-      });
+      console.log("searchMarketStream: attempting (xhr)", url);
 
-      if (!resp.ok || !resp.body) continue;
+      let activeScanId: string | null = null;
+      let streamErr:    Error | null  = null;
+      let completeSeen = false;
 
-      const reader  = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      let lastEvent = "";
-      let activeScanId: string | null = null; // set from first event
-      let streamComplete = false;
+      // Local controller so we can short-circuit the XHR when we see `complete`
+      // (server keeps SSE connection open briefly after the final event).
+      const localCtl = new AbortController();
+      const cancelOnOuter = () => localCtl.abort();
+      try { signal?.addEventListener("abort", cancelOnOuter); } catch {}
 
       try {
-      while (true) {
-        const { done, value } = await readWithTimeout(reader, 15000);
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-
-        // Parse SSE lines
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            lastEvent = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            try {
-              const rawData = JSON.parse(line.slice(6));
-
-              // Capture scanId from first event; ignore events with mismatched scanId
-              if (rawData?.scanId) {
-                if (activeScanId === null) activeScanId = rawData.scanId;
-                else if (activeScanId !== rawData.scanId) continue; // stale event from prior scan
-              }
-
-              // Merge normalizeMarketResponse (adds trusted/id/buyLink per item)
-              const data = rawData?.items
-                ? { ...rawData, ...normalizeMarketResponse(rawData) }
-                : rawData;
-
-              if (lastEvent === "provisional") {
-                // Phase 4: multiple provisional events are possible
-                // (earlyProvional from fast lanes, then full provisional).
-                // Always update lastProvisional; let the caller guard double-navigation.
-                lastProvisional = data;
-                onProvisional(data);
-              } else if (lastEvent === "complete") {
-                finalData = data;
-                onComplete(data);
-                // Persist for offline fallback (mirrors searchMarket behavior)
-                if (params.query && data?.items?.length) {
-                  writePriceCache(params.query, data);
-                }
-                setOfflineCachedAt(null);
-                streamComplete = true; // exit outer loop — don't wait for reader.done
-              } else if (lastEvent === "phase" && onPhase) {
-                onPhase(data.phase);
-              } else if (lastEvent === "error") {
-                throw new Error(data.message || data.code || "stream_error");
-              }
-            } catch (parseErr: any) {
-              if (parseErr?.name === "AbortError") throw parseErr;
-              if (parseErr?.message === "stream_read_timeout") throw parseErr;
-              // skip malformed SSE line
+        await streamSSEViaXHR(
+          url,
+          body,
+          streamHeaders,
+          localCtl.signal,
+          (eventName, rawData) => {
+            // Capture scanId from first event; ignore events with mismatched scanId
+            if (rawData?.scanId) {
+              if (activeScanId === null) activeScanId = rawData.scanId;
+              else if (activeScanId !== rawData.scanId) return; // stale event
             }
-            lastEvent = "";
-          }
+            // Merge normalizeMarketResponse (adds trusted/id/buyLink per item)
+            const data = rawData?.items
+              ? { ...rawData, ...normalizeMarketResponse(rawData) }
+              : rawData;
+
+            if (eventName === "provisional") {
+              lastProvisional = data;
+              onProvisional(data);
+            } else if (eventName === "complete") {
+              finalData = data;
+              onComplete(data);
+              if (params.query && data?.items?.length) writePriceCache(params.query, data);
+              setOfflineCachedAt(null);
+              completeSeen = true;
+              try { localCtl.abort(); } catch {} // stop reading; server may keep socket open
+            } else if (eventName === "phase" && onPhase) {
+              onPhase(data?.phase);
+            } else if (eventName === "error") {
+              streamErr = new Error(data?.message || data?.code || "stream_error");
+              try { localCtl.abort(); } catch {}
+            }
+          },
+        );
+      } catch (xhrErr: any) {
+        // If we already saw `complete` and aborted ourselves, swallow the abort.
+        if (completeSeen && xhrErr?.name === "AbortError") {
+          /* expected — we asked it to stop */
+        } else if (signal?.aborted) {
+          throw xhrErr; // outer caller cancelled — propagate
+        } else if (streamErr) {
+          throw streamErr;
+        } else {
+          throw xhrErr;
         }
-
-        // Break out immediately after complete — don't block on readWithTimeout waiting
-        // for the server to close the TCP connection (React Native reader may hang).
-        if (streamComplete) break;
-      }
       } finally {
-        try { reader.cancel(); } catch {}
+        try { signal?.removeEventListener("abort", cancelOnOuter); } catch {}
       }
 
-      // Stream ended — return final data (or provisional as fallback)
-      // If stream closed with no items (e.g. oracle_timeout → complete with items:[]),
-      // fall through to legacy searchMarket rather than returning an empty truthy object.
       const streamResult = finalData ?? lastProvisional ?? null;
       const streamHasItems =
-        (Array.isArray(streamResult?.items) && streamResult.items.length > 0) ||
+        (Array.isArray(streamResult?.items)   && streamResult.items.length   > 0) ||
         (Array.isArray(streamResult?.results) && streamResult.results.length > 0);
       if (streamResult && streamHasItems) return streamResult;
-      console.warn("searchMarketStream: stream completed with no items, falling back to legacy search");
-
+      console.warn("searchMarketStream: stream-result empty", {
+        base,
+        finalDataKeys:       finalData       ? Object.keys(finalData).slice(0, 20)       : null,
+        finalDataItemsLen:   Array.isArray(finalData?.items)                ? finalData.items.length                : null,
+        finalDataMarketLen:  Array.isArray((finalData as any)?.market)      ? (finalData as any).market.length      : null,
+        finalDataResultsLen: Array.isArray(finalData?.results)              ? finalData.results.length              : null,
+        provKeys:            lastProvisional ? Object.keys(lastProvisional).slice(0, 20) : null,
+        provItemsLen:        Array.isArray(lastProvisional?.items)          ? lastProvisional.items.length          : null,
+        provMarketLen:       Array.isArray((lastProvisional as any)?.market)? (lastProvisional as any).market.length: null,
+      });
     } catch (e: any) {
       if (e?.name === "AbortError") throw e;
-      // Try next base or fall through to legacy
       console.warn("searchMarketStream failed for base:", base, e?.message);
     }
   }
@@ -7142,9 +7353,7 @@ const goTab = (next) => {
   // Camera roll picker
   const pickFromRoll = async () => {
     if (isFreeLimitReached) {
-requestAnimationFrame(() => {
-  useEvanBrain.getState().showLimitPaywall();
-});
+      bailScanForPaywall("camera_roll");
       return;
     }
     hapticSelect();
@@ -7318,11 +7527,27 @@ const isGoogleProductPageUrl = (input) => {
 
     if (!host.includes("google.")) return false;
 
-    return (
+    if (
       path.includes("/shopping/product/") ||
       path.startsWith("/shopping/product") ||
       path.startsWith("/aclk")
-    );
+    ) {
+      return true;
+    }
+
+    // Google Shopping inline product pages — what SerpAPI returns for
+    // every product result. URL shape: /search?ibp=oshop&q=...&prds=...
+    // They look like search URLs but resolve to a product detail page
+    // (the prds= param is the product ID). Treat as a valid product URL
+    // so promotionPool doesn't drop every SerpAPI comp.
+    const ibp = (u.searchParams.get("ibp") || "").toLowerCase();
+    const hasPrds = u.searchParams.has("prds");
+    const udm = u.searchParams.get("udm");
+    if (path === "/search" && (ibp === "oshop" || hasPrds || udm === "28")) {
+      return true;
+    }
+
+    return false;
   } catch {
     return false;
   }
@@ -7764,13 +7989,14 @@ if (!isPro) {
   const effectiveUsed = Math.max(0, paidUsed - bank);
 
   if (effectiveUsed >= FREE_SCAN_LIMIT_SAFE) {
-    requestAnimationFrame(() => {
-      useEvanBrain.getState().showLimitPaywall();
-    });
+    bailScanForPaywall("runscan_local");
     return;
   }
 
-  // Server-side quota check (non-blocking — local check above is primary gate)
+  // Server-side quota check — the authoritative gate. Local state can be
+  // stale (e.g. a prior scan consumed quota but the response hasn't
+  // hydrated yet, or counters reset on the server). If the server says
+  // no, kill any half-started UI and show the paywall.
   if (!internalRetry) {
     try {
       const apiBase = process.env.EXPO_PUBLIC_API_URL ??
@@ -7781,8 +8007,8 @@ if (!isPro) {
         .then(r => r.json()).catch(() => null);
       if (checkRes?.ok && !checkRes.canScan) {
         if (checkRes.resetAt) setScanResetAt(checkRes.resetAt);
-        setScansUsed(FREE_SCAN_LIMIT_SAFE); // sync local state
-        requestAnimationFrame(() => { useEvanBrain.getState().showLimitPaywall(); });
+        setScansUsed(FREE_SCAN_LIMIT_SAFE); // sync local state so subsequent shutter taps fail fast
+        bailScanForPaywall("runscan_server");
         return;
       }
       if (checkRes?.resetAt) setScanResetAt(checkRes.resetAt);
@@ -8003,14 +8229,21 @@ let visionQuery =
     ? rawVisionQuery.toLowerCase().replace(/\s+/g, " ").trim()
     : "";
 
-if (visionIdentity?.exactQuery) {
-  visionQuery = cleanVisionQuery(visionIdentity.exactQuery);
-} else if (
-  (!visionQuery || !String(visionQuery).trim()) &&
-  Array.isArray(visionIdentity?.searchQueries) &&
-  visionIdentity.searchQueries.length
-) {
-  visionQuery = cleanVisionQuery(visionIdentity.searchQueries[0]);
+// The server's top-level `query` is now produced by a high-confidence pass
+// selector (visual_shape at ≥0.85 conf wins verbatim) and is more accurate
+// than `visionIdentity.exactQuery`, which is a synthesized merge across
+// passes that can fabricate tokens (e.g. "oval" appearing when one pass
+// said "wraparound" and another said "wrap"). Only fall back to identity
+// fields when the server didn't give us a usable top-level query.
+if (!visionQuery || !visionQuery.trim()) {
+  if (visionIdentity?.exactQuery) {
+    visionQuery = cleanVisionQuery(visionIdentity.exactQuery);
+  } else if (
+    Array.isArray(visionIdentity?.searchQueries) &&
+    visionIdentity.searchQueries.length
+  ) {
+    visionQuery = cleanVisionQuery(visionIdentity.searchQueries[0]);
+  }
 }
 
 const mergedVisionVariants: string[] = [];
@@ -8452,6 +8685,46 @@ try {
       combined = relaxed.length ? relaxed : strictFiltered.length ? strictFiltered : preQualityCombined.slice(0, 15);
     }
 
+    // Filter-wipeout rescue: if the local quality/similarity filters dropped
+    // every item but the server clearly returned listings, trust the server's
+    // pre-ranked output rather than show a "No results" page. The server has
+    // already deduped, outlier-trimmed, relevance-filtered and price-sorted —
+    // re-filtering locally with thresholds tuned for a different scenario can
+    // wipe legitimate comps (e.g. broad-category queries where local title
+    // similarity drops below 0.18 even though the items are valid market comps).
+    if (combined.length === 0 && rawItems.length > 0) {
+      const serverFallback = normalizeListings(
+        rawItems,
+        "market",
+        "Marketplace",
+        visionQuery
+      )
+        .map((i) => {
+          const normalizedTotal = Number(i?.totalPrice);
+          const normalizedPrice = Number(i?.numericPrice);
+          const price = Number.isFinite(normalizedPrice) ? normalizedPrice : parseMoney(i?.price);
+          const total = Number.isFinite(normalizedTotal)
+            ? Math.round(normalizedTotal * 100) / 100
+            : Number.isFinite(price)
+            ? Math.round(price * 100) / 100
+            : NaN;
+          return {
+            ...i,
+            numericPrice: Number.isFinite(price) ? price : null,
+            numericShip: 0,
+            numericTotal: total,
+            __titleNorm: String(i?.title || "").toLowerCase().replace(/\s+/g, " ").trim(),
+            __serverAnchored: true,
+          };
+        })
+        .filter((i) => Number.isFinite(i?.numericTotal))
+        .slice(0, 20);
+      if (serverFallback.length > 0) {
+        devLog("MARKET FILTER WIPEOUT → rescued from server fallback", serverFallback.length);
+        combined = serverFallback;
+      }
+    }
+
     devLog("MARKET RAW COUNTS →", rawItems.length, "combined →", combined.length);
 
     MARKET_CACHE.set(marketCacheKey, {
@@ -8506,9 +8779,14 @@ if (collectorEligible) {
       "resale collector detection"
     );
 
+    // Speed pass: hard-cap the collector enrichment wait at 500 ms (was
+    // 1800 ms). The vast majority of cold enrich calls don't complete inside
+    // even 1800 ms; trimming the budget moves the median scan window down by
+    // ~0.5–1.3 s on collector-eligible items. When enrich is cached on the
+    // server it still resolves well inside this window.
     const enrich = await Promise.race([
       enrichPromise,
-      new Promise((resolve) => setTimeout(() => resolve(null), 1800)),
+      new Promise((resolve) => setTimeout(() => resolve(null), 500)),
     ]);
 
     if (enrich && shouldTriggerCollectorPass(enrich)) {
@@ -8519,11 +8797,17 @@ if (collectorEligible) {
         collectorQuery !== normalizeTitle(visionQuery)
       ) {
 
+// Speed pass: hard-cap the collector follow-up serp at 2500 ms. Previously
+// inherited the long-lived marketController.signal, which let a slow
+// collector lane drag the whole render out past 8 s on bad networks.
+const collectorAbortCtrl = new AbortController();
+const collectorAbortTimer = setTimeout(() => collectorAbortCtrl.abort(), 2500);
 const collectorRaw = await searchSerp(
   collectorQuery,
-  marketController.signal,
+  collectorAbortCtrl.signal,
   buildVisionVariants(collectorQuery).slice(1)
 ).catch(() => []);
+clearTimeout(collectorAbortTimer);
 
         const collectorCombined = [
           ...combined,
@@ -8618,11 +8902,16 @@ combined = (combined || [])
         ? total <= scannedPrice + 0.01
         : true;
 
+    // Google Shopping redirect URLs (ibp=oshop) are valid product links
+    // — they bounce to the merchant. The previous exclusion rejected
+    // nearly every SerpAPI result and collapsed promotionPool to 1,
+    // which made cheaperExact also 1 even though 6 listings were
+    // cheaper than the scanned price. Only treat as unverified when
+    // url is truly missing / non-string / empty.
     const linkVerified =
       item?.__linkVerified !== false &&
       typeof item?.url === "string" &&
-      item.url.trim().length > 0 &&
-      !item.url.includes("google.com/search");
+      item.url.trim().length > 0;
 
 const brandMatch =
   sig.brand && titleNorm.includes(sig.brand) ? 1 : 0;
@@ -8826,22 +9115,62 @@ setSeeMoreListings(displayPool);
 if (top3.length === 0) {
   const fallbackTop3 = displayPool.slice(0, 3);
 
+  // Distinguish three real states instead of blanket "no results":
+  //
+  //   below-market : we have items, all priced above the user's scanned price
+  //                  → they have the best price. This is a STEAL, not a failure.
+  //   no-cheaper   : we have items, mixed prices, but local filters couldn't
+  //                  find clear "cheaper alternative" matches. Surface the
+  //                  items silently as market context.
+  //   no-data      : we truly have nothing — server returned empty AND the
+  //                  filter wipeout rescue couldn't recover. This is the
+  //                  only state that warrants a hard error.
+  //
+  // Previously every empty top3 fell through to a confusing "No results
+  // found" screen even when the user genuinely had the cheapest price.
+
+  const poolPrices = displayPool
+    .map((it: any) => Number(it?.totalPrice ?? it?.numericTotal ?? it?.price))
+    .filter((n: number) => Number.isFinite(n) && n > 0);
+  const minPoolPrice = poolPrices.length ? Math.min(...poolPrices) : null;
+  const userBeatsMarket =
+    Number.isFinite(scannedPrice) &&
+    minPoolPrice != null &&
+    scannedPrice < minPoolPrice;
+
+  const scanKind =
+    fallbackTop3.length === 0
+      ? "no-data"
+      : userBeatsMarket
+      ? "below-market"
+      : "no-cheaper";
+
   setResults(fallbackTop3);
   setActiveResult(fallbackTop3[0] || null);
   setLastScan({
-    kind: "no-cheaper",
+    kind: scanKind,
     confidence: visionConfidence,
     query: promotedVisionQuery || rankingQuery,
     results: displayPool.slice(0, 5),
+    ...(userBeatsMarket && minPoolPrice != null
+      ? { alreadyCheaperBy: Math.max(0, minPoolPrice - scannedPrice) }
+      : {}),
   });
 
-  // Only show an error if we truly have nothing to display.
-  // When displayPool has oracle/comparable items, render them silently —
-  // a degraded result is always better than a "no results" failure screen.
-  if (fallbackTop3.length === 0) {
+  // Only hard-error when truly nothing came back. Mid-states (we have items
+  // but no clear cheaper alts) render the items silently as context.
+  if (scanKind === "no-data") {
+    const haveMarketIntel = !!(marketConsensus || marketPrediction || marketPulse);
     showUiError(
-      "No results found",
-      "We couldn't find comparable listings right now. Try rescanning or adjusting the search."
+      haveMarketIntel ? "Couldn't fetch live comparables" : "Market unavailable",
+      haveMarketIntel
+        ? "We have partial market intel for this item but no fresh listings right now. Try again in a moment."
+        : "Couldn't reach the market right now. Check your connection and rescan."
+    );
+  } else if (userBeatsMarket && minPoolPrice != null) {
+    // Celebratory banner — the user already has the best price.
+    setPriceChangeBanner(
+      `🎯 You beat the market by ${money(minPoolPrice - scannedPrice)} — cheapest comp is ${money(minPoolPrice)}`
     );
   }
 
@@ -9628,9 +9957,7 @@ useEffect(() => {
     const cheapestAltRaw = toNumber(cheapestAltInput);
     const cheapestAlt = Number.isFinite(cheapestAltRaw) && cheapestAltRaw > 0 ? cheapestAltRaw : null;
     if (isFreeLimitReached) {
-requestAnimationFrame(() => {
-  useEvanBrain.getState().showLimitPaywall();
-});
+      bailScanForPaywall("use_photo");
       return;
     }
 
@@ -11217,7 +11544,11 @@ transform: [
   </View>
 ) : null}
 
-{/* Feature 6: Lowball Script Sheet */}
+{/* Feature 6: Lowball Script Sheet.
+    Premium sheet — scripts can be long (3–5 sentences each); ScrollView +
+    flexShrink on the text means nothing is clipped, even on small phones.
+    Reset Messages re-hits /intel/lowball-script for a fresh batch (the
+    endpoint returns server-tuned variants per call). */}
 {lowballOpen ? (
   <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end", zIndex: 100000 }}>
     <Pressable
@@ -11227,35 +11558,81 @@ transform: [
     <RNAnimated.View style={{
       backgroundColor: "#0f0f0f", borderTopLeftRadius: 24, borderTopRightRadius: 24,
       borderTopWidth: 1, borderColor: "rgba(255,255,255,0.08)",
-      padding: 24, paddingBottom: 40,
+      paddingTop: 20, paddingHorizontal: 20, paddingBottom: 32,
+      maxHeight: "88%",
       transform: [{ translateY: lowballY }], opacity: lowballOp,
     }}>
-      <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>NEGOTIATION SCRIPTS</Text>
-      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 20 }}>🧠 Lowball Generator</Text>
-      {lowballScripts.length === 0 ? (
-        <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 14, textAlign: "center", paddingVertical: 20 }}>Generating scripts…</Text>
-      ) : lowballScripts.map((s, i) => (
-        <Pressable key={i} onPress={() => Share.share({ message: s.message })} style={{
-          backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 14,
-          borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
-          padding: 16, marginBottom: 12,
-        }}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
-            <Text style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.1, textTransform: "uppercase" }}>{s.platform}</Text>
-            <Text style={{ color: "rgba(255,255,255,0.2)", fontSize: 10 }}>tap to copy</Text>
-          </View>
-          <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, textTransform: "uppercase", marginBottom: 4 }}>{s.tone}</Text>
-          <Text style={{ color: "rgba(255,255,255,0.82)", fontSize: 14, lineHeight: 20 }}>{s.message}</Text>
-          {(s as any).tactic ? (
-            <Text style={{ color: "rgba(130,200,255,0.45)", fontSize: 11, marginTop: 8, fontStyle: "italic" }}>⚡ {(s as any).tactic}</Text>
-          ) : null}
+      {/* Header row — title left, Reset button right */}
+      <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18 }}>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>NEGOTIATION SCRIPTS</Text>
+          <Text style={{ color: "#fff", fontWeight: "900", fontSize: 22 }}>🧠 Lowball Generator</Text>
+        </View>
+        <Pressable
+          onPress={openLowball}
+          style={({ pressed }) => [{
+            flexDirection: "row", alignItems: "center", gap: 6,
+            paddingHorizontal: 12, paddingVertical: 9, borderRadius: 11,
+            backgroundColor: "rgba(130,200,255,0.10)",
+            borderWidth: 1, borderColor: "rgba(130,200,255,0.30)",
+            opacity: pressed ? 0.6 : 1,
+          }]}
+          hitSlop={6}
+        >
+          <Ionicons name="refresh" size={13} color="#82c8ff" />
+          <Text style={{ color: "#82c8ff", fontSize: 12, fontWeight: "800", letterSpacing: 0.4 }}>Reset</Text>
         </Pressable>
-      ))}
+      </View>
+
+      <ScrollView
+        style={{ maxHeight: 520 }}
+        contentContainerStyle={{ paddingBottom: 12 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {lowballScripts.length === 0 ? (
+          <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 14, textAlign: "center", paddingVertical: 30 }}>
+            Generating scripts…
+          </Text>
+        ) : lowballScripts.map((s, i) => (
+          <Pressable key={i} onPress={async () => {
+            try { await Clipboard.setStringAsync(s.message); setSavedToast("Copied"); } catch {}
+            try { Haptics.selectionAsync(); } catch {}
+          }} style={{
+            backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 16,
+            borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
+            padding: 18, marginBottom: 14,
+          }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <Text
+                style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.1, textTransform: "uppercase", flexShrink: 1, paddingRight: 8 }}
+                numberOfLines={2}
+              >
+                {s.platform}
+              </Text>
+              <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 10, fontWeight: "600" }}>tap to copy</Text>
+            </View>
+            <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 10, fontWeight: "700", textTransform: "uppercase", marginBottom: 8, letterSpacing: 0.8 }}>
+              {s.tone}
+            </Text>
+            {/* Critical: no numberOfLines, no fixed height — scripts wrap fully */}
+            <Text style={{ color: "rgba(255,255,255,0.88)", fontSize: 15, lineHeight: 22 }}>
+              {s.message}
+            </Text>
+            {(s as any).tactic ? (
+              <Text style={{ color: "rgba(130,200,255,0.55)", fontSize: 12, marginTop: 10, fontStyle: "italic", lineHeight: 17 }}>
+                ⚡ {(s as any).tactic}
+              </Text>
+            ) : null}
+          </Pressable>
+        ))}
+      </ScrollView>
+
       <Pressable onPress={closeLowball} style={{
-        marginTop: 8, paddingVertical: 14, borderRadius: 14,
+        marginTop: 10, paddingVertical: 14, borderRadius: 14,
         backgroundColor: "rgba(255,255,255,0.06)", alignItems: "center",
+        borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
       }}>
-        <Text style={{ color: "rgba(255,255,255,0.5)", fontWeight: "700" }}>Close</Text>
+        <Text style={{ color: "rgba(255,255,255,0.6)", fontWeight: "700", fontSize: 14 }}>Close</Text>
       </Pressable>
     </RNAnimated.View>
   </View>
@@ -12235,47 +12612,24 @@ onBarcodeScanned={(d) => {
   </GestureDetector>
 
 {/* POLISH #4 — cinematic freeze frame */}
-{freezeFrameUri && (
-  <RNAnimated.Image
-    source={{ uri: freezeFrameUri }}
-    style={[
-      StyleSheet.absoluteFillObject,
-      {
-        opacity: freezeOpacity,
-      },
-    ]}
-    resizeMode="cover"
-  />
-)}
-
+{/*
+ * Cinematic freeze frame — disabled. The captured photo was being rendered
+ * fullscreen as an Animated.Image with an opacity animation under a low-
+ * intensity BlurView (14), which iOS rasterized at downscaled resolution
+ * during the fade and read as a "pixelated" flash on every shutter press
+ * and golden-moment reveal. The shutter ring snap + ripple already convey
+ * "scan started" without the snapshot overlay.
+ *
+ * If we ever bring it back, lift BlurView intensity to >=50 (lower values
+ * show visible block artifacts on iOS) and animate the WRAPPING View's
+ * opacity rather than the Image's, so the bitmap is composited at native
+ * scale instead of re-rasterized per frame.
+ */}
 
 <NeuralScanOverlay
   active={scanAnimActive}
   onFinished={onScanAnimFinished}
 />
-
-{/* ✅ Cinematic freeze frame (120–180ms) */}
-{cinematicFreeze ? (
-  <RNAnimated.View
-    pointerEvents="none"
-    style={[
-      StyleSheet.absoluteFillObject,
-      { opacity: freezeOpacity },
-    ]}
-  >
-    <BlurView
-      intensity={14}
-      tint="dark"
-      style={StyleSheet.absoluteFillObject}
-    />
-    <View
-      style={[
-        StyleSheet.absoluteFillObject,
-        { backgroundColor: "rgba(0,0,0,0.10)" },
-      ]}
-    />
-  </RNAnimated.View>
-) : null}
 
 {/* ✅ Dark vignette fade (cinematic) */}
 <RNAnimated.View
@@ -12797,9 +13151,16 @@ style={[
   onVaultSave={handleVaultSave}
   onOrbPress={handleOrbPress}
   isNet={netProfitEnabled}
+  onLowball={openLowball}
 />
 
 {/* "More details" toggle — collapses every secondary panel under one tap. */}
+{/* BETA: "More details" toggle hidden. The 20+ secondary cards below
+    (Set Alert, ConditionMismatch, DeepAuth, CommunityComps, HaggleScore,
+    FlipScanner CTA, Negotiate/Share, FlipProfile, Intel Signal cards, etc.)
+    remain in code and stay gated on `moreDetailsOpen` — they just never
+    open because the toggle is invisible. Restore by uncommenting this
+    block when shipping the post-beta power-user mode.
 {activeResult && !loadingResults ? (
   <View style={{ paddingHorizontal: 18, paddingTop: 8, paddingBottom: 4 }}>
     <Pressable
@@ -12828,6 +13189,7 @@ style={[
     </Pressable>
   </View>
 ) : null}
+*/}
 
 {moreDetailsOpen ? (<>
 {/* Feature 8: Set Alert row — visible below results when item is loaded */}
@@ -14509,6 +14871,37 @@ ${shareLink}`
   </View>
 </View>
 
+{/* Temporary debug — long-press to wipe local Evan state and re-run survey + tutorial. */}
+<Pressable
+  onLongPress={() => {
+    Alert.alert(
+      "Reset app state?",
+      "Clears onboarding, survey, history, and local cache, then reloads the app. Use this to re-run the questionnaire / tutorial.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset",
+          style: "destructive",
+          onPress: () => { factoryReset(); },
+        },
+      ],
+    );
+  }}
+  delayLongPress={650}
+  style={({ pressed }) => [
+    {
+      alignSelf: "center",
+      marginTop: 28,
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      opacity: pressed ? 0.6 : 0.18,
+    },
+  ]}
+>
+  <Text style={{ color: "rgba(255,255,255,0.6)", fontSize: 10, fontWeight: "700", letterSpacing: 0.5 }}>
+    long-press to reset
+  </Text>
+</Pressable>
 
 {helpOpen ? (
   <Pressable style={styles.helpBackdrop} onPress={closeHelp}>

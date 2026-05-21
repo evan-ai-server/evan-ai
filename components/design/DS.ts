@@ -5,7 +5,7 @@
 import { Dimensions, Platform } from "react-native";
 import * as Haptics from "expo-haptics";
 import * as FileSystem from "expo-file-system/legacy";
-import { Audio } from "expo-av";
+import { setAudioModeAsync as _setAudioModeAsync, createAudioPlayer as _createAudioPlayer } from "expo-audio";
 
 const { width: W, height: H } = Dimensions.get("window");
 
@@ -192,8 +192,13 @@ export const MO = {
 } as const;
 
 // ─── CARD DIMENSIONS ─────────────────────────────────────────────────────────
-// PEEK: amount of the neighboring card visible on screen edge
-const CARD_SIDE_MARGIN = 28;   // horizontal margin for active card (each side)
+// PEEK: amount of the neighboring card visible on screen edge.
+// Bumped 28 → 38 to give the next-card preview a real, deliberate sliver
+// (~24 px visible on each side after subtracting the gap). The previous
+// 28-margin / 14-gap left only 14 px peeking — small enough that the deck
+// read as a single static card instead of a premium stack. The wider margin
+// trades ~20 px of active-card width for an unmistakable carousel signal.
+const CARD_SIDE_MARGIN = 38;   // horizontal margin for active card (each side)
 const CARD_GAP = 14;           // gap between cards
 
 export const CARD = {
@@ -238,19 +243,19 @@ export const SH = {
 } as const;
 
 // ─── VERDICT COLORS ───────────────────────────────────────────────────────────
+// Three states only: BUY / HOLD / PASS. Legacy strings (GREAT FLIP, GOOD BUY,
+// MEH, RISKY) remain matched so historical scans render correctly.
 export function verdictStyle(verdict: string): {
   bg: string;
   border: string;
   text: string;
 } {
   const v = String(verdict || "").toUpperCase();
-  if (v.includes("GREAT") || v.includes("FLIP"))
+  if (v === "BUY" || v.includes("GREAT") || v.includes("FLIP") || v.includes("GOOD"))
     return { bg: C.goodBg, border: C.goodBorder, text: C.good };
-  if (v.includes("GOOD"))
-    return { bg: "rgba(255,255,255,0.08)", border: "rgba(255,255,255,0.16)", text: C.text };
-  if (v.includes("MEH"))
+  if (v === "HOLD" || v.includes("MEH"))
     return { bg: C.warnBg, border: C.warnBorder, text: C.warn };
-  if (v.includes("RISKY"))
+  if (v === "PASS" || v.includes("RISKY"))
     return { bg: C.dangerBg, border: C.dangerBorder, text: C.danger };
   return { bg: C.glass, border: C.border, text: C.text2 };
 }
@@ -353,15 +358,14 @@ export const SoundEffect = {
   chime: async () => {
     try {
       if (!_audioReady) {
-        await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+        await _setAudioModeAsync({ playsInSilentMode: true });
         _audioReady = true;
       }
       if (!_chimeUri) _chimeUri = await _buildChimeWav();
-      const { sound } = await Audio.Sound.createAsync({ uri: _chimeUri });
-      await sound.playAsync();
-      sound.setOnPlaybackStatusUpdate((s: any) => {
-        if (s.didJustFinish) sound.unloadAsync().catch(() => {});
-      });
+      const player = _createAudioPlayer({ uri: _chimeUri });
+      player.play();
+      // Release player after sound completes (chime is ~500ms)
+      setTimeout(() => { try { player.remove(); } catch {} }, 4000);
     } catch {}
   },
 } as const;

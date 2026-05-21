@@ -297,16 +297,16 @@ export function CardDeck({
     activeIndex.value  = 0;
     setSnappedIndex(0);
     deckEntrance.value = 0;
-    // Softer spring → longer travel → stagger feels like a cascade waterfall
-    deckEntrance.value = withSpring(1, { mass: 1.3, damping: 24, stiffness: 100 });
+    // Calm spring — deliberate, not bouncy. Cards arrive after the verdict lands.
+    deckEntrance.value = withSpring(1, { mass: 1.2, damping: 26, stiffness: 110 });
 
-    // Swipe hint fades in after 600ms — Panthere curve (heavy → silk)
+    // Swipe hint fades in after the deck has settled
     swipeHintOpacity.setValue(0);
     const hint = RNAnimated.sequence([
-      RNAnimated.delay(600),
+      RNAnimated.delay(1100),
       RNAnimated.timing(swipeHintOpacity, {
-        toValue: 1,
-        duration: 420,
+        toValue: 0.55,
+        duration: 480,
         easing: panthereRN,
         useNativeDriver: true,
       }),
@@ -327,17 +327,34 @@ export function CardDeck({
     if (card) { onToggleWatchlist?.(card); heavyHaptic(); }
   }, [cards, onToggleWatchlist]);
 
+  // Single-card / empty-deck short-circuit: don't construct a pan gesture that
+  // can drive activeIndex outside [0, 0]. Reanimated's withSpring on a NaN /
+  // negative upper bound has been the source of native crashes on swipe in
+  // prod (cardCount=0 right after a scan reset → upper bound -1 → spring
+  // target Math.round(NaN) → undefined-behavior). Returning an empty gesture
+  // also avoids holding a stale closure over cards[] if the deck rebuilds.
+  const maxIndex = Math.max(0, cardCount - 1);
   const pan = Gesture.Pan()
+    .enabled(cardCount > 1)
     .activeOffsetX([-10, 10])
     .failOffsetY([-12, 12])
     .onBegin(() => {
+      'worklet';
       startIndex.value = activeIndex.value;
     })
     .onUpdate((e) => {
-      const delta = -e.translationX / CARD.slotWidth;
-      activeIndex.value = clampVal(startIndex.value + delta, 0, cardCount - 1);
+      'worklet';
+      if (maxIndex <= 0) return;
+      const slot = CARD.slotWidth || 1;
+      const delta = -e.translationX / slot;
+      const next = startIndex.value + delta;
+      // Guard against NaN/Infinity propagating into the spring target below.
+      if (!Number.isFinite(next)) return;
+      activeIndex.value = clampVal(next, 0, maxIndex);
     })
     .onEnd((e) => {
+      'worklet';
+      if (maxIndex <= 0) return;
       // Long-swipe RIGHT on first card → add to watchlist
       if (
         startIndex.value < 0.1 &&
@@ -348,9 +365,12 @@ export function CardDeck({
         return;
       }
 
-      const velocityBias = -e.velocityX / CARD.slotWidth * 0.18;
+      const slot = CARD.slotWidth || 1;
+      const velocityBias = -e.velocityX / slot * 0.18;
       const raw    = activeIndex.value + velocityBias;
-      const target = Math.round(clampVal(raw, 0, cardCount - 1));
+      // Belt-and-suspenders: clamp BEFORE rounding so Math.round can't see NaN.
+      const clamped = clampVal(Number.isFinite(raw) ? raw : 0, 0, maxIndex);
+      const target  = Math.round(clamped);
       activeIndex.value = withSpring(target, MO.spring.card);
       runOnJS(handleSnap)(target);
     });
@@ -385,27 +405,22 @@ export function CardDeck({
 
   return (
     <View style={styles.deckOuter}>
-      {/* ── Alternatives counter header ─────────────────────── */}
+      {/* ── Alternatives counter — quiet, single word ───────── */}
       {altCount > 0 ? (
         <View style={styles.counterRow}>
-          <View style={styles.counterBadge}>
-            <Reanimated.View
-              style={counterEntranceStyle}
-              renderToHardwareTextureAndroid={IS_ANDROID}
-              shouldRasterizeIOS={!IS_ANDROID}
+          <Reanimated.View
+            style={counterEntranceStyle}
+            renderToHardwareTextureAndroid={IS_ANDROID}
+            shouldRasterizeIOS={!IS_ANDROID}
+          >
+            <Text
+              style={styles.counterText}
+              allowFontScaling={false}
+              numberOfLines={1}
             >
-              <Text
-                style={styles.counterText}
-                allowFontScaling={false}
-                numberOfLines={1}
-              >
-                {altCount === 1
-                  ? "Found 1 cheaper alternative"
-                  : `Found ${altCount} cheaper alternatives`}
-              </Text>
-            </Reanimated.View>
-          </View>
-          <View style={styles.counterDivider} />
+              {`${altCount + 1} LISTINGS`}
+            </Text>
+          </Reanimated.View>
         </View>
       ) : null}
 
@@ -448,7 +463,7 @@ export function CardDeck({
           allowFontScaling={false}
           numberOfLines={1}
         >
-          swipe to compare · swipe right to save
+          swipe to compare
         </RNAnimated.Text>
       ) : null}
     </View>
@@ -460,24 +475,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  // ── Counter header ────────────────────────────────────────────────────────
+  // ── Counter header — minimal eyebrow ──────────────────────────────────────
   counterRow: {
     width: CARD.width,
-    marginBottom: SP.md,
-  },
-  counterBadge: {
-    alignSelf: "flex-start",
     marginBottom: SP.sm,
+    alignItems: "flex-start",
   },
   counterText: {
-    ...TY.cap,
-    color: C.text3,
-    letterSpacing: 1.2,
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.6,
+    color: C.text4,
     textTransform: "uppercase",
-  },
-  counterDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: C.border,
   },
 
   // ── Cards ─────────────────────────────────────────────────────────────────
