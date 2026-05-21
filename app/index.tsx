@@ -18223,7 +18223,13 @@ function useWatchlistMarketPolling({
       try {
         const lastRaw = await AsyncStorage.getItem(WATCH_POLL_LAST_KEY);
         const last = Number(lastRaw || 0);
-        if (Date.now() - last < 60_000) return;
+        // Rate-limit bumped 60s → 5 min after live-log audit (2026-05-20):
+        // /watch/poll fires SerpAPI lanes per saved item. 60s let every cold
+        // app launch within a minute of last poll re-fire all lanes. 5 min
+        // matches the new background interval and the server-side SERP cache
+        // TTL, so most app opens read from cache instead of paying for
+        // a fresh /watch/poll fan-out.
+        if (Date.now() - last < 5 * 60_000) return;
 
         await AsyncStorage.setItem(WATCH_POLL_LAST_KEY, String(Date.now()));
 
@@ -18308,7 +18314,11 @@ function useWatchlistMarketPolling({
     };
 
     pollOnce();
-    const id = setInterval(pollOnce, 90_000);
+    // Bumped 90s → 5 min so background refresh of watched items spreads SerpAPI
+    // cost across the hour instead of firing lanes every 90 seconds. Matches
+    // the in-pollOnce rate-limit so multiple mounts of this hook (one global,
+    // one inside the watched tab) coalesce to a single poll per window.
+    const id = setInterval(pollOnce, 5 * 60_000);
 
     return () => {
       alive = false;
