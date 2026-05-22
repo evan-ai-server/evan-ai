@@ -90,6 +90,20 @@ interface BatchScanScreenProps {
   onClose: () => void;
   /** Optional: called when user taps an item result to open full results */
   onOpenItem?: (itemName: string, query: string) => void;
+  /**
+   * Scan-budget gating. The parent owns the FREE_SCAN_LIMIT counter; this
+   * screen used to scan every selected photo without ever telling the
+   * parent, which bypassed the limit entirely. The contract:
+   *  - isFreeLimitReached: snapshot of "is user over the limit right now?".
+   *    Re-checked per item so a mid-batch upgrade/reset is honoured.
+   *  - onConsumeScan(): the parent should increment scansUsed by 1.
+   *    Called once per successful item.
+   *  - onLimitHit(): the parent should open the paywall + halt processing.
+   *    Called the first time we refuse to process an item.
+   */
+  isFreeLimitReached?: boolean;
+  onConsumeScan?: () => void;
+  onLimitHit?: () => void;
 }
 
 // ─── Velocity colors ─────────────────────────────────────────────────────────
@@ -112,7 +126,25 @@ const TIER_BG: Record<string, string> = {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function BatchScanScreen({ visible, apiBase, zipCode, onClose, onOpenItem }: BatchScanScreenProps) {
+export function BatchScanScreen({
+  visible,
+  apiBase,
+  zipCode,
+  onClose,
+  onOpenItem,
+  isFreeLimitReached,
+  onConsumeScan,
+  onLimitHit,
+}: BatchScanScreenProps) {
+  // Live ref so the scanItem worklet's loop reads the latest limit flag
+  // even if the parent flips it mid-batch (e.g. user upgrades to Pro
+  // while a batch is processing).
+  const limitRef = useRef(!!isFreeLimitReached);
+  useEffect(() => { limitRef.current = !!isFreeLimitReached; }, [isFreeLimitReached]);
+  const limitHitFiredRef = useRef(false);
+  useEffect(() => {
+    if (!visible) limitHitFiredRef.current = false;
+  }, [visible]);
   const insets = useSafeAreaInsets();
   const [phase, setPhase] = useState<"select" | "scanning" | "results">("select");
   const [items, setItems] = useState<BatchItem[]>([]);
@@ -178,6 +210,22 @@ export function BatchScanScreen({ visible, apiBase, zipCode, onClose, onOpenItem
     const updateStatus = (status: ScanStatus) => {
       setItems((prev) => prev.map((it) => it.id === item.id ? { ...it, status } : it));
     };
+
+    // Per-item scan-limit gate. If the parent's free-scan budget is
+    // exhausted, refuse to process and emit the limit-hit signal once
+    // per batch run. The pool loop in runBatchScan also checks
+    // limitRef and breaks early so we don't keep firing this for each
+    // remaining item.
+    if (limitRef.current) {
+      if (!limitHitFiredRef.current) {
+        limitHitFiredRef.current = true;
+        try { onLimitHit?.(); } catch {}
+      }
+      const blocked: BatchItem = { ...item, status: "error", error: "Free scan limit reached" };
+      setItems((prev) => prev.map((it) => it.id === item.id ? blocked : it));
+      console.log("SCAN_LIMIT_BLOCKED", { source: "batch_screen", itemId: item.id });
+      return blocked;
+    }
 
     try {
       // Compress image
@@ -246,13 +294,18 @@ export function BatchScanScreen({ visible, apiBase, zipCode, onClose, onOpenItem
       };
 
       setItems((prev) => prev.map((it) => it.id === item.id ? result : it));
+      // Charge the parent's free-scan counter exactly once per success.
+      // Mirrors the setScansUsed bump in the inline runScan and receipt
+      // paths over in app/index.tsx.
+      try { onConsumeScan?.(); } catch {}
+      console.log("SCAN_LIMIT_CONSUMED", { source: "batch_screen", itemId: item.id });
       return result;
     } catch (e: any) {
       const failed: BatchItem = { ...item, status: "error", error: e?.message || "scan_failed" };
       setItems((prev) => prev.map((it) => it.id === item.id ? failed : it));
       return failed;
     }
-  }, [apiBase, zipCode]);
+  }, [apiBase, zipCode, onConsumeScan, onLimitHit]);
 
   const runBatchScan = useCallback(async () => {
     if (scanningRef.current || items.length === 0) return;
@@ -268,6 +321,10 @@ export function BatchScanScreen({ visible, apiBase, zipCode, onClose, onOpenItem
 
     const runNext = async () => {
       while (queue.length > 0) {
+        // Break the pool the moment the parent flips isFreeLimitReached
+        // mid-batch. scanItem also gates per-item; this just stops us
+        // from spinning the loop through every remaining queued URI.
+        if (limitRef.current) break;
         const item = queue.shift()!;
         const r = await scanItem(item);
         results.push(r);

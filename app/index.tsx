@@ -4952,6 +4952,37 @@ const bailScanForPaywall = (origin: string) => {
   });
 };
 
+// Charge one free scan. Used by every non-runScan code path that talks
+// to the AI/market endpoints directly (receipt analyzer, inline batch
+// processor, BatchScanScreen). Bumps the client counter immediately so
+// subsequent gates see the new value within the same JS turn, and best-
+// efforts /api/scan/consume so the server-side budget persists across
+// app launches. Pro users skip the server call (no per-scan accounting).
+const consumeFreeScan = (origin: string) => {
+  setScansUsed((prev) => {
+    const next = prev + 1;
+    console.log("SCAN_LIMIT_CONSUMED", { origin, scansUsed: next });
+    return next;
+  });
+  if (isPro) return;
+  try {
+    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const effectiveId = userId || guestId || installId;
+    fetch(`${apiBase}/api/scan/consume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...(userId ? { userId } : { guestId: effectiveId }),
+        imageHash: `${origin}_${Date.now()}`,
+      }),
+    }).then(r => r.json()).then(data => {
+      if (data?.resetAt) setScanResetAt(data.resetAt);
+      if (data?.scansUsed != null) setScansUsed(data.scansUsed);
+    }).catch(() => {});
+  } catch {}
+};
+
 const takePhoto = async () => {
 
   // HARD GUARD: prevents double-tap duplication + freezes
@@ -5069,7 +5100,19 @@ setFreezeFrameUri(pic?.uri || null);
 trackEvent("photo_captured", { cameraFacing });
 
 // ── Feature 3: Receipt mode → send to receipt analyzer ──────────────────────
+// A receipt analysis costs one free scan, same as a regular product scan.
+// The shutter-level isFreeLimitReached check above blocks new captures at
+// the limit; the explicit re-check + increment below guarantees that even
+// if the gate is somehow stale (rapid double-tap, async drift), we don't
+// run the analyzer for free. The scansUsed bump only fires after a
+// successful response so a true network failure isn't punished.
 if (receiptMode) {
+  if (isFreeLimitReached) {
+    setIsCapturing(false);
+    scanLockRef.current = false;
+    bailScanForPaywall("receipt_shutter");
+    return;
+  }
   setIsCapturing(false);
   scanLockRef.current = false;
   setReceiptLoading(true);
@@ -5096,6 +5139,10 @@ if (receiptMode) {
     const json = await resp.json();
     if (json?.ok) {
       setReceiptData(json);
+      // Successful receipt analysis = 1 free scan consumed. Both client
+      // and server counters are bumped so a fresh app launch can't undo
+      // the charge by re-reading /api/scan/status.
+      consumeFreeScan("receipt");
     } else {
       setReceiptError(json?.error || "Receipt analysis failed — try a clearer photo");
     }
@@ -5108,7 +5155,19 @@ if (receiptMode) {
 }
 
 // ── Feature 2: Batch mode → queue this photo for auto-processing ─────────────
+// The shutter already bails on isFreeLimitReached above, so the queue can
+// only be appended to while the user has budget remaining at TAP time.
+// The bypass risk here was that queued items processed AFTER the limit
+// was reached would still run for free. processBatchItem (the auto-
+// processor below) now gates per-item against isFreeLimitReached and
+// increments scansUsed on success, closing that hole.
 if (batchMode) {
+  if (isFreeLimitReached) {
+    setIsCapturing(false);
+    scanLockRef.current = false;
+    bailScanForPaywall("batch_shutter");
+    return;
+  }
   const job: BatchJob = {
     id: makeId(),
     uri: pic.uri,
@@ -9905,6 +9964,30 @@ const batchProcessingRef = React.useRef(false);
 
 const processBatchItem = async (jobId: string) => {
   if (!isMountedRef.current) return;
+
+  // Per-item scan-limit gate. The auto-processor used to run identify +
+  // market for every queued photo without ever incrementing scansUsed,
+  // which let a user enqueue N items while under budget and then process
+  // the remainder for free after hitting the limit. We now refuse to
+  // process any item while the user is over the limit and bail to the
+  // paywall — same UX shape as the shutter / use-photo gates. The
+  // scansUsed bump on success ensures each successful batch item costs
+  // exactly one free scan, identical to a regular runScan path.
+  if (isFreeLimitReached) {
+    setBatchQueue((prev) => {
+      const next = prev.map((j) =>
+        j.id === jobId
+          ? { ...j, status: "error" as BatchJobStatus, errorMsg: "Free scan limit reached" }
+          : j
+      );
+      saveBatchQueue(next);
+      return next;
+    });
+    bailScanForPaywall("batch_process");
+    console.log("SCAN_LIMIT_BLOCKED", { source: "batch_process", jobId });
+    return;
+  }
+
   // Mark as scanning
   setBatchQueue((prev) => {
     const next = prev.map((j) =>
@@ -9970,6 +10053,11 @@ const processBatchItem = async (jobId: string) => {
       saveBatchQueue(next);
       return next;
     });
+
+    // Successful batch item = 1 free scan consumed. Bumps client + server
+    // counters so the user can't drain the queue for free by closing the
+    // app between items.
+    consumeFreeScan("batch_process");
   } catch (err: any) {
     if (err?.name === "AbortError") return;
     setBatchQueue((prev) => {
@@ -9984,9 +10072,15 @@ const processBatchItem = async (jobId: string) => {
   }
 };
 
-// Feature 2: Auto-process queued batch items one at a time
+// Feature 2: Auto-process queued batch items one at a time.
+// Effect-level gate on isFreeLimitReached: when the user runs out of free
+// scans, the auto-processor halts even if items remain in the queue. The
+// per-item processBatchItem gate below is the belt-and-suspenders second
+// layer. As soon as the user upgrades or the free counter resets, this
+// effect re-fires (limit dependency) and resumes processing.
 useEffect(() => {
   if (!batchMode) return;
+  if (isFreeLimitReached) return;
   const pending = batchQueue.find((j) => !j.status || j.status === "queued");
   const inFlight = batchQueue.some((j) => j.status === "scanning");
   if (!pending || inFlight || batchProcessingRef.current) return;
@@ -9995,7 +10089,7 @@ useEffect(() => {
     batchProcessingRef.current = false;
   });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [batchQueue, batchMode]);
+}, [batchQueue, batchMode, isFreeLimitReached]);
 
   // ─── Offline support — handled by useNetworkStatus + useOfflineQueue hooks ──
   // (checkServerReachable / queueOfflineScan / drainOfflineQueue replaced)
@@ -16224,12 +16318,20 @@ onPress={() => {
     </View>
   </View>
 </Modal>
-{/* Feature 4: Batch Scan / Inventory Mode */}
+{/* Feature 4: Batch Scan / Inventory Mode
+    Scan-limit plumbing: the BatchScanScreen used to fire /api/batch/identify
+    and /market/search per selected photo without ever consulting the free-
+    scan counter. We now pass the live limit + a consume callback so each
+    successful item charges 1 free scan and the screen halts the moment the
+    budget is exhausted (paywall bail via bailScanForPaywall). */}
 <BatchScanScreen
   visible={batchInventoryOpen}
   apiBase={process.env.EXPO_PUBLIC_API_URL ?? (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001")}
   zipCode={zipCode || null}
   onClose={() => setBatchInventoryOpen(false)}
+  isFreeLimitReached={isFreeLimitReached}
+  onConsumeScan={() => { consumeFreeScan("batch_screen"); }}
+  onLimitHit={() => { bailScanForPaywall("batch_screen"); }}
 />
 
 {/* BILLION: MULTI-ITEM SCAN QUEUE */}
