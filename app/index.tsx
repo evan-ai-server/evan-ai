@@ -2932,37 +2932,17 @@ useEffect(() => {
 }, [watchlist]);
 
 useEffect(() => {
-  // clear any existing interval
+  // Background /watch/recheck interval permanently disabled. It used to
+  // fan-fetch every watched item every 6 hours per user, but it also fired
+  // on mount whenever a userId + watchlist existed — meaning every cold
+  // app launch by a returning user paid for one round of SerpAPI lanes.
+  // The only path that may hit /watch/poll is the manual per-item "Find
+  // current price" button (runManualWatchPriceRefresh).
   if (watchlistIntervalRef.current) {
     clearInterval(watchlistIntervalRef.current);
     watchlistIntervalRef.current = null;
   }
-
-  // only run if we have a user + watchlist
-  if (!userIdRef.current) return;
-  if (!watchlistRef.current?.length) return;
-
-  watchlistIntervalRef.current = setInterval(() => {
-    const uid = userIdRef.current;
-    const list = watchlistRef.current;
-
-    if (!uid || !list?.length) return;
-
-    list.forEach((item: any) => {
-fetch(`${resolvedApiBase || SAFE_API_BASE}/watch/recheck`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ userId: uid, item }),
-}).catch(() => {});
-    });
-  }, 1000 * 60 * 60 * 6); // every 6 hours
-
-  return () => {
-    if (watchlistIntervalRef.current) {
-      clearInterval(watchlistIntervalRef.current);
-      watchlistIntervalRef.current = null;
-    }
-  };
+  console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "watch_recheck_interval_disabled" });
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [userId, watchlist]);
 
@@ -4201,6 +4181,16 @@ const data = await res.json();
   }
 };
 const runDailyWatchlistCheck = async ({ force = false, quiet = true } = {}) => {
+  // Hard-disabled 2026-05-22 — TestFlight prep. The ONLY allowed watchlist
+  // search path is the per-item "Find current price" button in the detail
+  // modal (see runManualWatchPriceRefresh). Every other path — mount
+  // intervals, tab-switch effects, settings "Force re-check now" buttons,
+  // app-resume checks — is bailed at the function entry so a forgotten
+  // caller cannot silently fan SerpAPI lanes across every saved item on
+  // tab focus or boot.
+  console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "runDailyWatchlistCheck", force, quiet });
+  return;
+  // eslint-disable-next-line no-unreachable
   if (checkingWatchlistRef.current) return;
   if (!watchlistRef.current?.length) return;
   checkingWatchlistRef.current = true;
@@ -4301,8 +4291,13 @@ const runDailyWatchlistCheck = async ({ force = false, quiet = true } = {}) => {
   }
 };
 
-// Feature 9: Load relist suggestions when watchlist tab is opened
+// Feature 9: Load relist suggestions when watchlist tab is opened.
+// Hard-disabled — fires /api/relist/suggestions which fans SerpAPI lanes
+// for every watched item. The watchlist tab must NOT auto-search on open.
 const loadRelistSuggestions = async () => {
+  console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "loadRelistSuggestions" });
+  return;
+  // eslint-disable-next-line no-unreachable
   if (!watchlist?.length || relistLoading) return;
   setRelistLoading(true);
   try {
@@ -4454,6 +4449,11 @@ const handlePlMarkSold = (id: string, soldPrice: number) => {
 
 // ── Feature 3: Load Local Radar ───────────────────────────────────────────────
 const loadRadar = async () => {
+  // Hard-disabled — fans /api/radar/local SerpAPI lanes per watched query.
+  // No automatic local-radar fetch on tab open / refresh / mount.
+  console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "loadRadar" });
+  return;
+  // eslint-disable-next-line no-unreachable
   if (!zipCode || watchlist.length === 0) return;
   const queries = watchlist.map((w) => w.query).filter(Boolean);
   if (!queries.length) return;
@@ -7411,10 +7411,12 @@ const goTab = (next) => {
     setTab(to);
     setSpatialZone((to === "history" ? "archive" : to) as ZoneKey);
 
-    // Lazy-load data for destination tab
+    // Lazy-load disabled for watchlist tab — both loadRelistSuggestions and
+    // loadRadar fan SerpAPI lanes across saved items. The watchlist tab must
+    // not trigger any marketplace search on focus. (Both functions are also
+    // bailed at their entry — this removal is for grep clarity.)
     if (to === "watchlist") {
-      setTimeout(() => loadRelistSuggestions(), 800);
-      setTimeout(() => loadRadar(), 1200);
+      console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "tab_switch_lazy_load_disabled" });
     }
 
     // Reset scroll positions
@@ -10929,58 +10931,28 @@ useEffect(() => {
 // REAL-TIME PRICE MOVEMENT: auto re-check watchlist (foreground + app resume)
 const doWatchCheck = useCallback(
   async ({ force = false, quiet = true }: { force?: boolean; quiet?: boolean } = {}) => {
-    if (!autoWatchEnabled) return;
-    if (!Array.isArray(watchlist) || !watchlist.length) return;
-    if (watchCheckInFlightRef.current) return;
-    watchCheckInFlightRef.current = true;
-    try {
-      // your existing function; keep your signature compatibility
-      await runDailyWatchlistCheck?.({ force, quiet });
-      const now = Date.now();
-      lastGlobalWatchCheckMsRef.current = now;
-      AsyncStorage.setItem(K.lastWatchCheck, String(now));
-    } catch {
-      // quiet: no UI error spam
-    } finally {
-      watchCheckInFlightRef.current = false;
-    }
+    // Hard-disabled (see runDailyWatchlistCheck note). Auto-paths must
+    // never fire SerpAPI. The single allowed search path is the "Find
+    // current price" button.
+    console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "doWatchCheck", force, quiet });
+    return;
   },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  [autoWatchEnabled, watchlist, runDailyWatchlistCheck]
+  []
 );
-// foreground intervals (watchlist tab = faster loop)
+// Foreground intervals + tab-switch + app-resume watchlist checks — ALL
+// disabled for TestFlight. Previously this useEffect fired doWatchCheck
+// immediately when the user entered the watchlist tab (= one SerpAPI
+// fan-out per tab open) and again every 6 min while on the tab.
+// doWatchCheck itself is also bailed at the function entry; this useEffect
+// is left as a single mount-time log so the absence of the auto-poll is
+// explicit and audit-greppable.
 useEffect(() => {
-  if (!autoWatchEnabled) return;
-  if (tab === "profile") return;
-  if (tab === "watchlist") {
-    doWatchCheck({ force: false, quiet: true });
-  }
-  const ms = tab === "watchlist" ? 6 * 60 * 1000 : 15 * 60 * 1000;
-  const id = setInterval(() => {
-    doWatchCheck({ force: false, quiet: true });
-  }, ms);
-  return () => {
-    clearInterval(id);
-  };
-   
-}, [tab, autoWatchEnabled, doWatchCheck]);
-// resume check (app comes back)
+  console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "foreground_interval_disabled", tab });
+}, [tab]);
 useEffect(() => {
-  if (!autoWatchEnabled) return;
-  const sub = AppState.addEventListener("change", async (s) => {
-    if (s !== "active") return;
-    try {
-      const last = toNum(await AsyncStorage.getItem(K.lastWatchCheck));
-      const now = Date.now();
-      // check if stale (2 hours)
-      if (now - last > 2 * 60 * 60 * 1000) {
-        doWatchCheck({ force: false, quiet: true });
-      }
-    } catch {}
-  });
-  return () => sub.remove();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [autoWatchEnabled, doWatchCheck]);
+  console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "app_resume_check_disabled" });
+}, []);
 
 
 // -------------------------
@@ -18802,7 +18774,10 @@ function useWatchlistMarketPolling({
   setWatchlist: any;
 }) {
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "useWatchlistMarketPolling", reason: "enabled_false" });
+      return;
+    }
     if (!Array.isArray(watchlist) || !watchlist.length) return;
     if (typeof setWatchlist !== "function") return;
 
@@ -18927,6 +18902,9 @@ function useWatchlistRealtime(watchlist: any[] = [], setWatchlist: any, enabled 
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
+      }
+      if (!enabled) {
+        console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "useWatchlistRealtime", reason: "enabled_false" });
       }
       return;
     }
@@ -19488,6 +19466,10 @@ async function runManualWatchPriceRefresh(
 }> {
   if (!item?.id) return { ok: false, error: "no_item_id" };
   const startedAt = Date.now();
+  // Spec-required log name (TestFlight audit grep). The older
+  // WATCH_PRICE_MANUAL_REFRESH_* lines are kept in parallel so existing
+  // dashboards / log filters keep working.
+  console.log("WATCHLIST_MANUAL_PRICE_REFRESH_START", { id: item.id, title: item.title || item.query });
   console.log("WATCH_PRICE_MANUAL_REFRESH_START", { id: item.id, title: item.title || item.query });
   try {
     const res: any = await apiFetch("/watch/poll", {
@@ -19510,6 +19492,9 @@ async function runManualWatchPriceRefresh(
     const marketLow  = clampPrice(u?.marketLow  ?? u?.consensus?.typicalLow);
     const marketHigh = clampPrice(u?.marketHigh ?? u?.consensus?.typicalHigh);
     const dropAmount = clampPrice(u?.dropAmount ?? u?.delta?.dropAmount);
+    console.log("WATCHLIST_MANUAL_PRICE_REFRESH_SUCCESS", {
+      id: item.id, estValue, marketLow, marketHigh, ms: Date.now() - startedAt,
+    });
     console.log("WATCH_PRICE_MANUAL_REFRESH_SUCCESS", {
       id: item.id, estValue, marketLow, marketHigh, ms: Date.now() - startedAt,
     });

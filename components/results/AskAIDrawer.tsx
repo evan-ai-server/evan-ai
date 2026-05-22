@@ -382,7 +382,12 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
       <KeyboardAvoidingView
         style={styles.kavWrap}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? Math.max(insets.top, 12) : 0}
+        // The KAV fills the entire window (parent is StyleSheet.absoluteFill)
+        // so its top edge IS the device top — no offset needed. The earlier
+        // insets.top offset over-corrected and pushed the centered panel
+        // up too far when the keyboard opened, which read as a "drawer
+        // jumps" jitter the moment the input focused.
+        keyboardVerticalOffset={0}
         pointerEvents="box-none"
       >
         <Animated.View style={[styles.drawer, drawerStyle]}>
@@ -445,25 +450,32 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
               </View>
             ) : null}
 
-            {/* Message bubbles */}
-            {messages.map((m, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.bubble,
-                  m.role === "user" ? styles.bubbleUser : styles.bubbleAI,
-                ]}
-              >
-                {m.role === "assistant" ? (
-                  <View style={styles.aiAvatarRow}>
-                    <View style={styles.aiDot} />
-                    <Text style={styles.bubbleTextAI}>{m.content}</Text>
+            {/* Message bubbles. Belt-and-suspenders: even though every
+                code path that mutates `messages` already refuses to push
+                an empty assistant turn, render-time still falls back to a
+                visible retry string if some legacy persisted message
+                somehow slipped in with whitespace-only content. The user
+                must never see a stub bubble. */}
+            {messages.map((m, i) => {
+              const txt = typeof m.content === "string" ? m.content.trim() : "";
+              if (m.role === "assistant") {
+                const display = txt || "I couldn't generate an answer for this item. Tap send to retry.";
+                return (
+                  <View key={i} style={[styles.bubble, styles.bubbleAI]}>
+                    <View style={styles.aiAvatarRow}>
+                      <View style={styles.aiDot} />
+                      <Text style={styles.bubbleTextAI}>{display}</Text>
+                    </View>
                   </View>
-                ) : (
-                  <Text style={styles.bubbleTextUser}>{m.content}</Text>
-                )}
-              </View>
-            ))}
+                );
+              }
+              if (!txt) return null;
+              return (
+                <View key={i} style={[styles.bubble, styles.bubbleUser]}>
+                  <Text style={styles.bubbleTextUser}>{txt}</Text>
+                </View>
+              );
+            })}
 
             {/* Loading indicator */}
             {loading ? (

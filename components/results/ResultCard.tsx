@@ -505,6 +505,14 @@ export function ResultCard({
 
   const cardRef = useRef<View>(null);
   const mountedRef = useRef(true);
+  // capturingShareRef is the *synchronous* lock — useState updates lag a
+  // microtask behind the next render, so a fast double-tap on the share
+  // arrow could slip both invocations of handleShare past the React-state
+  // guard and stack two captureRef calls (which on iOS reliably crashes
+  // view-shot when both try to read the same BlurView). The ref lock
+  // closes that window; setCapturingShare stays only for the disabled UI
+  // state on the button.
+  const capturingShareRef = useRef(false);
   const [capturingShare, setCapturingShare] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
 
@@ -540,10 +548,11 @@ export function ResultCard({
   // is wrapped in its own try/catch so the outer Pressable handler can never
   // see an unhandled rejection. State always resets via the finally block.
   const handleShare = useCallback(async () => {
-    if (capturingShare) {
+    if (capturingShareRef.current) {
       console.log("CARD_ARROW_BLOCKED", { reason: "already_capturing", item: name });
       return;
     }
+    capturingShareRef.current = true;
     console.log("CARD_ARROW_PRESS", { item: name, hasRef: !!cardRef.current, imageLoaded });
     setCapturingShare(true);
     try { Feedback.save(); } catch {}
@@ -592,6 +601,7 @@ export function ResultCard({
           });
           try { Feedback.sold(); } catch {}
           console.log("CARD_SHARE_OK", { mode: "image" });
+          capturingShareRef.current = false;
           if (mountedRef.current) setCapturingShare(false);
           return;
         }
@@ -612,6 +622,7 @@ export function ResultCard({
     } catch (e: any) {
       console.log("CARD_SHARE_FAILED", { mode: "parent_text", error: e?.message || String(e) });
     } finally {
+      capturingShareRef.current = false;
       if (mountedRef.current) setCapturingShare(false);
     }
   }, [
@@ -650,7 +661,22 @@ export function ResultCard({
         {imageUri ? (
           <TouchableOpacity
             activeOpacity={1}
-            onPress={isHero && onZoomImage ? () => onZoomImage(imageUri) : onPress}
+            onPress={() => {
+              // Image-area tap. Hero card prefers the zoom modal; alt cards
+              // fall through to the listing open path. Either callback could
+              // synchronously throw (parent state setters, modal mount
+              // crashes) so the dispatch is wrapped — a throw here used to
+              // tear down the whole result tree.
+              try {
+                if (isHero && onZoomImage) {
+                  onZoomImage(imageUri);
+                } else if (onPress) {
+                  onPress();
+                }
+              } catch (e: any) {
+                console.log("CARD_IMAGE_PRESS_ERROR", { isHero, error: e?.message || String(e) });
+              }
+            }}
             style={StyleSheet.absoluteFillObject}
           >
             <Image
