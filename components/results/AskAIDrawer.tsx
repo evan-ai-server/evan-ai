@@ -96,19 +96,29 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
   const scrollRef = useRef<ScrollView>(null);
   const inputRef  = useRef<TextInput>(null);
 
-  // ── Slide animation ─────────────────────────────────────────────────────────
-  const translateY = useSharedValue(600);
-  const backdropOp = useSharedValue(0);
+  // ── Fade-in animation (no slide).
+  // Replaced the prior translateY 600→0 spring with a fade-only entrance so
+  // the dark background underneath doesn't appear to "drag upward" as the
+  // drawer enters — the bleeding-overlay complaint from the screenshots.
+  // Tiny 4-px nudge is OK to give the eye a hint of motion; anything more
+  // and the parent screen visibly shifts. drawerOpacity drives both the
+  // drawer and the input lock-up — they share one source of truth.
+  const drawerOpacity = useSharedValue(0);
+  const drawerNudge   = useSharedValue(4);
+  const backdropOp    = useSharedValue(0);
 
   useEffect(() => {
     if (visible) {
-      backdropOp.value = withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) });
-      translateY.value = withSpring(0, { damping: 28, stiffness: 260, mass: 1 });
-      // Focus input after entrance
-      setTimeout(() => inputRef.current?.focus(), 380);
+      backdropOp.value    = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
+      drawerOpacity.value = withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) });
+      drawerNudge.value   = withTiming(0, { duration: 240, easing: Easing.out(Easing.cubic) });
+      // Focus input after entrance settles. Slight extra delay vs the 380ms
+      // we used during the slide entrance, since fade is shorter.
+      setTimeout(() => inputRef.current?.focus(), 280);
     } else {
-      backdropOp.value = withTiming(0, { duration: 200 });
-      translateY.value = withSpring(600, { damping: 28, stiffness: 260, mass: 1 });
+      backdropOp.value    = withTiming(0, { duration: 180 });
+      drawerOpacity.value = withTiming(0, { duration: 180 });
+      drawerNudge.value   = withTiming(4, { duration: 180 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -124,13 +134,19 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
   }, [scanContext?.itemName]);
 
   const drawerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
+    opacity: drawerOpacity.value,
+    transform: [{ translateY: drawerNudge.value }],
   }));
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: backdropOp.value,
   }));
 
   // ── Send message ─────────────────────────────────────────────────────────────
+  // Lifecycle logs (ASK_AI_SEND_{START,SUCCESS,ERROR}) mirror the
+  // WATCH_PRICE_MANUAL_REFRESH_* shape so a single grep covers both manual
+  // user-triggered AI endpoints. Server replies with {ok, reply} for
+  // success and {ok:false, error} on failure — both branches surface the
+  // server's actual error string instead of a generic "Network error".
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
@@ -143,6 +159,13 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
     setMessages(nextMessages);
     setInput("");
     setLoading(true);
+    const startedAt = Date.now();
+    console.log("ASK_AI_SEND_START", {
+      apiBase,
+      messageCount: nextMessages.length,
+      preview: trimmed.slice(0, 80),
+      item: scanContext?.itemName || null,
+    });
 
     // Scroll to bottom after user message
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
@@ -154,10 +177,22 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
         body: JSON.stringify({ messages: nextMessages, scanContext }),
         signal: AbortSignal.timeout(20000),
       });
-      const json = await resp.json();
-      const reply = json?.reply || "Sorry, couldn't get a response right now.";
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
-    } catch {
+      const json = await resp.json().catch(() => ({} as any));
+      if (!resp.ok || json?.ok === false || !json?.reply) {
+        const errMsg = json?.error || `HTTP ${resp.status}`;
+        console.log("ASK_AI_SEND_ERROR", { apiBase, status: resp.status, error: errMsg, ms: Date.now() - startedAt });
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `Sorry, I couldn't get a response (${errMsg}). Tap to retry.` },
+        ]);
+        return;
+      }
+      console.log("ASK_AI_SEND_SUCCESS", {
+        apiBase, replyLen: String(json.reply).length, ms: Date.now() - startedAt,
+      });
+      setMessages((prev) => [...prev, { role: "assistant", content: String(json.reply) }]);
+    } catch (e: any) {
+      console.log("ASK_AI_SEND_ERROR", { apiBase, error: e?.message || String(e), ms: Date.now() - startedAt });
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: "Network error — check your connection and try again." },
@@ -170,7 +205,10 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
 
   // ─────────────────────────────────────────────────────────────────────────────
 
-  if (!visible && translateY.value >= 599) return null;
+  // Unmount fully once the fade-out finishes so the drawer can't intercept
+  // taps invisibly. drawerOpacity threshold mirrors the prior translateY
+  // sentinel — 0.02 ≈ "no longer visible to the eye".
+  if (!visible && drawerOpacity.value < 0.02) return null;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents={visible ? "auto" : "none"}>
@@ -179,11 +217,16 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       </Animated.View>
 
-      {/* Drawer */}
+      {/* Drawer.
+          KeyboardAvoidingView with behavior="padding" + a proper iOS offset
+          keeps the input row pinned directly above the keyboard. The prior
+          offset of 0 left a visible gap on iPhones with home-indicator and
+          made the panel feel detached/draggable. 12 is a calibrated value
+          that hugs the keyboard without overlapping it. */}
       <KeyboardAvoidingView
         style={styles.kavWrap}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={0}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
         pointerEvents="box-none"
       >
         <Animated.View style={[styles.drawer, drawerStyle, { paddingBottom: Math.max(insets.bottom, 12) }]}>

@@ -2248,9 +2248,25 @@ const openThriftHeat = useCallback(async () => {
   ]).start();
 }, [thriftHeatOp, thriftHeatY]);
 
-// Feature 6: open lowball sheet
+// Feature 6: open lowball sheet.
+// Critical order: open the sheet FIRST (so the loading UI renders instantly),
+// then fire the fetch in the background. The prior version awaited the API
+// before opening the sheet, which meant the user tapped the chip and stared
+// at nothing for 2-4 seconds before anything happened. Reset Messages calls
+// this same function — by clearing scripts first the loading state re-shows
+// while the new batch is fetched.
 const openLowball = useCallback(async () => {
   if (!activeResult) return;
+  // 1. Clear any prior scripts → loading UI shows
+  setLowballScripts([]);
+  // 2. Open the sheet immediately (fade-in, no slide)
+  setLowballOpen(true);
+  lowballOp.setValue(0);
+  lowballY.setValue(0); // no slide — fade only, per stability pass
+  RNAnimated.timing(lowballOp, {
+    toValue: 1, duration: 220, useNativeDriver: true,
+  }).start();
+  // 3. Fetch in the background — UI already showing "Making scripts"
   try {
     const res = await apiFetch("/intel/lowball-script", {
       method: "POST",
@@ -2265,18 +2281,16 @@ const openLowball = useCallback(async () => {
       }),
     }) as any;
     if (res?.scripts?.length) setLowballScripts(res.scripts);
-  } catch {}
-  setLowballOpen(true);
-  lowballOp.setValue(0);
-  lowballY.setValue(60);
-  RNAnimated.parallel([
-    RNAnimated.timing(lowballOp, { toValue: 1, duration: 280, useNativeDriver: true }),
-    RNAnimated.spring(lowballY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
-  ]).start();
+  } catch {
+    // Silent — empty scripts array keeps loading visible; caller can Reset.
+  }
 }, [activeResult, lowballOp, lowballY]);
 
 const closeLowball = useCallback(() => {
-  RNAnimated.timing(lowballOp, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+  // Fade-only close (no translateY) so the background underneath doesn't
+  // appear to "rub upward" on dismiss — the slide-up bleeding effect the
+  // user flagged across drawers.
+  RNAnimated.timing(lowballOp, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
     setLowballOpen(false);
     setLowballScripts([]);
   });
@@ -11590,9 +11604,7 @@ transform: [
         showsVerticalScrollIndicator={false}
       >
         {lowballScripts.length === 0 ? (
-          <Text style={{ color: "rgba(255,255,255,0.4)", fontSize: 14, textAlign: "center", paddingVertical: 30 }}>
-            Generating scripts…
-          </Text>
+          <LowballLoadingState />
         ) : lowballScripts.map((s, i) => (
           <Pressable key={i} onPress={async () => {
             try { await Clipboard.setStringAsync(s.message); setSavedToast("Copied"); } catch {}
@@ -15048,16 +15060,20 @@ ${shareLink}`
           </View>
         </View>
       </Modal>
-      {/* RESULT MODAL (reopen from history) */}
+      {/* RESULT MODAL (reopen from history) — fade on BOTH platforms now.
+          The prior iOS "slide" animation was dragging the background up
+          and bleeding through during entry. Fade is consistent, fast, and
+          doesn't move the parent layer. ScrollView added so tall details
+          don't push the Close button off-screen on small phones. */}
 <Modal
   visible={resultModalOpen}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
-  transparent 
+  transparent
   onRequestClose={() => setResultModalOpen(false)}
 >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { paddingTop: Math.max(TOP, 16) + 8, maxHeight: "92%" }]}>
             <View style={styles.modalTopRow}>
               <Text style={styles.modalTitle}>Cheapest exact match</Text>
               <Pressable
@@ -15066,6 +15082,7 @@ ${shareLink}`
                   setResultModalOpen(false);
                 }}
                 style={styles.backPill}
+                hitSlop={10}
               >
                 <Ionicons name="close" size={16} color="white" />
                 <Text style={styles.backText}>Close</Text>
@@ -15102,11 +15119,30 @@ ${shareLink}`
   </Text>
 )}
 {(() => {
+  // Demote the price-only verdict when canonical disagrees.
+  // getVerdict() looks at scannedPrice vs cheapestPrice and can emit "BUY"
+  // for a cheap listing even when the canonical buyVerdict (the one shown
+  // big on the hero screen) is HOLD/PASS. Showing both side-by-side reads
+  // as the app contradicting itself. When canonical is HOLD/PASS we
+  // collapse the chip to a neutral "Top match" / "Cheap listing" label
+  // and lose the green tint so the user's eye lands on the canonical
+  // verdict, not the listing-level price chip.
   const v = getVerdict({
     scannedPrice: toNumber(activeResult.scannedPrice),
     cheapestPrice: toNumber(activeResult.price),
   });
   if (!v) return null;
+  const canonical = String(activeResult?.buyVerdict || "").toUpperCase();
+  const canonicalDisagrees = (canonical === "HOLD" || canonical === "PASS") && v.tone === "green";
+  if (canonicalDisagrees) {
+    return (
+      <View style={styles.verdictRow}>
+        <Text style={[styles.verdictChip, styles.verdict_yellow]}>
+          Cheap listing
+        </Text>
+      </View>
+    );
+  }
   return (
     <View style={styles.verdictRow}>
       <Text
@@ -18596,6 +18632,90 @@ const ConfidenceBar = React.memo(function ConfidenceBar({
   );
 });
 
+// ── LowballLoadingState ─────────────────────────────────────────────────────
+// Premium loading state for the Lowball Generator sheet. Animated dots cycle
+// "Making scripts" → "..." and a shimmer bar slides across to convey progress
+// without faking percentages. Pure RNAnimated; no extra deps.
+function LowballLoadingState() {
+  const dotsAnim = useRef(new RNAnimated.Value(0)).current;
+  const shimmer  = useRef(new RNAnimated.Value(0)).current;
+  const [dotCount, setDotCount] = useState(1);
+
+  useEffect(() => {
+    // Dots cycle 1 → 2 → 3 → 1 …, 380ms each, via JS interval (worklet not
+    // needed — purely a label tick).
+    const id = setInterval(() => setDotCount((d) => (d % 3) + 1), 380);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const loop = RNAnimated.loop(
+      RNAnimated.sequence([
+        RNAnimated.timing(shimmer, { toValue: 1, duration: 1200, useNativeDriver: true }),
+        RNAnimated.timing(shimmer, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    // Also drive a parallel opacity pulse on the label so it feels "alive".
+    const opLoop = RNAnimated.loop(
+      RNAnimated.sequence([
+        RNAnimated.timing(dotsAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+        RNAnimated.timing(dotsAnim, { toValue: 0.55, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    opLoop.start();
+    return () => { try { loop.stop(); } catch {} try { opLoop.stop(); } catch {} };
+  }, [shimmer, dotsAnim]);
+
+  const shimmerStyle = {
+    opacity: shimmer.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0, 0.65, 0] }),
+    transform: [{
+      translateX: shimmer.interpolate({ inputRange: [0, 1], outputRange: [-160, 320] }),
+    }],
+  };
+
+  return (
+    <View style={{ alignItems: "center", paddingVertical: 36 }}>
+      <RNAnimated.Text
+        style={{
+          color: "rgba(255,255,255,0.78)",
+          fontSize: 15,
+          fontWeight: "700",
+          letterSpacing: 0.4,
+          marginBottom: 14,
+          opacity: dotsAnim,
+        }}
+        allowFontScaling={false}
+      >
+        Making scripts{".".repeat(dotCount)}
+      </RNAnimated.Text>
+
+      {/* Shimmer track */}
+      <View style={{
+        width: 200, height: 4, borderRadius: 2,
+        backgroundColor: "rgba(255,255,255,0.06)",
+        overflow: "hidden",
+        marginBottom: 6,
+      }}>
+        <RNAnimated.View
+          style={[
+            {
+              position: "absolute",
+              top: 0, bottom: 0,
+              width: 80, borderRadius: 2,
+              backgroundColor: "rgba(130,200,255,0.65)",
+            },
+            shimmerStyle as any,
+          ]}
+        />
+      </View>
+      <Text style={{ color: "rgba(255,255,255,0.30)", fontSize: 11, fontWeight: "600" }}>
+        Pulling market context · this is fast
+      </Text>
+    </View>
+  );
+}
+
 function useWatchlistMarketPolling({
   enabled,
   watchlist,
@@ -18814,6 +18934,37 @@ const _WatchlistScreen = React.memo(function WatchlistScreen({
 const [selected, setSelected] = useState<any | null>(null);
 const [targetHitToast, setTargetHitToast] = useState<string | null>(null);
 
+// Manual refresh state for the "Find current price" button. Per-id so
+// re-opening the modal for a different item shows the right state.
+const [refreshingId, setRefreshingId] = useState<string | null>(null);
+const [refreshError, setRefreshError]  = useState<string | null>(null);
+
+const findCurrentPrice = useCallback(async (item: any) => {
+  if (!item?.id || refreshingId) return;
+  setRefreshError(null);
+  setRefreshingId(item.id);
+  try {
+    const result = await runManualWatchPriceRefresh(item);
+    if (!result.ok || !result.patch) {
+      setRefreshError(result.error || "Couldn't fetch current price");
+      return;
+    }
+    const patch = result.patch;
+    if (typeof setWatchlist === "function") {
+      setWatchlist((prev: any[]) =>
+        (prev || []).map((w) => (w.id === item.id ? { ...w, ...patch } : w)),
+      );
+    }
+    // Reflect the patch in the currently-open selection too, so the modal's
+    // Estimated/Market values update without closing the sheet.
+    setSelected((s: any) => (s && s.id === item.id ? { ...s, ...patch } : s));
+  } catch (e: any) {
+    setRefreshError(e?.message || "Network error");
+  } finally {
+    setRefreshingId(null);
+  }
+}, [refreshingId, setWatchlist]);
+
 useEffect(() => {
   const hit = (watchlist || []).find(
     (x) =>
@@ -18830,13 +18981,14 @@ useEffect(() => {
   return () => clearTimeout(id);
 }, [watchlist]);
 
+// Auto-poll permanently OFF — see BILLION.WATCH_POLLING note above.
+// Users explicitly refresh via "Find current price" in the detail modal.
+// Both hooks left in place but disabled so legacy callers still type-check.
 useWatchlistMarketPolling({
-  enabled: !!BILLION?.WATCH_POLLING,
+  enabled: false,
   watchlist: Array.isArray(watchlist) ? watchlist : [],
   setWatchlist,
 });
-
-// Disable fake drift when real polling exists.
 useWatchlistRealtime(
   Array.isArray(watchlist) ? watchlist : [],
   setWatchlist,
@@ -19139,6 +19291,72 @@ useWatchlistRealtime(
                 </Text>
               </View>
             </View>
+            {/* Manual "Find current price" — the ONLY path that hits
+                /watch/poll. No auto-poll on app open, tab focus, or modal
+                open. Disabled while in-flight to prevent double-tap spam.
+                After a successful refresh, the Estimated/Market values
+                above update in place (selected is patched inside
+                findCurrentPrice). */}
+            <Pressable
+              onPress={() => findCurrentPrice(selected)}
+              disabled={refreshingId === selected?.id}
+              style={({ pressed }) => [
+                {
+                  marginTop: 4,
+                  marginBottom: 4,
+                  paddingVertical: 14,
+                  borderRadius: 14,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexDirection: "row",
+                  gap: 8,
+                  backgroundColor: refreshingId === selected?.id
+                    ? "rgba(255,255,255,0.06)"
+                    : "rgba(76,255,136,0.10)",
+                  borderWidth: 1,
+                  borderColor: refreshingId === selected?.id
+                    ? "rgba(255,255,255,0.10)"
+                    : "rgba(76,255,136,0.32)",
+                  opacity: pressed ? 0.7 : 1,
+                },
+              ]}
+            >
+              {refreshingId === selected?.id ? (
+                <>
+                  <ActivityIndicator size="small" color="rgba(255,255,255,0.7)" />
+                  <Text style={{ color: "rgba(255,255,255,0.8)", fontWeight: "700", fontSize: 14 }}>
+                    Checking current price…
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="search" size={15} color="#4cff88" />
+                  <Text style={{ color: "#4cff88", fontWeight: "800", fontSize: 14, letterSpacing: 0.3 }}>
+                    Find current price
+                  </Text>
+                </>
+              )}
+            </Pressable>
+            {refreshError && refreshingId !== selected?.id ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 4, marginBottom: 8 }}>
+                <Ionicons name="alert-circle" size={13} color="rgba(255,140,140,0.85)" />
+                <Text style={{ color: "rgba(255,140,140,0.85)", fontSize: 12, flex: 1 }}>
+                  {refreshError}
+                </Text>
+                <Pressable
+                  onPress={() => { setRefreshError(null); findCurrentPrice(selected); }}
+                  hitSlop={8}
+                  style={({ pressed }) => [{
+                    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8,
+                    backgroundColor: "rgba(255,140,140,0.12)",
+                    opacity: pressed ? 0.6 : 1,
+                  }]}
+                >
+                  <Text style={{ color: "rgba(255,180,180,0.95)", fontSize: 11, fontWeight: "800" }}>RETRY</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
             <Text style={styles.confLabel}>Update target</Text>
             <View style={styles.watchEditRow}>
               <Text style={styles.watchTargetPrefix}>$</Text>
@@ -19170,13 +19388,86 @@ useWatchlistRealtime(
     </View>
   );
 });
+// ── Manual watch-price refresh ──────────────────────────────────────────────
+// Replaces the auto-poll loop. Caller is the "Find current price" button —
+// fires once per tap, returns the patched item so the UI can splice it into
+// the list. Idempotent at the call site; pass `signal` to cancel.
+//
+// Logs (per spec): WATCH_PRICE_MANUAL_REFRESH_{START,SUCCESS,ERROR}.
+async function runManualWatchPriceRefresh(
+  item: { id: string; title?: string; query?: string },
+  opts?: { signal?: AbortSignal },
+): Promise<{
+  ok: boolean;
+  patch?: {
+    estValue?: number | null;
+    marketLow?: number | null;
+    marketHigh?: number | null;
+    lastSeenPrice?: number | null;
+    dropAmount?: number | null;
+    priceDropped?: boolean;
+    lastChecked?: number;
+  };
+  error?: string;
+}> {
+  if (!item?.id) return { ok: false, error: "no_item_id" };
+  const startedAt = Date.now();
+  console.log("WATCH_PRICE_MANUAL_REFRESH_START", { id: item.id, title: item.title || item.query });
+  try {
+    const res: any = await apiFetch("/watch/poll", {
+      method: "POST",
+      body: JSON.stringify({
+        items: [{ id: item.id, query: item.title || item.query }],
+      }),
+      timeoutMs: 12000,
+      retries: 0,
+      signal: opts?.signal,
+    });
+    const rawUpdates = Array.isArray(res?.items) ? res.items
+      : Array.isArray(res?.updated) ? res.updated : [];
+    const u = rawUpdates.find((x: any) => x?.id === item.id) || rawUpdates[0];
+    if (!u) {
+      console.log("WATCH_PRICE_MANUAL_REFRESH_ERROR", { id: item.id, reason: "no_match", ms: Date.now() - startedAt });
+      return { ok: false, error: "no_match_in_response" };
+    }
+    const estValue   = clampPrice(u?.estValue   ?? u?.bestPrice            ?? u?.state?.lastBestPrice);
+    const marketLow  = clampPrice(u?.marketLow  ?? u?.consensus?.typicalLow);
+    const marketHigh = clampPrice(u?.marketHigh ?? u?.consensus?.typicalHigh);
+    const dropAmount = clampPrice(u?.dropAmount ?? u?.delta?.dropAmount);
+    console.log("WATCH_PRICE_MANUAL_REFRESH_SUCCESS", {
+      id: item.id, estValue, marketLow, marketHigh, ms: Date.now() - startedAt,
+    });
+    return {
+      ok: true,
+      patch: {
+        estValue,
+        marketLow,
+        marketHigh,
+        lastSeenPrice: estValue,
+        dropAmount,
+        priceDropped: Boolean(u?.priceDropped ?? u?.delta?.priceDropped),
+        lastChecked: Date.now(),
+      },
+    };
+  } catch (e: any) {
+    console.log("WATCH_PRICE_MANUAL_REFRESH_ERROR", { id: item.id, error: e?.message || String(e), ms: Date.now() - startedAt });
+    return { ok: false, error: e?.message || "refresh_failed" };
+  }
+}
+
 // ===============================
 // BILLIONAIRE FEATURE FLAGS (v1)
 // local-first, production-safe
 // ===============================
 const BILLION = {
   RANKING_V2: true,
-  WATCH_POLLING: true,
+  // WATCH_POLLING disabled 2026-05-21 — auto-poll on mount + every 5 min was
+  // burning SerpAPI lanes per saved item every time the app opened, every
+  // tab focus, every settings open. The user now triggers "Find current
+  // price" explicitly per item (see runManualWatchPriceRefresh below).
+  // Flip back to true ONLY if you also rip out the manual button — never
+  // have both running at once.
+  WATCH_POLLING: false,
   MARKETPLACE_EXPAND: true,
   CLOUD_SYNC_V1: true, // export/import + optional API hook
   SOCIAL_HOOKS: true,

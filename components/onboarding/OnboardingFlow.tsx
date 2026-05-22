@@ -203,15 +203,20 @@ interface OptionCardProps {
 }
 
 function OptionCard({ label, selected, onPress }: OptionCardProps) {
-  const scale  = useSharedValue(1);
-  const prog   = useSharedValue(selected ? 1 : 0);
+  // Stability pass (2026-05-22): removed the scale 0.97 spring on press —
+  // it caused visible pixelation on Android during the press window and
+  // contributed to the "stuck button" feel when a quick double-tap aborted
+  // the onPressOut. Press feedback is now an opacity dip via Pressable's
+  // built-in style callback, which doesn't touch the GPU transform tree at
+  // all. The selected-check still animates via Reanimated since that
+  // animation is short, single-shot, and survives any tap timing.
+  const prog = useSharedValue(selected ? 1 : 0);
 
   useEffect(() => {
     prog.value = withSpring(selected ? 1 : 0, MO.spring.snappy);
   }, [selected]);
 
   const cardStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
     backgroundColor: `rgba(255,255,255,${interpolate(prog.value, [0, 1], [0.06, 0.15])})`,
     borderColor:     `rgba(255,255,255,${interpolate(prog.value, [0, 1], [0.10, 0.38])})`,
   }));
@@ -223,9 +228,13 @@ function OptionCard({ label, selected, onPress }: OptionCardProps) {
 
   return (
     <Pressable
-      onPressIn={() => { scale.value = withSpring(0.97, MO.spring.snappy); }}
-      onPressOut={() => { scale.value = withSpring(1.0,  MO.spring.bouncy); }}
       onPress={onPress}
+      // Built-in press opacity dip — no Reanimated, no transform, no pixelation.
+      // hitSlop expands the touch target so quick taps don't miss.
+      hitSlop={6}
+      style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }]}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
     >
       <Animated.View style={[s.optionCard, cardStyle]}>
         <Text style={s.optionLabel} numberOfLines={2}>{label}</Text>
@@ -512,6 +521,28 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
   }, [contentOpacity, contentX]);
 
   // ── Answer handler ─────────────────────────────────────────────────────────
+  // Stability fix (2026-05-22): the prior version scheduled an UNCANCELLABLE
+  // setTimeout(navigateTo, 300). If the user changed their mind within the
+  // 300ms window, setAnswers reflected the new choice but the navigation
+  // had already been queued against the OLD selection (or worse, the second
+  // navigation was eaten by isTransitioning). Symptom: tap A → tap B → screen
+  // advances showing answer A; or "press does nothing until pressing again".
+  //
+  // Fix: track the pending advance in a ref. Each tap clears the prior timer
+  // and schedules a fresh one. Selection updates immediately so the check
+  // mark visibly follows every tap. The advance fires 220ms after the LAST
+  // tap, not the first — re-taps within the window simply restart the timer.
+  const pendingAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    // Cleanup on unmount so a queued setTimeout can't navigate a dead tree.
+    return () => {
+      if (pendingAdvanceRef.current) {
+        clearTimeout(pendingAdvanceRef.current);
+        pendingAdvanceRef.current = null;
+      }
+    };
+  }, []);
+
   const handleAnswer = useCallback((question: QuestionDef, optionId: string) => {
     // Ascending haptic rhythm
     if (question.hapticLevel === "medium") {
@@ -520,12 +551,17 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
 
+    // Selection always updates immediately — never gated on the timer.
     setAnswers(prev => ({ ...prev, [question.key]: optionId }));
 
-    // Brief feedback window, then auto-advance
-    setTimeout(() => {
+    // Cancel any pending advance and schedule a new one. 220ms is short
+    // enough that the user perceives the navigation as immediate, but long
+    // enough to see the check land + correct a misclick.
+    if (pendingAdvanceRef.current) clearTimeout(pendingAdvanceRef.current);
+    pendingAdvanceRef.current = setTimeout(() => {
+      pendingAdvanceRef.current = null;
       navigateTo(question.screenIndex + 1, "fwd");
-    }, 300);
+    }, 220);
   }, [navigateTo]);
 
   // ── Navigation ─────────────────────────────────────────────────────────────

@@ -290,6 +290,17 @@ export function CardDeck({
   const deckEntrance = useSharedValue(0);
   const [_snappedIndex, setSnappedIndex] = useState(0);
 
+  // Mounted gate for runOnJS callbacks. A swipe can complete its worklet AFTER
+  // the deck has been torn down (new scan started, results cleared, modal
+  // closed). Without this, the runOnJS callback would still fire JS state
+  // updates against a dead tree — historically the second crash vector we
+  // saw on swipe (the first was Math.round(NaN) on the spring target).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
   // Swipe hint fade-in: appears after 600ms
   const swipeHintOpacity = useRef(new RNAnimated.Value(0)).current;
 
@@ -317,12 +328,18 @@ export function CardDeck({
   }, [activeResult]);
 
   const handleSnap = useCallback((idx: number) => {
-    setSnappedIndex(idx);
-    onSnapToIndex?.(idx);
+    if (!mountedRef.current) return;
+    // Clamp again on the JS side — defensive in case the worklet sent us
+    // a stale index after `cards` shrank (new scan rebuilt the deck while
+    // the spring was still settling).
+    const safe = Number.isFinite(idx) ? Math.max(0, Math.min(idx, Math.max(0, cards.length - 1))) : 0;
+    setSnappedIndex(safe);
+    onSnapToIndex?.(safe);
     snapHaptic();
-  }, [onSnapToIndex]);
+  }, [onSnapToIndex, cards.length]);
 
   const handleWatchlistSwipe = useCallback(() => {
+    if (!mountedRef.current) return;
     const card = cards[0]; // always the hero when swiping from index 0
     if (card) { onToggleWatchlist?.(card); heavyHaptic(); }
   }, [cards, onToggleWatchlist]);
@@ -376,6 +393,8 @@ export function CardDeck({
     });
 
   const handleCardPress = useCallback((idx: number) => {
+    if (!mountedRef.current) return;
+    if (!Number.isFinite(idx) || idx < 0 || idx >= cards.length) return;
     const card = cards[idx];
     if (!card) return;
     // Prefer the hardened directUrl (Phase 2/8) — falls through to legacy

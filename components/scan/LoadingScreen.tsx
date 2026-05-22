@@ -3,7 +3,7 @@
  * All rings, arcs, glow, and orbit dots are drawn on a Skia Canvas for
  * pixel-perfect anti-aliasing with no pixelation artifacts.
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -31,6 +31,7 @@ import {
   useDerivedValue,
   Easing,
   interpolate,
+  cancelAnimation,
 } from "react-native-reanimated";
 import { Ionicons } from "@expo/vector-icons";
 import { C, SP, R, TY, EASE_PANTHERE } from "../design/DS";
@@ -166,7 +167,18 @@ export function LoadingScreen({
     pillGlowLoop.start();
 
     return () => {
-      pillGlowLoop.stop();
+      // Stop infinite-repeat worklets explicitly. Without these the four
+      // Reanimated loops above kept ticking on the UI thread after the
+      // LoadingScreen unmounted (results came in, camera tab mounted on
+      // top) — contributing to the "intro screen pixelates before camera"
+      // jank the user flagged. cancelAnimation halts the worklet and
+      // freezes the shared value at its current frame.
+      cancelAnimation(outerRot);
+      cancelAnimation(innerRot);
+      cancelAnimation(corePulse);
+      cancelAnimation(ringPulse);
+      try { pillGlowLoop.stop(); } catch {}
+      try { progressAnim.stopAnimation(); } catch {}
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -183,6 +195,33 @@ export function LoadingScreen({
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage]);
+
+  // Inline retry from the Deep-Analysis panel — visually resets the progress
+  // line and pill entrance so the user sees a fresh start, then defers to the
+  // parent's onRetry which restarts the actual scan flow.
+  const handleInlineRetry = useCallback(() => {
+    progressAnim.stopAnimation();
+    progressAnim.setValue(0);
+    RNAnimated.timing(progressAnim, {
+      toValue: 1, duration: 28000, easing: panthereRN, useNativeDriver: false,
+    }).start();
+
+    pillAnims.forEach((a) => a.setValue(0));
+    PILL_STAGES.forEach((_, idx) => {
+      RNAnimated.sequence([
+        RNAnimated.delay(idx * 140),
+        RNAnimated.spring(pillAnims[idx], {
+          toValue: 1, damping: 20, stiffness: 220, mass: 0.8, useNativeDriver: true,
+        }),
+      ]).start();
+    });
+
+    // Force pills back to "fresh" by rolling the rendered stage to the first
+    // active phase. Parent will re-emit stage updates as the new scan flows.
+    setRenderStage("vision");
+
+    onRetry?.();
+  }, [progressAnim, pillAnims, onRetry]);
 
   // ── Skia derived values — read directly in Canvas render ─────────────────
 
@@ -337,28 +376,30 @@ export function LoadingScreen({
         <Text style={styles.subText} allowFontScaling={false} numberOfLines={1}>
           {stageMeta ?? stageCopy.sub}
         </Text>
-        {slowNetwork ? (
-          <View style={styles.subwayModeBlock}>
-            <View style={styles.subwayModeHeader}>
-              <View style={styles.subwayModeDot} />
-              <Text style={styles.subwayModeLabel} allowFontScaling={false} numberOfLines={1}>
-                DEEP ANALYSIS MODE
-              </Text>
-            </View>
-            <Text style={styles.subwayModeText} allowFontScaling={false}>
-              Low signal detected — extending market search for best results
-            </Text>
-            {onRetry ? (
-              <Pressable onPress={onRetry} style={styles.subwayRetryBtn}>
-                <Ionicons name="refresh-outline" size={13} color="rgba(255,255,255,0.75)" />
-                <Text style={styles.subwayRetryText} allowFontScaling={false} numberOfLines={1}>
-                  Retry with fresh scan
-                </Text>
-              </Pressable>
-            ) : null}
-          </View>
-        ) : null}
       </RNAnimated.View>
+
+      {/* ── DEEP ANALYSIS PANEL — sits cleanly between text and pills ── */}
+      {slowNetwork ? (
+        <View style={styles.subwayModeBlock}>
+          <View style={styles.subwayModeHeader}>
+            <View style={styles.subwayModeDot} />
+            <Text style={styles.subwayModeLabel} allowFontScaling={false} numberOfLines={1}>
+              DEEP ANALYSIS MODE
+            </Text>
+          </View>
+          <Text style={styles.subwayModeText} allowFontScaling={false}>
+            Low signal detected — extending market search for best results
+          </Text>
+          {onRetry ? (
+            <Pressable onPress={handleInlineRetry} style={styles.subwayRetryBtn}>
+              <Ionicons name="refresh-outline" size={12} color="rgba(255,255,255,0.75)" />
+              <Text style={styles.subwayRetryText} allowFontScaling={false} numberOfLines={1}>
+                Retry with fresh scan
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
 
       {/* ── STAGE PROGRESS PILLS ── */}
       <View style={styles.stagePills}>
@@ -454,9 +495,12 @@ const styles = StyleSheet.create({
 
   textBlock: {
     alignItems: "center",
+    justifyContent: "center",
     paddingHorizontal: SP.lg,
     marginBottom: SP.lg,
     marginTop: 4,
+    height: 90,
+    minHeight: 90,
   },
   primaryText: {
     fontSize: 20,
@@ -466,12 +510,14 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     marginBottom: SP.xs,
     letterSpacing: 0.2,
+    minWidth: 220,
   },
   subText: {
     fontSize: 13,
     color: "rgba(255,255,255,0.42)",
     textAlign: "center",
     lineHeight: 18,
+    minWidth: 200,
   },
 
   stagePills: {
@@ -550,54 +596,60 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
 
-  // ── Subway-Mode (Deep Analysis) ──────────────────────────────────────────
+  // ── Subway-Mode (Deep Analysis) — sits between subText and stagePills,
+  // with explicit margins so it never touches either neighbour. Constrained
+  // width keeps the panel visually contained instead of bleeding edge-to-edge.
   subwayModeBlock: {
     marginTop: SP.md,
+    marginBottom: SP.md,
+    alignSelf: "center",
+    maxWidth: 280,
     borderWidth: 1,
     borderColor: "rgba(255,200,60,0.20)",
-    borderRadius: R.md,
+    borderRadius: R.sm,
     backgroundColor: "rgba(255,175,0,0.07)",
-    paddingHorizontal: SP.md,
-    paddingVertical: SP.sm + 2,
+    paddingHorizontal: SP.sm,
+    paddingVertical: 7,
     alignItems: "center",
-    gap: 4,
+    gap: 3,
   },
   subwayModeHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 4,
   },
   subwayModeDot: {
-    width: 6,
-    height: 6,
+    width: 5,
+    height: 5,
     borderRadius: 3,
     backgroundColor: "rgba(255,200,60,0.85)",
   },
   subwayModeLabel: {
     ...TY.cap,
+    fontSize: 10,
     color: "rgba(255,210,80,0.85)",
-    letterSpacing: 1.2,
+    letterSpacing: 1.1,
   },
   subwayModeText: {
-    fontSize: 11,
+    fontSize: 10,
     color: "rgba(255,255,255,0.45)",
     textAlign: "center",
-    lineHeight: 15,
+    lineHeight: 13,
   },
   subwayRetryBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    marginTop: 4,
-    paddingHorizontal: SP.md,
-    paddingVertical: 6,
+    gap: 4,
+    marginTop: 3,
+    paddingHorizontal: SP.sm,
+    paddingVertical: 4,
     borderRadius: R.pill,
     backgroundColor: "rgba(255,255,255,0.07)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
   },
   subwayRetryText: {
-    fontSize: 12,
+    fontSize: 11,
     color: "rgba(255,255,255,0.75)",
     fontWeight: "700",
   },
