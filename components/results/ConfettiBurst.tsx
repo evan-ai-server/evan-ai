@@ -10,7 +10,7 @@
  *  - Auto-unmounts after the burst settles to avoid leaking timers.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { StyleSheet, View, Dimensions, Platform } from "react-native";
+import { StyleSheet, View, Dimensions, Modal, Platform } from "react-native";
 import Reanimated, {
   useSharedValue,
   useAnimatedStyle,
@@ -165,7 +165,14 @@ function ConfettiParticle({
   );
 }
 
-export function ConfettiBurst({ fireKey, originX = W / 2, originY = H * 0.32 }: ConfettiBurstProps) {
+// Default origin sits in the lower-middle of the viewport — close to the
+// dock where Bought It actually lives — instead of the upper-third. When the
+// user is scrolled to the bottom of a long result page, an upper-third
+// origin pushed the entire burst above the visible window and the
+// celebration was lost. Lower-middle keeps the burst on-screen regardless
+// of scroll position; the upward-cone launch in buildParticles still sprays
+// particles across the full viewport from there.
+export function ConfettiBurst({ fireKey, originX = W / 2, originY = H * 0.62 }: ConfettiBurstProps) {
   // Mount/unmount controller — keeps the tree clean when idle.
   const [activeKey, setActiveKey] = useState(0);
 
@@ -181,19 +188,35 @@ export function ConfettiBurst({ fireKey, originX = W / 2, originY = H * 0.32 }: 
     [activeKey],
   );
 
-  if (!activeKey) return null;
-
+  // Modal mount makes the burst screen-anchored even when the caller is
+  // nested inside a ScrollView. Without Modal, `position: absolute` is
+  // relative to the nearest positioned ancestor — inside the results
+  // ScrollView that means the burst sits at the top of scroll content
+  // (i.e. invisible if the user has scrolled down to the dock). The Modal
+  // re-roots the burst at the device window so origin coordinates always
+  // resolve to the actual screen. transparent + animationType="none" keeps
+  // the chrome invisible; statusBarTranslucent + hardwareAccelerated keep
+  // the layer feeling weightless across iOS/Android.
   return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
-      {particles.map((p) => (
-        <ConfettiParticle
-          key={`${activeKey}-${p.id}`}
-          particle={p}
-          originX={originX}
-          originY={originY}
-        />
-      ))}
-    </View>
+    <Modal
+      transparent
+      visible={!!activeKey}
+      animationType="none"
+      statusBarTranslucent
+      hardwareAccelerated
+      onRequestClose={() => setActiveKey(0)}
+    >
+      <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+        {particles.map((p) => (
+          <ConfettiParticle
+            key={`${activeKey}-${p.id}`}
+            particle={p}
+            originX={originX}
+            originY={originY}
+          />
+        ))}
+      </View>
+    </Modal>
   );
 }
 

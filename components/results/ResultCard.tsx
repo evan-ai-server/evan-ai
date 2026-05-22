@@ -162,6 +162,13 @@ function HeartButton({
   const fireHaptic = () => {
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
   };
+  // Parent-owned onToggle could throw (e.g. watchlist storage failure). The
+  // worklet→JS hop won't survive an unhandled rejection on some configs, so
+  // every callback fired from this gesture goes through a try/catch wrapper.
+  const safeToggle = () => {
+    try { onToggle(); }
+    catch (e: any) { console.log("CARD_HEART_ERROR", { error: e?.message || String(e) }); }
+  };
 
   const tap = Gesture.Tap().onEnd(() => {
     // Shutter: squish → pop → settle
@@ -172,7 +179,7 @@ function HeartButton({
     );
     fill.value = withSpring(isWatchlisted ? 0 : 1, { damping: 14, stiffness: 320 });
     runOnJS(fireHaptic)();
-    runOnJS(onToggle)();
+    runOnJS(safeToggle)();
   });
 
   const heartStyle = useAnimatedStyle(() => {
@@ -217,30 +224,33 @@ function HeartButton({
 }
 
 // ─── Share button ─────────────────────────────────────────────────────────────
-function ShareBtn({ onShare }: { onShare: () => void }) {
-  const scale = useSharedValue(1);
-
-  const tap = Gesture.Tap()
-    .onBegin(() => { scale.value = withSpring(0.84, { damping: 12, stiffness: 400 }); })
-    .onFinalize(() => {
-      scale.value = withSpring(1, { damping: 14, stiffness: 300 });
-      runOnJS(onShare)();
-    });
-
-  const style = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
+// The top-right arrow. Historically wrapped in a Gesture.Tap that ran
+// `runOnJS(onShare)()` from a worklet; when onShare was an async function it
+// would return a floating Promise into the worklet→JS hop and any captureRef
+// / Sharing failure (image not loaded, ref null, NSException from view-shot)
+// became an unhandled rejection that tore the app down. Plain Pressable +
+// opacity feedback avoids the worklet hop entirely. Disabled state mirrors
+// the share lifecycle so double-taps can't stack captureRef calls.
+function ShareBtn({ onShare, disabled }: { onShare: () => void; disabled?: boolean }) {
   return (
-    <GestureDetector gesture={tap}>
-      <Reanimated.View
-        style={[styles.overlayBtn, styles.shareBtnBg, style as any]}
-        renderToHardwareTextureAndroid={IS_ANDROID}
-        shouldRasterizeIOS={!IS_ANDROID}
-      >
-        <Ionicons name="arrow-up-outline" size={17} color="white" />
-      </Reanimated.View>
-    </GestureDetector>
+    <Pressable
+      onPress={() => {
+        try {
+          onShare();
+        } catch (e: any) {
+          console.log("CARD_ARROW_PRESS_ERROR", { error: e?.message || String(e) });
+        }
+      }}
+      disabled={disabled}
+      hitSlop={8}
+      style={({ pressed }) => [
+        styles.overlayBtn,
+        styles.shareBtnBg,
+        { opacity: disabled ? 0.55 : pressed ? 0.78 : 1 },
+      ]}
+    >
+      <Ionicons name="arrow-up-outline" size={17} color="white" />
+    </Pressable>
   );
 }
 
@@ -494,42 +504,120 @@ export function ResultCard({
   const store    = data.store || data.source || null;
 
   const cardRef = useRef<View>(null);
+  const mountedRef = useRef(true);
   const [capturingShare, setCapturingShare] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
 
-  const handleShare = useCallback(async () => {
-    if (capturingShare) return;
-    setCapturingShare(true);
-    Feedback.save();
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // Reset image-loaded state when the URI changes so a half-loaded image from
+  // a previous card can't satisfy the captureRef gate for the next one.
+  useEffect(() => {
+    setImageLoaded(false);
+  }, [data.image, data.photoUri]);
+
+  // Text-only share fallback. Used when captureRef cannot run (no ref, image
+  // not loaded, native exception) and when the parent doesn't supply its own
+  // onShare. Wrapped so a Share.share rejection never escapes back into the
+  // Pressable handler.
+  const textShareFallback = useCallback(async () => {
     try {
-      const uri = await captureRef(cardRef, { format: "png", quality: 0.95 });
-      // Save to vault (caller copies to permanent storage)
-      if (onVaultSave) {
+      await Share.share({
+        message: `Found ${name} for ${fmtMoney(price)} on Evan AI — AI-powered price scanner.\nhttps://evanai.app`,
+      });
+      console.log("CARD_SHARE_OK", { mode: "text_fallback" });
+    } catch (e: any) {
+      console.log("CARD_SHARE_FAILED", { mode: "text_fallback", error: e?.message || String(e) });
+    }
+  }, [name, price]);
+
+  // Bulletproof share handler. Every branch that could historically throw
+  // (captureRef on a null ref / unloaded image, Sharing.shareAsync on an
+  // invalid URI, onVaultSave from the parent, the text-share fallback itself)
+  // is wrapped in its own try/catch so the outer Pressable handler can never
+  // see an unhandled rejection. State always resets via the finally block.
+  const handleShare = useCallback(async () => {
+    if (capturingShare) {
+      console.log("CARD_ARROW_BLOCKED", { reason: "already_capturing", item: name });
+      return;
+    }
+    console.log("CARD_ARROW_PRESS", { item: name, hasRef: !!cardRef.current, imageLoaded });
+    setCapturingShare(true);
+    try { Feedback.save(); } catch {}
+
+    let uri: string | null = null;
+    // Only attempt captureRef when the view is mounted, the ref resolves to a
+    // real native handle, and the image has reported onLoad. captureRef on an
+    // unloaded image throws an NSException on iOS that crashes the app even
+    // when wrapped in JS try/catch — this gate is the actual fix for the
+    // top-right-arrow crash. Without it the next-card preview image (which
+    // may not have finished decoding yet) could detonate the entire app on
+    // share-tap.
+    if (cardRef.current && imageLoaded) {
+      try {
+        uri = await captureRef(cardRef, { format: "png", quality: 0.9 });
+      } catch (e: any) {
+        console.log("CARD_SHARE_CAPTURE_FAILED", { error: e?.message || String(e) });
+        uri = null;
+      }
+    } else {
+      console.log("CARD_ARROW_BLOCKED", {
+        reason: !cardRef.current ? "no_ref" : "image_not_loaded",
+        item: name,
+      });
+    }
+
+    if (uri && onVaultSave) {
+      try {
         const costBasis = Number.isFinite(Number(data.scannedPrice ?? scannedPrice))
           ? Number(data.scannedPrice ?? scannedPrice) : null;
         const potentialProfit = isHero && data.avgMarket != null && costBasis != null
           ? Number(data.avgMarket) - costBasis : null;
         onVaultSave({ id: String(Date.now()), tempUri: uri, name, price, potentialProfit });
+      } catch (e: any) {
+        console.log("CARD_SHARE_VAULT_FAILED", { error: e?.message || String(e) });
       }
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(uri, {
-          dialogTitle: isHero ? "Check out this deal — Evan AI" : "Found a cheaper listing — Evan AI",
-          mimeType: "image/png",
-        });
-        Feedback.sold();
-        setCapturingShare(false);
-        return;
+    }
+
+    if (uri) {
+      try {
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(uri, {
+            dialogTitle: isHero ? "Check out this deal — Evan AI" : "Found a cheaper listing — Evan AI",
+            mimeType: "image/png",
+          });
+          try { Feedback.sold(); } catch {}
+          console.log("CARD_SHARE_OK", { mode: "image" });
+          if (mountedRef.current) setCapturingShare(false);
+          return;
+        }
+      } catch (e: any) {
+        console.log("CARD_SHARE_FAILED", { mode: "image", error: e?.message || String(e) });
       }
-    } catch {}
-    setCapturingShare(false);
-    // Fallback to text share
-    if (onShare) { onShare(); return; }
+    }
+
+    // Capture or share failed — fall back to text share (parent-owned if
+    // provided, else our own Share.share message).
     try {
-      await Share.share({
-        message: `Found ${name} for ${fmtMoney(price)} on Evan AI — AI-powered price scanner.\nhttps://evanai.app`,
-      });
-    } catch {}
-  }, [capturingShare, name, price, isHero, onShare, onVaultSave, data.avgMarket, data.scannedPrice, scannedPrice]);
+      if (onShare) {
+        onShare();
+        console.log("CARD_SHARE_OK", { mode: "parent_text" });
+      } else {
+        await textShareFallback();
+      }
+    } catch (e: any) {
+      console.log("CARD_SHARE_FAILED", { mode: "parent_text", error: e?.message || String(e) });
+    } finally {
+      if (mountedRef.current) setCapturingShare(false);
+    }
+  }, [
+    capturingShare, imageLoaded, name, price, isHero, onShare, onVaultSave,
+    data.avgMarket, data.scannedPrice, scannedPrice, textShareFallback,
+  ]);
 
   const conf = Number(data.visionConfidence ?? 0);
 
@@ -569,6 +657,8 @@ export function ResultCard({
               source={{ uri: imageUri }}
               style={StyleSheet.absoluteFillObject}
               resizeMode="cover"
+              onLoad={() => setImageLoaded(true)}
+              onError={() => setImageLoaded(false)}
             />
           </TouchableOpacity>
         ) : (
@@ -604,7 +694,7 @@ export function ResultCard({
           {onToggleWatchlist ? (
             <HeartButton isWatchlisted={isWatchlisted} onToggle={onToggleWatchlist} />
           ) : null}
-          <ShareBtn onShare={handleShare} />
+          <ShareBtn onShare={handleShare} disabled={capturingShare || !imageUri} />
         </View>
       </View>
 
@@ -787,17 +877,28 @@ export function ResultCard({
           {isHero && (data.url ?? data.buyLink) ? (
             <TouchableOpacity
               activeOpacity={0.72}
-              onPress={() =>
-                routeListingClick(data.url ?? data.buyLink, {
-                  scanId,
-                  userId,
-                  itemName: name,
-                  listingPrice: price,
-                  source: store,
-                  cardRole: "hero",
-                  intent: "buy",
-                })
-              }
+              onPress={() => {
+                // routeListingClick is async and could reject if the URL fails
+                // to resolve. Catching here prevents the onPress promise from
+                // floating into an unhandled rejection.
+                try {
+                  Promise.resolve(
+                    routeListingClick(data.url ?? data.buyLink, {
+                      scanId,
+                      userId,
+                      itemName: name,
+                      listingPrice: price,
+                      source: store,
+                      cardRole: "hero",
+                      intent: "buy",
+                    }),
+                  ).catch((e: any) => {
+                    console.log("CARD_LINK_OPEN_ERROR", { role: "hero", error: e?.message || String(e) });
+                  });
+                } catch (e: any) {
+                  console.log("CARD_LINK_OPEN_ERROR", { role: "hero", error: e?.message || String(e) });
+                }
+              }}
               style={styles.heroBuyBar}
             >
               <Ionicons name="cart-outline" size={13} color="rgba(120,255,170,0.85)" />
@@ -833,17 +934,25 @@ export function ResultCard({
           {!isHero ? (
             <TouchableOpacity
               activeOpacity={0.72}
-              onPress={() =>
-                routeListingClick(data.url ?? data.buyLink, {
-                  scanId,
-                  userId,
-                  itemName: name,
-                  listingPrice: price,
-                  source: store,
-                  cardRole: "alt",
-                  intent: "buy",
-                })
-              }
+              onPress={() => {
+                try {
+                  Promise.resolve(
+                    routeListingClick(data.url ?? data.buyLink, {
+                      scanId,
+                      userId,
+                      itemName: name,
+                      listingPrice: price,
+                      source: store,
+                      cardRole: "alt",
+                      intent: "buy",
+                    }),
+                  ).catch((e: any) => {
+                    console.log("CARD_LINK_OPEN_ERROR", { role: "alt", error: e?.message || String(e) });
+                  });
+                } catch (e: any) {
+                  console.log("CARD_LINK_OPEN_ERROR", { role: "alt", error: e?.message || String(e) });
+                }
+              }}
               style={styles.viewListingBar}
             >
               <Text style={styles.viewListingText}>View listing  →</Text>

@@ -16,16 +16,17 @@ import {
   Pressable,
   StyleSheet,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
   ActivityIndicator,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
   withTiming,
   Easing,
 } from "react-native-reanimated";
@@ -74,7 +75,18 @@ interface AskAIDrawerProps {
   scanContext: ScanContext;
   apiBase: string;
   onClose: () => void;
+  /**
+   * Stable scan identifier — used to scope chat history per scan. Each scan
+   * gets its own AsyncStorage bucket so reopening an old scan from history
+   * restores its conversation, while a fresh scan starts empty. Falls back
+   * to a content-derived key (itemName + scannedPrice) when scanId is null.
+   */
+  scanId?: string | null;
 }
+
+// Cap on the number of messages we persist per scan. Above this we drop
+// the oldest turn pairs — keeps storage bounded and load times instant.
+const MAX_PERSISTED_MESSAGES = 60;
 
 // ─── Suggested prompts ────────────────────────────────────────────────────────
 
@@ -88,13 +100,30 @@ const PROMPTS = [
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDrawerProps) {
+export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: AskAIDrawerProps) {
   const insets    = useSafeAreaInsets();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput]       = useState("");
   const [loading, setLoading]   = useState(false);
+  const [hydrating, setHydrating] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const inputRef  = useRef<TextInput>(null);
+
+  // Stable per-scan storage key. Prefer the server-side scanId when
+  // available; fall back to a content hash built from itemName +
+  // scannedPrice so two different scans of the same listing get the
+  // same continuation while two scans of different items stay isolated.
+  // If neither identifier is present, return null and skip persistence
+  // entirely — better to lose chat than to leak someone else's reply.
+  const storageKey: string | null = React.useMemo(() => {
+    if (scanId) return `ask_ai_chat:${scanId}`;
+    const name = (scanContext?.itemName || scanContext?.visionQuery || "").trim();
+    const price = Number.isFinite(Number(scanContext?.scannedPrice))
+      ? Math.round(Number(scanContext?.scannedPrice) * 100) : null;
+    if (!name) return null;
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 48);
+    return `ask_ai_chat:item:${slug}:${price ?? "x"}`;
+  }, [scanId, scanContext?.itemName, scanContext?.visionQuery, scanContext?.scannedPrice]);
 
   // Opacity-only entrance. The prior version added a 4px translateY nudge
   // on top of the opacity tween; with the keyboard open that small lift
@@ -116,15 +145,70 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  // Reset messages when a new scan context arrives (itemName changed)
-  const prevItem = useRef<string | null>(null);
+  // Per-scan hydration. When the drawer becomes visible OR the storageKey
+  // changes (new scan, scan revisited from history), load that scan's
+  // saved chat. When the key changes WHILE the drawer is closed we still
+  // wipe the in-memory log so reopening doesn't briefly flash the prior
+  // scan's transcript before the load resolves.
+  const prevKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    const name = scanContext?.itemName ?? null;
-    if (name && name !== prevItem.current) {
-      prevItem.current = name;
-      setMessages([]);
-    }
-  }, [scanContext?.itemName]);
+    let cancelled = false;
+    const load = async () => {
+      if (!storageKey) {
+        if (!cancelled) setMessages([]);
+        prevKeyRef.current = null;
+        return;
+      }
+      if (prevKeyRef.current === storageKey && !visible) return;
+      prevKeyRef.current = storageKey;
+      try {
+        setHydrating(true);
+        const raw = await AsyncStorage.getItem(storageKey);
+        if (cancelled) return;
+        if (!raw) {
+          setMessages([]);
+          console.log("ASK_AI_CHAT_LOAD", { key: storageKey, count: 0 });
+        } else {
+          const parsed = JSON.parse(raw);
+          const list = Array.isArray(parsed?.messages) ? parsed.messages : [];
+          const sanitized: Message[] = list
+            .filter((m: any) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
+            .map((m: any) => ({ role: m.role, content: m.content }));
+          setMessages(sanitized);
+          console.log("ASK_AI_CHAT_LOAD", { key: storageKey, count: sanitized.length });
+        }
+      } catch (e: any) {
+        console.log("ASK_AI_CHAT_LOAD_ERROR", { key: storageKey, error: e?.message || String(e) });
+        if (!cancelled) setMessages([]);
+      } finally {
+        if (!cancelled) setHydrating(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [storageKey, visible]);
+
+  // Persist on every change to messages. Debounced via a microtask so
+  // back-to-back appends (user msg + assistant reply) coalesce into one
+  // storage write. setItem failures log but never throw.
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!storageKey) return;
+    if (hydrating) return; // don't overwrite during initial load
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(async () => {
+      try {
+        const trimmed = messages.slice(-MAX_PERSISTED_MESSAGES);
+        await AsyncStorage.setItem(storageKey, JSON.stringify({ messages: trimmed, savedAt: Date.now() }));
+        console.log("ASK_AI_CHAT_SAVE", { key: storageKey, count: trimmed.length });
+      } catch (e: any) {
+        console.log("ASK_AI_CHAT_SAVE_ERROR", { key: storageKey, error: e?.message || String(e) });
+      }
+    }, 220);
+    return () => {
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    };
+  }, [messages, storageKey, hydrating]);
 
   const drawerStyle = useAnimatedStyle(() => ({
     opacity: drawerOpacity.value,
@@ -132,6 +216,18 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: backdropOp.value,
   }));
+
+  // Keyboard-only dismiss. Hitting Done collapses the keyboard but keeps
+  // the drawer mounted. Closing the drawer is reserved for the X button.
+  const dismissKeyboardOnly = useCallback(() => {
+    try { Keyboard.dismiss(); } catch {}
+  }, []);
+  const [kbVisible, setKbVisible] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow", () => setKbVisible(true));
+    const hide = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide", () => setKbVisible(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   // ── Send message ─────────────────────────────────────────────────────────────
   // Lifecycle logs (ASK_AI_SEND_{START,SUCCESS,ERROR}) mirror the
@@ -176,20 +272,31 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
     // Anthropic Messages (content[0].text). If nothing extracts cleanly we
     // surface the raw keys + status so the user (and logs) see what came
     // back instead of an empty assistant turn.
-    const extractReply = (j: any): string | null => {
-      if (!j || typeof j !== "object") return null;
-      const candidates: any[] = [
-        j.reply, j.answer, j.message, j.text, j.content,
-        j.data?.reply, j.data?.answer, j.data?.message, j.data?.text, j.data?.content,
-        j.choices?.[0]?.message?.content, j.choices?.[0]?.text,
-        j.output_text,
-        j.output?.[0]?.content?.[0]?.text,
-        Array.isArray(j.content) ? j.content?.[0]?.text : null,
+    const extractReply = (j: any): { text: string | null; source: string } => {
+      if (!j || typeof j !== "object") return { text: null, source: "non_object" };
+      const candidates: { value: any; src: string }[] = [
+        { value: j.reply,                              src: "reply" },
+        { value: j.answer,                             src: "answer" },
+        { value: j.message,                            src: "message" },
+        { value: j.text,                               src: "text" },
+        { value: j.content,                            src: "content" },
+        { value: j.data?.reply,                        src: "data.reply" },
+        { value: j.data?.answer,                       src: "data.answer" },
+        { value: j.data?.message,                      src: "data.message" },
+        { value: j.data?.text,                         src: "data.text" },
+        { value: j.data?.content,                      src: "data.content" },
+        { value: j.choices?.[0]?.message?.content,     src: "choices[0].message.content" },
+        { value: j.choices?.[0]?.text,                 src: "choices[0].text" },
+        { value: j.output_text,                        src: "output_text" },
+        { value: j.output?.[0]?.content?.[0]?.text,    src: "output[0].content[0].text" },
+        { value: Array.isArray(j.content) ? j.content?.[0]?.text : null, src: "content[0].text" },
       ];
       for (const c of candidates) {
-        if (typeof c === "string" && c.trim()) return c.trim();
+        if (typeof c.value === "string" && c.value.trim()) {
+          return { text: c.value.trim(), source: c.src };
+        }
       }
-      return null;
+      return { text: null, source: "none" };
     };
 
     try {
@@ -208,23 +315,33 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
       let json: any = {};
       try { json = rawText ? JSON.parse(rawText) : {}; } catch { json = { _raw: rawText }; }
 
-      const reply = extractReply(json);
+      const { text: reply, source: replySource } = extractReply(json);
       if (!resp.ok || json?.ok === false || !reply) {
+        console.log("ASK_AI_EXTRACT_REPLY_EMPTY", {
+          status: resp.status,
+          keys: Object.keys(json || {}),
+          replySource,
+        });
         const errMsg =
           json?.error ||
           json?.message ||
           (reply ? null : `No reply field. Server returned keys: ${Object.keys(json || {}).join(", ") || "(none)"}`) ||
           `HTTP ${resp.status}`;
         console.log("ASK_AI_SEND_ERROR", { status: resp.status, error: errMsg, ms: Date.now() - startedAt, json });
+        // Never append an empty assistant bubble. Show a visible error
+        // message instead so the user knows the turn failed and can retry.
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: `I couldn't get a clean response (${errMsg}). Tap the send button to retry, or check your connection.`,
+            content: `I couldn't generate an answer for this item (${errMsg}). Tap send to retry.`,
           },
         ]);
         return;
       }
+      console.log("ASK_AI_EXTRACT_REPLY_SUCCESS", {
+        replySource, replyLen: reply.length, preview: reply.slice(0, 120),
+      });
       console.log("ASK_AI_SEND_PARSED_REPLY", {
         replyLen: reply.length, preview: reply.slice(0, 120), ms: Date.now() - startedAt,
       });
@@ -255,29 +372,25 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       </Animated.View>
 
-      {/* Drawer.
-          KeyboardAvoidingView with behavior="padding" + a proper iOS offset
-          keeps the input row pinned directly above the keyboard. The prior
-          offset of 0 left a visible gap on iPhones with home-indicator and
-          made the panel feel detached/draggable. 12 is a calibrated value
-          that hugs the keyboard without overlapping it. */}
+      {/* Centered floating panel. KeyboardAvoidingView with behavior="padding"
+          shrinks the available space from below when the keyboard appears,
+          and `justifyContent: 'center'` re-centers the panel inside the
+          remaining viewport — input + chat travel together as a single
+          locked unit, no slide-up sheet, no drag, no re-measure flicker.
+          marginHorizontal gives the panel a clear premium float against
+          the dimmed backdrop. */}
       <KeyboardAvoidingView
         style={styles.kavWrap}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
+        keyboardVerticalOffset={Platform.OS === "ios" ? Math.max(insets.top, 12) : 0}
         pointerEvents="box-none"
       >
-        <Animated.View style={[styles.drawer, drawerStyle, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <Animated.View style={[styles.drawer, drawerStyle]}>
           {/* Glass backing */}
           {Platform.OS === "ios" ? (
             <BlurView intensity={78} tint="dark" style={StyleSheet.absoluteFillObject} />
           ) : null}
           <View style={styles.drawerOverlay} />
-
-          {/* Handle bar */}
-          <View style={styles.handleRow}>
-            <View style={styles.handle} />
-          </View>
 
           {/* Header */}
           <View style={styles.header}>
@@ -292,6 +405,15 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
                 </Text>
               ) : null}
             </View>
+            {/* Done — keyboard-only dismiss. Only appears while the keyboard
+                is up so the header doesn't feel cluttered when it's not
+                needed. Tapping Done collapses the keyboard but keeps the
+                drawer mounted. The X is still the only way to close. */}
+            {kbVisible ? (
+              <Pressable onPress={dismissKeyboardOnly} style={styles.doneBtn} hitSlop={10}>
+                <Text style={styles.doneBtnText}>Done</Text>
+              </Pressable>
+            ) : null}
             <Pressable onPress={onClose} style={styles.closeBtn} hitSlop={10}>
               <Ionicons name="close" size={18} color={C.text3} />
             </Pressable>
@@ -306,7 +428,7 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
             showsVerticalScrollIndicator={false}
           >
             {/* Suggested prompts (shown when empty) */}
-            {messages.length === 0 && !loading ? (
+            {messages.length === 0 && !loading && !hydrating ? (
               <View style={styles.suggestionsWrap}>
                 <Text style={styles.suggestionsLabel}>Suggested questions</Text>
                 <View style={styles.chips}>
@@ -355,7 +477,7 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
           </ScrollView>
 
           {/* Input bar */}
-          <View style={styles.inputRow}>
+          <View style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom * 0.4, SP.sm) }]}>
             <TextInput
               ref={inputRef}
               style={styles.input}
@@ -400,34 +522,42 @@ const styles = StyleSheet.create({
   },
   kavWrap: {
     flex: 1,
-    justifyContent: "flex-end",
+    justifyContent: "center",
+    alignItems: "stretch",
+    paddingHorizontal: SP.lg,
   },
   drawer: {
-    borderTopLeftRadius: R.xxl,
-    borderTopRightRadius: R.xxl,
+    borderRadius: R.xxl,
     overflow: "hidden",
-    maxHeight: "82%",
+    maxHeight: "78%",
     minHeight: 320,
     backgroundColor: "rgba(10,10,10,0.96)",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.12)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.12)",
   },
   drawerOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(6,6,6,0.72)",
   },
 
-  // Handle
-  handleRow: {
-    alignItems: "center",
-    paddingTop: SP.md,
-    paddingBottom: SP.sm,
-  },
-  handle: {
-    width: 36,
-    height: 4,
+  // ── Done button (keyboard-only dismiss) ────────────────────────────────────
+  doneBtn: {
+    height: 28,
+    paddingHorizontal: 10,
     borderRadius: R.pill,
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,255,255,0.10)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: SP.xs,
+  },
+  doneBtnText: {
+    ...TY.label,
+    color: C.text2,
+    fontSize: 11,
+    fontWeight: "700" as const,
+    letterSpacing: 0.3,
   },
 
   // Header
@@ -435,6 +565,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: SP.lg,
+    paddingTop: SP.lg,
     paddingBottom: SP.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "rgba(255,255,255,0.07)",

@@ -195,13 +195,16 @@ export function ResultsDock({
           label="Bought"
           highlight
           onPress={() => {
-            // Confetti is parent-owned (it overlays the entire results screen);
-            // the dock just signals the intent. The DecisionSheet stays as the
-            // attribution capture path below — delayed so the burst is visible
-            // BEFORE the sheet mounts over it. Without the delay the sheet's
-            // backdrop instantly covers the particles.
+            // Confetti is parent-owned (it overlays the entire results screen
+            // via a screen-anchored Modal); the dock just signals the intent.
+            // The DecisionSheet stays as the attribution capture path below —
+            // delayed by 900ms so the burst's peak ~800ms of outward
+            // explosion is fully visible BEFORE the sheet's opaque backdrop
+            // mounts over it. Earlier value of 320ms was inside the
+            // explosion window: users only saw ~20% of the burst before it
+            // was covered.
             if (onBoughtIt) onBoughtIt();
-            setTimeout(() => setDecisionOpen(true), 320);
+            setTimeout(() => setDecisionOpen(true), 900);
           }}
         />
         {onAskAI ? (

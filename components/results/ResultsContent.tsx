@@ -105,12 +105,14 @@ interface ResultsContentProps {
   onBoughtIt?: () => void;
 }
 
-// Dock approximate height + safe area buffer.
-// Bumped from 200 → 290 after restoring the 8-chip action grid (Bought it,
-// Ask AI, List it, Track, Copy, Rescan, Lowball, Profit, Details). The grid
-// wraps to ~3 rows on phones; the prior 200 left the bottom chip row
-// overlapping the last line of the active card on long titles.
-const DOCK_SAFE_HEIGHT = 290;
+// Dock approximate height + safe area buffer. The dock renders an intel
+// strip (~30px) + a primary row (48 + 8 gap = 56px) + a 4-row 2-column
+// action grid (4*44 + 3*8 = 200px) + ~26px of internal padding + ~34px of
+// iPhone home-indicator safe area = ~346px. Earlier value of 290 left the
+// last line of the active card (and the "swipe to compare" hint) clipped
+// behind the dock blur. 340 gives the active card a clean breathing
+// margin from the dock's top edge.
+const DOCK_SAFE_HEIGHT = 340;
 
 export const ResultsContent = React.memo(function ResultsContent({
   activeResult,
@@ -461,31 +463,22 @@ export const ResultsContent = React.memo(function ResultsContent({
           ) : null}
 
           {/* Premium confetti burst — fires on Bought It tap.
-              Wrapped in an absolutely-positioned View with high zIndex +
-              Android elevation so the particles render ABOVE the dock and
-              the DecisionSheet that opens immediately after. Previously the
-              burst sat in render order under the dock and was visually
-              clipped by the dock's blur layer. pointerEvents="none" so it
-              never blocks taps. */}
-          <View
-            pointerEvents="none"
-            style={{
-              position: "absolute",
-              top: 0, left: 0, right: 0, bottom: 0,
-              zIndex: 9999,
-              elevation: 30,
-            }}
-          >
-            <ConfettiBurst fireKey={confettiKey} />
-          </View>
+              ConfettiBurst now mounts itself in a transparent Modal so it
+              renders at the device root, screen-anchored, and immune to
+              the parent ScrollView's scroll offset. Previously the burst
+              was an absolute layer inside the scrollable resultsWrap, so
+              when the user was scrolled near the dock the upper-third
+              origin landed off-screen above the viewport. */}
+          <ConfettiBurst fireKey={confettiKey} />
 
 
-          {/* Ask AI slide-up drawer */}
+          {/* Ask AI centered drawer — scoped per-scan */}
           {activeResult ? (
             <AskAIDrawer
               visible={askAIOpen}
               apiBase={resolvedApiBase}
               onClose={() => setAskAIOpen(false)}
+              scanId={activeResult?.scanId ?? activeResult?.id ?? null}
               scanContext={{
                 itemName:          activeResult.itemName          ?? null,
                 store:             currentCard?.store             ?? currentCard?.source ?? null,

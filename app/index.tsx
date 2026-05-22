@@ -13147,20 +13147,10 @@ style={[
 
   opacity: tab === "results" ? tabFade : 0,
 
-  transform: [
-    {
-      translateY: tabFade.interpolate({
-        inputRange: [0, 1],
-        outputRange: [8, 0],
-      }),
-    },
-    {
-      scale: tabFade.interpolate({
-        inputRange: [0, 1],
-        outputRange: [0.995, 1],
-      }),
-    },
-  ],
+  // Tab cross-fade is opacity-only. Removed translateY 8→0 (visible swipe-up
+  // bleed during transitions) and scale 0.995→1 (sub-pixel rasterization
+  // pixelated text during the cross-fade). Per the no-pixelation /
+  // no-tab-bleed motion rules.
 
   zIndex: tab === "results" ? 30 : -1,
   display: tab === "results" ? "flex" : "none",

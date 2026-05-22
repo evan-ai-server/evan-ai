@@ -96,24 +96,33 @@ function AnimCard({
 
     const translateX = relPos * CARD.slotWidth;
 
+    // Side cards stay closer to full size so the neighbor's peek is an
+    // obvious, intentional sliver instead of a faint hint. Old curve
+    // (0.875 / 0.82) shrank the neighbor enough that on a 393px iPhone only
+    // 4px of it landed on screen after centre-origin scaling — the deck
+    // read as a single static card. New curve (0.94 / 0.90) preserves the
+    // depth feel but lets ~16–20px of the neighbor breathe into view.
     const scaleVal = interpolate(
       Math.abs(relPos),
       [0, 0.5, 1, 2],
-      [1.0, 0.95, 0.875, 0.82],
+      [1.0, 0.97, 0.94, 0.90],
       Extrapolation.CLAMP,
     );
 
+    // Higher peek opacity for the same reason — 0.52 read as "ghosted out",
+    // 0.74 reads as "next card waiting". Card fully fades by relPos≈1.8 so
+    // the third card never visually competes with the active card.
     const opacityVal = interpolate(
       Math.abs(relPos),
       [0, 0.4, 1.1, 1.8],
-      [1.0, 0.90, 0.52, 0.0],
+      [1.0, 0.94, 0.74, 0.0],
       Extrapolation.CLAMP,
     );
 
     const translateY = interpolate(
       Math.abs(relPos),
       [0, 1],
-      [0, 10],
+      [0, 6],
       Extrapolation.CLAMP,
     );
 
@@ -525,8 +534,20 @@ export function CardDeck({
         (card as any).url ||
         null;
       const title = card.itemName || (card as any).title || "Listing";
-      openProductLink(url, { titleHint: title });
-      if (url) onPressCard?.(url, title);
+      // openProductLink is async and rejects silently inside; explicit
+      // catch-bind makes sure any future change to that function (or to
+      // expo-web-browser) can't escape as an unhandled rejection.
+      try {
+        Promise.resolve(openProductLink(url, { titleHint: title })).catch((e: any) => {
+          console.log("CARD_SWIPE_ERROR", { stage: "open_link", error: e?.message || String(e) });
+        });
+      } catch (e: any) {
+        console.log("CARD_SWIPE_ERROR", { stage: "open_link_sync", error: e?.message || String(e) });
+      }
+      if (url) {
+        try { onPressCard?.(url, title); }
+        catch (e: any) { console.log("CARD_SWIPE_ERROR", { stage: "press_callback", error: e?.message || String(e) }); }
+      }
     } catch (e: any) {
       console.log("CARD_SWIPE_ERROR", { stage: "press", error: e?.message || String(e) });
     }
