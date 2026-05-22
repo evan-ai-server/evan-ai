@@ -141,13 +141,16 @@ export function SellSidePanel({
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
 
-  const translateY = useSharedValue(SHEET_H);
-  const backdropOp = useSharedValue(0);
+  // Fade-only entrance. The prior translateY SHEET_H→0 slide-up made the
+  // dark backdrop appear to "drag with" the sheet on entry. Switched to
+  // opacity so the panel materializes in place.
+  const sheetOpacity = useSharedValue(0);
+  const backdropOp   = useSharedValue(0);
 
   useEffect(() => {
     if (visible) {
-      translateY.value = withSpring(0, { damping: 26, stiffness: 200, mass: 1.0 });
-      backdropOp.value = withTiming(1, { duration: 280 });
+      sheetOpacity.value = withTiming(1, { duration: 240 });
+      backdropOp.value   = withTiming(1, { duration: 240 });
       fetchEstimate();
       EventTracker.track("seller_panel_open", {
         itemName: query,
@@ -155,13 +158,13 @@ export function SellSidePanel({
         userId,
       } as any);
     } else {
-      translateY.value = withSpring(SHEET_H + 40, { damping: 28, stiffness: 240 });
-      backdropOp.value = withTiming(0, { duration: 200 });
+      sheetOpacity.value = withTiming(0, { duration: 180 });
+      backdropOp.value   = withTiming(0, { duration: 180 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const sheetStyle    = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }] }));
+  const sheetStyle    = useAnimatedStyle(() => ({ opacity: sheetOpacity.value }));
   const backdropStyle = useAnimatedStyle(() => ({ opacity: backdropOp.value }));
 
   const fetchEstimate = useCallback(async () => {

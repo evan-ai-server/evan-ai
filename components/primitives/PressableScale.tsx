@@ -1,24 +1,24 @@
 /**
- * PressableScale — premium animated button primitive.
- * Spring-physics press with bounce release. Plug in anywhere Pressable would go.
+ * PressableScale — premium button primitive with opacity-only press feedback.
+ *
+ * Previously did a spring-physics scale transform on every tap (1.0 → 0.955 →
+ * 1.0 bounce). At small chip sizes the scaled-and-back rasterization produced
+ * visible icon pixelation on press — most obvious on the bottom-dock action
+ * chips and the results-card buttons. Switched to opacity-only feedback +
+ * haptic, which is the Apple-system feel: instant, no jitter, no scale
+ * artifacts. The `scale` prop is accepted but ignored so existing callers
+ * type-check unchanged.
  */
 import React, { useCallback } from "react";
-import { StyleProp, ViewStyle } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Reanimated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  runOnJS,
-} from "react-native-reanimated";
+import { Pressable, StyleProp, ViewStyle } from "react-native";
 import * as Haptics from "expo-haptics";
-import { MO } from "../design/DS";
 
 interface PressableScaleProps {
   children: React.ReactNode;
   onPress?: () => void;
   onLongPress?: () => void;
-  scale?: number;           // pressed scale (default 0.96)
+  /** Retained for backwards compat; no longer used. */
+  scale?: number;
   style?: StyleProp<ViewStyle>;
   disabled?: boolean;
   haptic?: boolean;
@@ -35,13 +35,11 @@ export const PressableScale = React.memo(function PressableScale({
   children,
   onPress,
   onLongPress,
-  scale = 0.955,
   style,
   disabled = false,
   haptic = true,
+  hitSlop,
 }: PressableScaleProps) {
-  const scaleVal = useSharedValue(1);
-
   const firePress = useCallback(() => {
     if (haptic) fireHaptic();
     onPress?.();
@@ -52,36 +50,19 @@ export const PressableScale = React.memo(function PressableScale({
     onLongPress?.();
   }, [haptic, onLongPress]);
 
-  const tap = Gesture.Tap()
-    .enabled(!disabled)
-    .maxDuration(800)
-    .onBegin(() => {
-      scaleVal.value = withSpring(scale, MO.spring.snappy);
-    })
-    .onFinalize((_, success) => {
-      scaleVal.value = withSpring(1, MO.spring.bouncy);
-      if (success) runOnJS(firePress)();
-    });
-
-  const longPress = Gesture.LongPress()
-    .enabled(!disabled && !!onLongPress)
-    .minDuration(420)
-    .onStart(() => {
-      runOnJS(fireLong)();
-    });
-
-  const composed = Gesture.Exclusive(longPress, tap);
-
-  const animStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scaleVal.value }],
-    opacity: disabled ? 0.38 : 1,
-  }));
-
   return (
-    <GestureDetector gesture={composed}>
-      <Reanimated.View style={[animStyle, style]}>
-        {children}
-      </Reanimated.View>
-    </GestureDetector>
+    <Pressable
+      onPress={firePress}
+      onLongPress={onLongPress ? fireLong : undefined}
+      disabled={disabled}
+      android_ripple={null}
+      hitSlop={hitSlop}
+      style={({ pressed }) => [
+        style,
+        { opacity: disabled ? 0.38 : pressed ? 0.78 : 1 },
+      ]}
+    >
+      {children}
+    </Pressable>
   );
 });

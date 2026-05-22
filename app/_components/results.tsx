@@ -225,30 +225,12 @@ function isTrustedUrl(url: string) {
 
 
 async function safeOpenUrl(url: string) {
-  const trusted = isTrustedUrl(url);
-
-if (!trusted) {
-  Alert.alert(
-    "Unverified link",
-    "This seller’s website isn’t a trusted marketplace. Open anyway?",
-    [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Open",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await Linking.openURL(url);
-          } catch {
-            Alert.alert("Couldn’t open link", "Please try again.");
-          }
-        },
-      },
-    ]
-  );
-  return;
-}
-
+  // "Unverified link?" prompt removed — open directly. isTrustedUrl is still
+  // computed by the caller to drive analytics/badging, but we no longer
+  // block the user with a confirmation dialog. If the platform rejects the
+  // URL we surface a single error toast (Alert) instead of a multi-step
+  // prompt.
+  void isTrustedUrl(url);
   try {
     await Linking.openURL(url);
   } catch {

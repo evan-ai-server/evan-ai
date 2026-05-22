@@ -96,29 +96,22 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
   const scrollRef = useRef<ScrollView>(null);
   const inputRef  = useRef<TextInput>(null);
 
-  // ── Fade-in animation (no slide).
-  // Replaced the prior translateY 600→0 spring with a fade-only entrance so
-  // the dark background underneath doesn't appear to "drag upward" as the
-  // drawer enters — the bleeding-overlay complaint from the screenshots.
-  // Tiny 4-px nudge is OK to give the eye a hint of motion; anything more
-  // and the parent screen visibly shifts. drawerOpacity drives both the
-  // drawer and the input lock-up — they share one source of truth.
+  // Opacity-only entrance. The prior version added a 4px translateY nudge
+  // on top of the opacity tween; with the keyboard open that small lift
+  // visibly shifted the input row and re-triggered the keyboard's avoid-
+  // padding measurement, which read as a "drawer jumps when keyboard
+  // appears" jitter. Pure opacity = no motion = no jitter.
   const drawerOpacity = useSharedValue(0);
-  const drawerNudge   = useSharedValue(4);
   const backdropOp    = useSharedValue(0);
 
   useEffect(() => {
     if (visible) {
       backdropOp.value    = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
       drawerOpacity.value = withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) });
-      drawerNudge.value   = withTiming(0, { duration: 240, easing: Easing.out(Easing.cubic) });
-      // Focus input after entrance settles. Slight extra delay vs the 380ms
-      // we used during the slide entrance, since fade is shorter.
       setTimeout(() => inputRef.current?.focus(), 280);
     } else {
       backdropOp.value    = withTiming(0, { duration: 180 });
       drawerOpacity.value = withTiming(0, { duration: 180 });
-      drawerNudge.value   = withTiming(4, { duration: 180 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -135,7 +128,6 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
 
   const drawerStyle = useAnimatedStyle(() => ({
     opacity: drawerOpacity.value,
-    transform: [{ translateY: drawerNudge.value }],
   }));
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: backdropOp.value,
@@ -176,17 +168,23 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
 
     // Multi-field reply extraction. Server canonical shape is {ok, reply},
-    // but we accept several likely alternates so a field-rename on the
-    // backend can't render a blank bubble: reply / answer / message / text
-    // / content / data.{reply,answer,message,text,content}. If none match,
+    // but we accept every plausible alternate so a field-rename on the
+    // backend can't render a blank bubble. Covers our own shapes
+    // ({reply, answer, message, text, content}, data.* variants), the
+    // OpenAI Chat shape (choices[0].message.content / choices[0].text), the
+    // OpenAI Responses shape (output_text / output[0].content[0].text), and
+    // Anthropic Messages (content[0].text). If nothing extracts cleanly we
     // surface the raw keys + status so the user (and logs) see what came
     // back instead of an empty assistant turn.
     const extractReply = (j: any): string | null => {
       if (!j || typeof j !== "object") return null;
-      const candidates = [
+      const candidates: any[] = [
         j.reply, j.answer, j.message, j.text, j.content,
         j.data?.reply, j.data?.answer, j.data?.message, j.data?.text, j.data?.content,
         j.choices?.[0]?.message?.content, j.choices?.[0]?.text,
+        j.output_text,
+        j.output?.[0]?.content?.[0]?.text,
+        Array.isArray(j.content) ? j.content?.[0]?.text : null,
       ];
       for (const c of candidates) {
         if (typeof c === "string" && c.trim()) return c.trim();

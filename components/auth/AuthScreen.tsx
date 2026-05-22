@@ -14,7 +14,6 @@ import {
 import { BlurView } from "expo-blur";
 import Animated, {
   useSharedValue,
-  withSpring,
   useAnimatedStyle,
   withTiming,
 } from "react-native-reanimated";
@@ -42,20 +41,23 @@ export default function AuthScreen({ visible, onDismiss }: AuthScreenProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const translateY = useSharedValue(SCREEN_H);
+  // Opacity-only entrance — replaces the prior off-screen translateY 800→0
+  // spring. The slide-up read as the bleeding-overlay artifact (dark
+  // background visibly drifted up behind the sheet on iPhones). Fade is
+  // the same Apple-system feel without the parallax bleed.
+  const sheetOpacity = useSharedValue(0);
 
-  // Animate in/out when visible changes
   React.useEffect(() => {
     if (visible) {
-      translateY.value = withSpring(0, MO.spring.entrance);
+      sheetOpacity.value = withTiming(1, { duration: MO.dur.normal });
     } else {
-      translateY.value = withTiming(SCREEN_H, { duration: MO.dur.normal });
+      sheetOpacity.value = withTiming(0, { duration: MO.dur.normal });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   const sheetStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
+    opacity: sheetOpacity.value,
   }));
 
   const resetForm = () => {

@@ -116,7 +116,7 @@ export function ReceiptResultPanel({
   return (
     <Modal
       visible={visible}
-      animationType={IOS ? "slide" : "fade"}
+      animationType="fade"
       presentationStyle="overFullScreen"
       transparent
       onRequestClose={onDone}

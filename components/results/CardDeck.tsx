@@ -281,6 +281,16 @@ export function CardDeck({
   const altCount   = cardCount - 1;
   const heroPrice  = Number.isFinite(Number(cards[0]?.price)) ? Number(cards[0].price) : null;
 
+  // Live ref to the current cards array. Closures inside the Pan gesture
+  // worklet capture cards/maxIndex at definition time — if a new scan or
+  // results-array refresh shrinks the deck mid-gesture, the worklet still
+  // holds the old maxIndex. The native module then drives withSpring with a
+  // stale upper bound, which historically produced the swipe-then-crash. The
+  // ref gives the JS-side runOnJS callbacks a way to re-clamp against the
+  // ACTUAL current count without recompiling the gesture.
+  const cardsRef = useRef(cards);
+  useEffect(() => { cardsRef.current = cards; }, [cards]);
+
   // Lowest price across all cards — used to badge VALUE FLOOR
   const allPrices = cards.map((c) => Number(c.price ?? Infinity)).filter(Number.isFinite);
   const lowestPrice = allPrices.length ? Math.min(...allPrices) : null;
@@ -329,41 +339,51 @@ export function CardDeck({
 
   const handleSnap = useCallback((idx: number) => {
     if (!mountedRef.current) {
-      console.log("CARD_SWIPE_BLOCKED", { reason: "unmounted", idx });
+      console.log("CARD_SWIPE_CRASH_GUARD", { reason: "unmounted_on_snap", idx });
       return;
     }
-    // Clamp again on the JS side — defensive in case the worklet sent us
-    // a stale index after `cards` shrank (new scan rebuilt the deck while
-    // the spring was still settling).
-    const safe = Number.isFinite(idx) ? Math.max(0, Math.min(idx, Math.max(0, cards.length - 1))) : 0;
+    // Read the LIVE cards length from the ref — `cards.length` in this
+    // closure may be stale if the deck rebuilt between gesture start and
+    // gesture end.
+    const liveLen = (cardsRef.current || []).length;
+    if (liveLen <= 0) {
+      console.log("CARD_SWIPE_CRASH_GUARD", { reason: "empty_deck_on_snap" });
+      return;
+    }
+    const safe = Number.isFinite(idx)
+      ? Math.max(0, Math.min(Math.round(Number(idx)), Math.max(0, liveLen - 1)))
+      : 0;
     try {
-      console.log("CARD_SWIPE_SNAP", { idx, safe, cardCount: cards.length });
+      console.log("CARD_SWIPE_SNAP", { idx, safe, cardCount: liveLen });
       setSnappedIndex(safe);
       onSnapToIndex?.(safe);
       snapHaptic();
     } catch (e: any) {
       console.log("CARD_SWIPE_ERROR", { stage: "snap", error: e?.message || String(e) });
     }
-  }, [onSnapToIndex, cards.length]);
+  }, [onSnapToIndex]);
 
   const handleWatchlistSwipe = useCallback(() => {
     if (!mountedRef.current) {
-      console.log("CARD_SWIPE_BLOCKED", { reason: "unmounted_watchlist" });
+      console.log("CARD_SWIPE_CRASH_GUARD", { reason: "unmounted_watchlist" });
       return;
     }
     try {
-      const card = cards[0]; // always the hero when swiping from index 0
+      // Always read the LIVE hero from the ref — a stale closure on cards[0]
+      // after a new scan could read undefined and toss a TypeError from the
+      // runOnJS hop.
+      const card = (cardsRef.current || [])[0];
       if (card) {
-        console.log("CARD_SWIPE_END", { action: "watchlist_add", title: card?.itemName || card?.title || null });
+        console.log("CARD_SWIPE_END", { action: "watchlist_add", title: card?.itemName || (card as any)?.title || null });
         onToggleWatchlist?.(card);
         heavyHaptic();
       } else {
-        console.log("CARD_SWIPE_BLOCKED", { reason: "no_hero_card" });
+        console.log("CARD_SWIPE_CRASH_GUARD", { reason: "no_hero_card" });
       }
     } catch (e: any) {
       console.log("CARD_SWIPE_ERROR", { stage: "watchlist", error: e?.message || String(e) });
     }
-  }, [cards, onToggleWatchlist]);
+  }, [onToggleWatchlist]);
 
   // Single-card / empty-deck short-circuit: don't construct a pan gesture that
   // can drive activeIndex outside [0, 0]. Reanimated's withSpring on a NaN /
@@ -372,6 +392,16 @@ export function CardDeck({
   // target Math.round(NaN) → undefined-behavior). Returning an empty gesture
   // also avoids holding a stale closure over cards[] if the deck rebuilds.
   const maxIndex = Math.max(0, cardCount - 1);
+
+  // Shared upper-bound mirror so the worklet always reads the live value.
+  // Without this the worklet's `maxIndex` is whatever it was the moment the
+  // gesture was compiled. If a parallel scan tears the deck down to one card
+  // mid-swipe, the spring target would still resolve against the stale upper
+  // bound and crash. The worklet reads `maxIndexShared.value` instead.
+  const maxIndexShared = useSharedValue(maxIndex);
+  useEffect(() => {
+    maxIndexShared.value = maxIndex;
+  }, [maxIndex, maxIndexShared]);
 
   // JS-side helpers driven by runOnJS — each wraps its work in try/catch so a
   // single exception inside the worklet→JS hop can never bubble back into
@@ -405,13 +435,19 @@ export function CardDeck({
     .failOffsetY([-12, 12])
     .onBegin(() => {
       'worklet';
-      startIndex.value = activeIndex.value;
+      const liveMax = Number(maxIndexShared.value);
+      if (!Number.isFinite(liveMax) || liveMax <= 0) {
+        runOnJS(onSwipeUpdateInvalid)("begin_max_invalid");
+        return;
+      }
+      startIndex.value = Number.isFinite(activeIndex.value) ? activeIndex.value : 0;
       runOnJS(onSwipeBegin)(startIndex.value);
     })
     .onUpdate((e) => {
       'worklet';
-      if (maxIndex <= 0) {
-        runOnJS(onSwipeUpdateInvalid)("maxIndex_zero");
+      const liveMax = Number(maxIndexShared.value);
+      if (!Number.isFinite(liveMax) || liveMax <= 0) {
+        runOnJS(onSwipeUpdateInvalid)("update_max_invalid");
         return;
       }
       const slot = CARD.slotWidth || 1;
@@ -422,22 +458,25 @@ export function CardDeck({
         runOnJS(onSwipeUpdateInvalid)("non_finite_next");
         return;
       }
-      activeIndex.value = clampVal(next, 0, maxIndex);
+      activeIndex.value = clampVal(next, 0, liveMax);
     })
     .onEnd((e) => {
       'worklet';
+      const liveMax = Number(maxIndexShared.value);
       // If the deck shrank to ≤1 card mid-gesture (active result cleared
       // by a parallel new-scan), don't fire withSpring — snap activeIndex
       // back to 0 directly so we can't drive the spring with a stale upper
       // bound. JS-side handleSnap also re-clamps for double safety.
-      if (maxIndex <= 0) {
+      if (!Number.isFinite(liveMax) || liveMax <= 0) {
         activeIndex.value = 0;
         runOnJS(handleSnap)(0);
         return;
       }
       // Long-swipe RIGHT on first card → add to watchlist
       if (
+        Number.isFinite(startIndex.value) &&
         startIndex.value < 0.1 &&
+        Number.isFinite(e.translationX) &&
         e.translationX > CARD.width * 0.55
       ) {
         activeIndex.value = withSpring(0, MO.spring.card);
@@ -447,41 +486,51 @@ export function CardDeck({
       }
 
       const slot = CARD.slotWidth || 1;
-      const velocityBias = -e.velocityX / slot * 0.18;
-      const raw    = activeIndex.value + velocityBias;
+      const velocityX = Number.isFinite(e.velocityX) ? e.velocityX : 0;
+      const velocityBias = -velocityX / slot * 0.18;
+      const raw    = Number(activeIndex.value) + velocityBias;
       // Belt-and-suspenders: clamp BEFORE rounding so Math.round can't see NaN.
-      const clamped = clampVal(Number.isFinite(raw) ? raw : 0, 0, maxIndex);
+      const clamped = clampVal(Number.isFinite(raw) ? raw : 0, 0, liveMax);
       const target  = Math.round(clamped);
       // Final integer-bounds check — Math.round on Infinity yields Infinity
       // which then sneaks into the array reads downstream. With clamped
       // first and finite test second, we get a real array index every time.
-      const safeTarget = Number.isFinite(target) && target >= 0 && target <= maxIndex
+      const safeTarget = Number.isFinite(target) && target >= 0 && target <= liveMax
         ? target
         : 0;
       activeIndex.value = withSpring(safeTarget, MO.spring.card);
       runOnJS(handleSnap)(safeTarget);
-      runOnJS(onSwipeEnd)(safeTarget, e.velocityX, e.translationX);
+      runOnJS(onSwipeEnd)(safeTarget, velocityX, e.translationX);
     });
 
   const handleCardPress = useCallback((idx: number) => {
-    if (!mountedRef.current) return;
-    if (!Number.isFinite(idx) || idx < 0 || idx >= cards.length) return;
-    const card = cards[idx];
-    if (!card) return;
-    // Prefer the hardened directUrl (Phase 2/8) — falls through to legacy
-    // fields only if the resolver couldn't pick a real merchant URL.
-    const url =
-      (card as any).directUrl ||
-      card.buyLink ||
-      (card as any).url ||
-      null;
-    const title = card.itemName || (card as any).title || "Listing";
-    // openProductLink handles null by falling back to an eBay search built
-    // from the title, and rejects google.com/aclk/search wrappers even if
-    // they slip past the trusted-domain check.
-    openProductLink(url, { titleHint: title });
-    if (url) onPressCard?.(url, title);
-  }, [cards, onPressCard]);
+    if (!mountedRef.current) {
+      console.log("CARD_SWIPE_CRASH_GUARD", { reason: "unmounted_on_press", idx });
+      return;
+    }
+    const live = cardsRef.current || [];
+    if (!Number.isFinite(idx) || idx < 0 || idx >= live.length) {
+      console.log("CARD_SWIPE_IGNORED", { reason: "press_out_of_bounds", idx, len: live.length });
+      return;
+    }
+    const card = live[idx];
+    if (!card) {
+      console.log("CARD_SWIPE_IGNORED", { reason: "press_card_missing", idx });
+      return;
+    }
+    try {
+      const url =
+        (card as any).directUrl ||
+        card.buyLink ||
+        (card as any).url ||
+        null;
+      const title = card.itemName || (card as any).title || "Listing";
+      openProductLink(url, { titleHint: title });
+      if (url) onPressCard?.(url, title);
+    } catch (e: any) {
+      console.log("CARD_SWIPE_ERROR", { stage: "press", error: e?.message || String(e) });
+    }
+  }, [onPressCard]);
 
   const isWatchlisted = useCallback((card: CardData) => {
     const q = (card.itemName || (card as any).title || "").trim().toLowerCase();

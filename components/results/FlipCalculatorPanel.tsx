@@ -272,7 +272,7 @@ export function FlipCalculatorPanel({
   return (
     <Modal
       visible={visible}
-      animationType={IOS ? "slide" : "fade"}
+      animationType="fade"
       presentationStyle="overFullScreen"
       transparent
       onRequestClose={onClose}

@@ -74,36 +74,38 @@ export function ResultsDock({
   const insets = useSafeAreaInsets();
   const [decisionOpen, setDecisionOpen] = useState(false);
 
-  // Entrance animation: dock rises from bottom
-  const translateY = useRef(new RNAnimated.Value(80)).current;
+  // Fade-only entrance. The prior translateY 80→0 spring made the dock
+  // appear to "rise" while the dark background underneath shifted with it —
+  // the same bleeding-overlay artifact the user flagged on other sheets.
+  // Opacity-only matches the AskAIDrawer + DecisionSheet pattern.
   const opacity    = useRef(new RNAnimated.Value(0)).current;
   const dotPulse   = useRef(new RNAnimated.Value(0.35)).current;
+  // Local pulse loop ref so we can stop it on unmount and not leak a
+  // ticking RN Animated loop into a closed scene.
+  const dotPulseLoopRef = useRef<RNAnimated.CompositeAnimation | null>(null);
 
   useEffect(() => {
-    RNAnimated.loop(RNAnimated.sequence([
+    const loop = RNAnimated.loop(RNAnimated.sequence([
       RNAnimated.timing(dotPulse, { toValue: 0.85, duration: 1100, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       RNAnimated.timing(dotPulse, { toValue: 0.35, duration: 1100, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-    ])).start();
+    ]));
+    dotPulseLoopRef.current = loop;
+    loop.start();
+    return () => {
+      try { loop.stop(); } catch {}
+      dotPulseLoopRef.current = null;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    RNAnimated.parallel([
-      RNAnimated.timing(opacity, {
-        toValue: 1,
-        duration: SINGULARITY.duration,
-        delay: 120,
-        easing: panthere,
-        useNativeDriver: true,
-      }),
-      RNAnimated.timing(translateY, {
-        toValue: 0,
-        duration: SINGULARITY.duration,
-        delay: 120,
-        easing: panthere,
-        useNativeDriver: true,
-      }),
-    ]).start();
+    RNAnimated.timing(opacity, {
+      toValue: 1,
+      duration: SINGULARITY.duration,
+      delay: 120,
+      easing: panthere,
+      useNativeDriver: true,
+    }).start();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -121,7 +123,7 @@ export function ResultsDock({
     <RNAnimated.View
       style={[
         styles.dockWrap,
-        { opacity, transform: [{ translateY }] },
+        { opacity },
         { paddingBottom: Math.max(insets.bottom, SP.md) + SP.sm },
       ]}
       renderToHardwareTextureAndroid={IS_ANDROID}
@@ -180,39 +182,40 @@ export function ResultsDock({
         </PressableScale>
       </View>
 
-      {/* Action grid — restored. Layout: 3 columns, wraps to 3 rows on phones.
-          `Bought it` and `Ask AI` are highlighted (premium chips); everything
-          else is the quiet secondary treatment. Each chip is rendered only
-          when its callback is wired, so a parent that doesn't pass `onAskAI`
-          (e.g. legacy host) gets a graceful tighter grid instead of dead taps. */}
+      {/* Action grid — symmetric 2-column. Every chip is the same size, every
+          row is the same height. Short labels per UX spec (Bought / Ask AI /
+          Track / Copy / Rescan / Lowball / Profit / Details). `List it` is
+          dropped from the visible grid — parent still wires onAutoList, but
+          surfacing it here pushed the row count to an odd 9 and left the
+          bottom row asymmetric. Re-enable by un-commenting the chip below
+          when a more capacious dock layout lands. */}
       <View style={styles.secondaryRow}>
         <ActionChip
           icon="bag-check-outline"
-          label="Bought it"
+          label="Bought"
           highlight
           onPress={() => {
             // Confetti is parent-owned (it overlays the entire results screen);
             // the dock just signals the intent. The DecisionSheet stays as the
-            // attribution capture path below.
+            // attribution capture path below — delayed so the burst is visible
+            // BEFORE the sheet mounts over it. Without the delay the sheet's
+            // backdrop instantly covers the particles.
             if (onBoughtIt) onBoughtIt();
-            setDecisionOpen(true);
+            setTimeout(() => setDecisionOpen(true), 320);
           }}
         />
         {onAskAI ? (
           <ActionChip icon="sparkles" label="Ask AI" onPress={onAskAI} highlight />
         ) : null}
-        {onAutoList ? (
-          <ActionChip icon="document-text-outline" label="List it" onPress={onAutoList} highlight />
-        ) : null}
         <ActionChip
           icon={isTracked ? "bookmark" : "bookmark-outline"}
-          label={isTracked ? "Tracking" : "Track"}
+          label="Track"
           onPress={onTrack}
           tracked={isTracked}
         />
-        <ActionChip icon="copy-outline"     label="Copy"    onPress={onCopy} />
+        <ActionChip icon="copy-outline" label="Copy" onPress={onCopy} />
         {onScanAgain ? (
-          <ActionChip icon="refresh-outline"  label="Rescan"  onPress={onScanAgain} />
+          <ActionChip icon="refresh-outline" label="Rescan" onPress={onScanAgain} />
         ) : null}
         {onLowball ? (
           <ActionChip icon="chatbubbles-outline" label="Lowball" onPress={onLowball} />

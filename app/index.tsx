@@ -698,41 +698,12 @@ const open = async () => {
     Alert.alert("Failed to open link", "Please try again.");
   }
 };
-if (!isTrustedUrl(url)) {
-  // iOS: native Action Sheet
-  if (Platform.OS === "ios") {
-    ActionSheetIOS.showActionSheetWithOptions(
-      {
-        title: "Open unverified link?",
-        message: `Double-check the domain before entering sensitive info.\n\n${getDomain(url)}`,
-        options: ["Cancel", "Open Link"],
-        cancelButtonIndex: 0,
-        destructiveButtonIndex: 1,
-      },
-      (buttonIndex) => {
-        if (buttonIndex === 1) open();
-      }
-    );
-    return;
-  }
-  // Android/other: keep your premium modal
-  const handled = requestUnverifiedLinkPrompt({
-    url,
-    label,
-    onOpen: open,
-  });
-  if (!handled) {
-    Alert.alert(
-      "Unverified link",
-      "This seller’s website isn’t a trusted marketplace. Open anyway?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Open", onPress: open },
-      ]
-    );
-  }
-  return;
-}
+// "Open verified link?" prompt removed — opens cleanly without confirmation,
+// per the user's no-friction request. The link-safety validation
+// (isTrustedUrl + getDomain) still runs upstream and downstream consumers
+// continue to reject obvious redirect wrappers; we just no longer punish the
+// user with an extra tap. If the URL fails outright we still surface a
+// silent toast via setSavedToast (parent owns it) — no system alerts.
   await open();
 }
 
@@ -1759,6 +1730,8 @@ const isReqAlive = (reqId: number) =>
   isMountedRef.current && reqId === scanReqIdRef.current;
   // ✅ Saved toast (MUST live inside App)
   const [savedToast, setSavedToast] = useState(null);
+  const toastDismissRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastFadeRef    = useRef<RNAnimated.CompositeAnimation | null>(null);
   const toastAnim = useRef(new RNAnimated.Value(0)).current;
   const splashIPop = useRef(new RNAnimated.Value(0)).current;
   const splashIY = useRef(new RNAnimated.Value(10)).current;
@@ -1812,6 +1785,45 @@ useEffect(() => {
 const _loadingFadeStyle = useAnimatedStyle(() => ({
   opacity: loadingOpacity.value,
 }));
+
+// Premium toast driver — fades in, holds ~900ms, fades out, then clears the
+// message. Triggered whenever `savedToast` changes to a non-null value.
+// Prior code only ran the animation from the unused _showSavedToast helper,
+// so the 50+ direct setSavedToast("…") callers rendered a static toast that
+// never disappeared. This effect makes every setSavedToast call animate
+// uniformly and self-dismiss.
+useEffect(() => {
+  if (!savedToast) return;
+  try { toastFadeRef.current?.stop?.(); } catch {}
+  if (toastDismissRef.current) {
+    clearTimeout(toastDismissRef.current);
+    toastDismissRef.current = null;
+  }
+  toastAnim.setValue(0);
+  const fadeIn = RNAnimated.timing(toastAnim, {
+    toValue: 1,
+    duration: 180,
+    useNativeDriver: true,
+  });
+  fadeIn.start();
+  toastDismissRef.current = setTimeout(() => {
+    const fadeOut = RNAnimated.timing(toastAnim, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    });
+    toastFadeRef.current = fadeOut;
+    fadeOut.start(({ finished }) => {
+      if (finished) setSavedToast(null);
+    });
+  }, 1200);
+  return () => {
+    if (toastDismissRef.current) {
+      clearTimeout(toastDismissRef.current);
+      toastDismissRef.current = null;
+    }
+  };
+}, [savedToast, toastAnim]);
 
   const _confidenceBreath = useRef(new RNAnimated.Value(0)).current;
   const uiDepth = useRef(new RNAnimated.Value(0)).current;
@@ -3436,11 +3448,13 @@ useEffect(() => {
   watchlistRef.current = watchlist;
 }, [watchlist]);
 
+// Auto-poll permanently OFF — manual-only via "Find current price" button.
+// Kept as a hard-coded `enabled: false` so any future BILLION flag flip
+// (and the `autoWatchEnabled` switch) cannot accidentally fan SerpAPI lanes
+// across every watchlist item on app open. The single user-triggered
+// refresh path lives in runManualWatchPriceRefresh / findCurrentPrice.
 useWatchlistMarketPolling({
-  // ✅ crash-proof: BILLION may be declared later in this file
-  enabled:
-    (typeof BILLION !== "undefined" ? BILLION.WATCH_POLLING : true) &&
-    autoWatchEnabled,
+  enabled: false,
   watchlist,
   setWatchlist,
 });
@@ -7795,8 +7809,16 @@ const toggleWatchlist = (card) => {
   const exists = (watchlistRef.current || []).some(
     (x) => String(x.query || "").trim().toLowerCase() === String(q || "").trim().toLowerCase(),
   );
-  if (exists) removeFromWatchlist(card);
-  else addToWatchlist(card);
+  if (exists) {
+    removeFromWatchlist(card);
+    setSavedToast("Removed from tracking");
+  } else {
+    addToWatchlist(card);
+    // addToWatchlist already sets its own "Added to watchlist" toast; we
+    // overwrite it with the cleaner verb the new dock chip implies. Calling
+    // setSavedToast twice is fine — useState collapses to the last value.
+    setSavedToast("Tracking");
+  }
 };
 
 const openHistoryPreview = (uri) => {
@@ -13132,7 +13154,7 @@ style={[
   onRetry={retrySameScan}
   onNewScan={startNewScan}
   onOpenListing={safeOpenUrl}
-  onTrack={addToWatchlist}
+  onTrack={toggleWatchlist}
   onCopy={async () => {
     if (!activeResult) return;
     hapticSelect?.();
@@ -15025,7 +15047,7 @@ ${shareLink}`
       {/* ✅ HAGGLE MODE MODAL */}
 <Modal
   visible={haggleOpen}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setHaggleOpen(false)}
@@ -15749,7 +15771,7 @@ safeOpenUrl(activeResult.buyLink, activeResult.itemName || "Listing" );
 
 <Modal
   visible={seeMoreOpen}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setSeeMoreOpen(false)}
@@ -15841,7 +15863,7 @@ const store =
       {/* PROFILE MODAL: REVIEW */}
 <Modal
   visible={profileModal === "review"}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setProfileModal(null)}
@@ -15897,7 +15919,7 @@ onPress={() => {
       {/* PROFILE MODAL: TERMS */}
 <Modal
   visible={profileModal === "terms"}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setProfileModal(null)}
@@ -15997,7 +16019,7 @@ onPress={() => {
    {/* PROFILE MODAL: PRIVACY */}
 <Modal
   visible={profileModal === "privacy"}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setProfileModal(null)}
@@ -16067,72 +16089,14 @@ onPress={() => {
           </View>
         </View>
       </Modal>
-{/* ✅ UNVERIFIED LINK MODAL (premium, replaces system alert) */}
-{unverifiedPrompt ? (
-<Modal
-  visible={!!unverifiedPrompt}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
-  presentationStyle="overFullScreen"
-  transparent
-  onRequestClose={() => setUnverifiedPrompt(null)}
->
-    <View style={styles.modalBackdrop}>
-      <View style={styles.modalCard}>
-        <View style={styles.modalTopRow}>
-          <Text style={styles.modalTitle}>Open unverified link?</Text>
-          <Pressable
-            onPress={() => {
-              hapticSelect();
-              setUnverifiedPrompt(null);
-            }}
-            style={styles.backPill}
-          >
-            <Ionicons name="close" size={16} color="white" />
-            <Text style={styles.backText}>Close</Text>
-          </Pressable>
-        </View>
-<Text style={styles.modalDesc}>
-  This link hasn’t been verified yet:
-  {"\n\n"}
-  <Text style={{ fontWeight: "900", color: "white" }}>
-    {getDomain(unverifiedPrompt?.url || "")}
-  </Text>
-  {"\n\n"}
-  Double-check the domain before entering sensitive info.
-</Text>
-        <Pressable
-          style={styles.modalPrimary}
-          onPress={async () => {
-            hapticSelect();
-            const opener = unverifiedPrompt?.onOpen;
-            setUnverifiedPrompt(null);
-            try {
-              await opener?.();
-            } catch (_e) {}
-          }}
-        >
-          <Text style={styles.modalPrimaryText}>Open link</Text>
-        </Pressable>
-        <Pressable
-          style={styles.modalSecondary}
-          onPress={() => {
-            hapticSelect();
-            setUnverifiedPrompt(null);
-          }}
-        >
-          <Text style={styles.modalSecondaryText}>Cancel</Text>
-        </Pressable>
-        <Text style={styles.modalFoot}>
-          We don’t collect anything from linked sites.
-        </Text>
-      </View>
-    </View>
-  </Modal>
-) : null}
+{/* Unverified-link modal removed — links open directly via safeOpenUrl.
+    State + reducer kept so any legacy caller of requestUnverifiedLinkPrompt
+    is a silent no-op instead of a crash; the renderer is intentionally gone
+    so the user never sees a confirm-to-open prompt again. */}
 {/* BILLION: CLOUD IMPORT */}
 <Modal
   visible={cloudImportOpen}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setCloudImportOpen(false)}
@@ -16191,7 +16155,7 @@ onPress={() => {
 {/* BILLION: INVENTORY */}
 <Modal
   visible={inventoryOpen}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setInventoryOpen(false)}
@@ -16271,7 +16235,7 @@ onPress={() => {
 {/* BILLION: MULTI-ITEM SCAN QUEUE */}
 <Modal
   visible={batchOpen}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setBatchOpen(false)}
@@ -16518,7 +16482,7 @@ const pick = await ImagePicker.launchImageLibraryAsync({
 {/* AUTH MODAL */}
 <Modal
   visible={authModalOpen}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => {
@@ -16862,36 +16826,47 @@ const pick = await ImagePicker.launchImageLibraryAsync({
 
 {/* welcome back modal removed */}
 
-{/* ✅ SAVED TOAST — RIGHT HERE */}
+{/* Premium top-anchored toast — glass-dark capsule, pure opacity fade.
+    The prior version sat at bottom: 110 with a white background, a 0.96→1
+    scale on entry, and never auto-dismissed (50+ direct setSavedToast()
+    callers were never wired to the animation pipeline). Now: fixed top,
+    glassy/dark, opacity-only, auto-dismisses ~1.4s after the toast text
+    changes. Effect-driven dismiss lives at the savedToast useEffect site
+    further up the file. */}
 {Boolean(savedToast) && (
   <RNAnimated.View
     pointerEvents="none"
     style={{
       position: "absolute",
-      bottom: 110,
+      top: (IOS ? 54 : 32),
       alignSelf: "center",
-      paddingHorizontal: 16,
-      paddingVertical: 10,
-      borderRadius: 18,
-      backgroundColor: "rgba(255,255,255,0.92)",
-      transform: [
-        {
-          translateY: toastAnim.interpolate({
-            inputRange: [0, 1],
-            outputRange: [12, 0],
-          }),
-        },
-        {
-          scale: toastAnim.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.96, 1],
-          }),
-        },
-      ],
+      paddingHorizontal: 18,
+      paddingVertical: 11,
+      borderRadius: 999,
+      backgroundColor: "rgba(18,18,20,0.92)",
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: "rgba(255,255,255,0.14)",
+      shadowColor: "#000",
+      shadowOpacity: 0.45,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 6 },
       opacity: toastAnim,
+      zIndex: 999999,
+      elevation: 40,
+      maxWidth: "82%",
     }}
   >
-    <Text style={{ color: TOK.C.bg, fontWeight: "900" }}>
+    <Text
+      allowFontScaling={false}
+      numberOfLines={1}
+      style={{
+        color: "rgba(255,255,255,0.96)",
+        fontWeight: "800",
+        fontSize: 13,
+        letterSpacing: 0.2,
+        textAlign: "center",
+      }}
+    >
       {savedToast}
     </Text>
   </RNAnimated.View>
@@ -16900,7 +16875,7 @@ const pick = await ImagePicker.launchImageLibraryAsync({
 {!!previewImageUri && (
 <Modal
   visible={!!previewImageUri}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={closeHistoryPreview}
@@ -17039,7 +17014,7 @@ style={[
 {/* FREE SCANS INFO MODAL */}
 <Modal
   visible={freePassInfoOpen}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setFreePassInfoOpen(false)}
@@ -17115,7 +17090,7 @@ style={[
 {/* ✅ SPLASH INFO MODAL */}
 <Modal
   visible={splashInfoOpen}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setSplashInfoOpen(false)}
@@ -17158,7 +17133,7 @@ style={[
 {/* PROFILE MODAL: BILLIONAIRE HUB */}
 <Modal
   visible={profileModal === "billion"}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setProfileModal(null)}
@@ -17307,7 +17282,7 @@ const snapshot = {
 {/* PROFILE MODAL: INTELLIGENCE */}
 <Modal
   visible={profileModal === "intelligence"}
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   presentationStyle="overFullScreen"
   transparent
   onRequestClose={() => setProfileModal(null)}
@@ -17481,7 +17456,7 @@ const snapshot = {
 <Modal
   visible={flipScanOpen}
   transparent
-  animationType={Platform.OS === "ios" ? "slide" : "fade"}
+  animationType="fade"
   onRequestClose={() => setFlipScanOpen(false)}
 >
   <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "flex-end" }}>
@@ -17768,56 +17743,50 @@ function IconButton({ icon, onPress }) {
 }
 function TabButton({ active, icon, onPress, badge = 0, dot = false }) {
   const show = Number(badge) > 0;
-  // Liquid Glass spring-physics for active state
-  const scaleAnim = useRef(new RNAnimated.Value(1)).current;
-  const activeAnim = useRef(new RNAnimated.Value(active ? 1 : 0)).current;
+  // Tab icons used to spring-scale 1.0 → 0.88 → 1.0 on every press. At a
+  // 28pt icon size the rasterized-at-scale frames produced the pixelation /
+  // jitter the user has been flagging on tab switches. Active-state styling
+  // is now driven by static color/background swaps (no animation), and
+  // press feedback is opacity-only via Pressable's `pressed` flag. Switch
+  // is instant; nothing rasterizes between sizes.
   const dotAnim = useRef(new RNAnimated.Value(0.4)).current;
+  const dotLoopRef = useRef<RNAnimated.CompositeAnimation | null>(null);
 
   useEffect(() => {
-    RNAnimated.spring(activeAnim, {
-      toValue: active ? 1 : 0,
-      damping: 20,
-      stiffness: 90,
-      mass: 1.0,
-      useNativeDriver: true,
-    }).start();
-  }, [active]);
-
-  useEffect(() => {
-    if (!dot) { dotAnim.setValue(0.4); return; }
+    if (!dot) {
+      try { dotLoopRef.current?.stop(); } catch {}
+      dotLoopRef.current = null;
+      dotAnim.setValue(0.4);
+      return;
+    }
     const loop = RNAnimated.loop(RNAnimated.sequence([
       RNAnimated.timing(dotAnim, { toValue: 1.0, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       RNAnimated.timing(dotAnim, { toValue: 0.4, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
     ]));
+    dotLoopRef.current = loop;
     loop.start();
-    return () => loop.stop();
-  }, [dot]);
+    return () => {
+      try { loop.stop(); } catch {}
+      dotLoopRef.current = null;
+    };
+  }, [dot, dotAnim]);
 
   return (
     <Pressable
-      onPressIn={() => {
-        RNAnimated.spring(scaleAnim, { toValue: 0.88, damping: 18, stiffness: 280, mass: 0.8, useNativeDriver: true }).start();
-      }}
-      onPressOut={() => {
-        RNAnimated.spring(scaleAnim, { toValue: 1, damping: 14, stiffness: 300, mass: 0.9, useNativeDriver: true }).start();
-      }}
       onPress={onPress}
-      style={{ width: 60, height: 50, alignItems: "center", justifyContent: "center" }}
+      android_ripple={null}
+      style={({ pressed }) => [
+        { width: 60, height: 50, alignItems: "center", justifyContent: "center" },
+        { opacity: pressed ? 0.72 : 1 },
+      ]}
     >
-      <RNAnimated.View
+      <View
         style={[
           styles.tabBtn,
           {
-            transform: [{ scale: scaleAnim }],
-            backgroundColor: activeAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: ["rgba(255,255,255,0.0)", "rgba(255,255,255,0.14)"],
-            }),
+            backgroundColor: active ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0)",
             borderWidth: StyleSheet.hairlineWidth,
-            borderColor: activeAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: ["rgba(255,255,255,0.0)", "rgba(255,255,255,0.30)"],
-            }),
+            borderColor: active ? "rgba(255,255,255,0.30)" : "rgba(255,255,255,0)",
           },
         ]}
       >
@@ -17826,9 +17795,9 @@ function TabButton({ active, icon, onPress, badge = 0, dot = false }) {
           size={28}
           color={active ? "white" : "rgba(255,255,255,0.55)"}
         />
-        {/* Active glow dot */}
+        {/* Active glow dot — static, no animation */}
         {active ? (
-          <RNAnimated.View
+          <View
             pointerEvents="none"
             style={{
               position: "absolute",
@@ -17837,11 +17806,10 @@ function TabButton({ active, icon, onPress, badge = 0, dot = false }) {
               height: 4,
               borderRadius: 2,
               backgroundColor: "rgba(255,255,255,0.85)",
-              opacity: activeAnim,
             }}
           />
         ) : null}
-      </RNAnimated.View>
+      </View>
       {show && !dot ? (
         <View
           pointerEvents="none"

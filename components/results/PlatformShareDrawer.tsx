@@ -25,7 +25,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
   withTiming,
   Easing,
 } from "react-native-reanimated";
@@ -134,24 +133,24 @@ export function PlatformShareDrawer({
   const [_toastVisible, setToastVisible] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Animations ────────────────────────────────────────────────────────────
-  const translateY = useSharedValue(SCREEN_H);
+  // ── Animations — opacity-only sheet entrance ─────────────────────────────
+  const sheetOp    = useSharedValue(0);
   const backdropOp = useSharedValue(0);
-  const toastOp = useSharedValue(0);
+  const toastOp    = useSharedValue(0);
 
   useEffect(() => {
     if (visible) {
       backdropOp.value = withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) });
-      translateY.value = withSpring(0, { damping: 28, stiffness: 260, mass: 1 });
+      sheetOp.value    = withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) });
     } else {
       backdropOp.value = withTiming(0, { duration: 200 });
-      translateY.value = withSpring(SCREEN_H, { damping: 28, stiffness: 260, mass: 1 });
+      sheetOp.value    = withTiming(0, { duration: 200 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   const drawerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
+    opacity: sheetOp.value,
   }));
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: backdropOp.value,
@@ -238,7 +237,10 @@ export function PlatformShareDrawer({
 
   // ─────────────────────────────────────────────────────────────────────────
 
-  if (!visible && translateY.value >= SCREEN_H - 1) return null;
+  // Mirror the AskAIDrawer pattern — keep the tree mounted while the
+  // fade-out finishes, then unmount so the drawer can't intercept taps
+  // invisibly. 0.02 ≈ "no longer visible to the eye".
+  if (!visible && sheetOp.value < 0.02) return null;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents={visible ? "auto" : "none"}>

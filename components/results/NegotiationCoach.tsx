@@ -79,23 +79,18 @@ export function NegotiationCoach({ visible, context, apiBase, onClose }: Negotia
   const inputRef = useRef<TextInput>(null);
   const abortRef = useRef<(() => void) | null>(null);
 
-  // Fade-only to prevent overlay bleed/pixelation.
-  // Was translateY 600→0 spring; now opacity + 4-px nudge so the dark
-  // background underneath doesn't drag upward during entry.
+  // Opacity-only entrance — the 4-px nudge drove subtle keyboard-padding
+  // re-measurement on iPhone and made the panel feel jittery on open.
   const sheetOpacity = useSharedValue(0);
-  const sheetNudge   = useSharedValue(4);
   const animStyle = useAnimatedStyle(() => ({
     opacity: sheetOpacity.value,
-    transform: [{ translateY: sheetNudge.value }],
   }));
 
   useEffect(() => {
     if (visible) {
       sheetOpacity.value = withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) });
-      sheetNudge.value   = withTiming(0, { duration: 240, easing: Easing.out(Easing.cubic) });
     } else {
       sheetOpacity.value = withTiming(0, { duration: 180 });
-      sheetNudge.value   = withTiming(4, { duration: 180 });
       abortRef.current?.();
       setMessages([]);
       setInput("");

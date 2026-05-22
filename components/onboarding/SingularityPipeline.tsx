@@ -89,17 +89,14 @@ function StageNode({
   title: string; sub: string; tag: string; isEvan: boolean; delay: number;
 }) {
   const op = useSharedValue(0);
-  const ty = useSharedValue(10);
 
   useEffect(() => {
     op.value = withDelay(delay, withTiming(1, { duration: 280, easing: Easing.out(Easing.cubic) }));
-    ty.value = withDelay(delay, withSpring(0, { damping: 22, stiffness: 300 }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const anim = useAnimatedStyle(() => ({
     opacity: op.value,
-    transform: [{ translateY: ty.value }],
   }));
 
   return (
@@ -222,27 +219,32 @@ export function SingularityPipelineModal({
 }: SingularityPipelineModalProps) {
   const insets = useSafeAreaInsets();
 
-  const sheetY    = useSharedValue(SCREEN_H);
+  // Opacity-only entrance/exit. The prior version slid the sheet up from
+  // SCREEN_H with a spring, which on first-launch made the dark backdrop
+  // visibly drag upward behind the sheet — same bleeding-overlay artifact
+  // the user flagged elsewhere. Fade preserves the cinematic feel without
+  // any background motion behind the panel.
+  const sheetOp    = useSharedValue(0);
   const backdropOp = useSharedValue(0);
 
   useEffect(() => {
     if (visible) {
-      sheetY.value    = SCREEN_H;
+      sheetOp.value    = 0;
       backdropOp.value = 0;
-      sheetY.value    = withSpring(0, { damping: 26, stiffness: 180, mass: 1.1 });
-      backdropOp.value = withTiming(1, { duration: 300 });
+      sheetOp.value    = withTiming(1, { duration: 260 });
+      backdropOp.value = withTiming(1, { duration: 220 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   const dismiss = () => {
-    Haptics.selectionAsync();
-    sheetY.value    = withSpring(SCREEN_H, { damping: 26, stiffness: 200, velocity: 8 });
+    try { Haptics.selectionAsync(); } catch {}
+    sheetOp.value    = withTiming(0, { duration: 200 });
     backdropOp.value = withTiming(0, { duration: 200 });
-    setTimeout(onClose, 240);
+    setTimeout(onClose, 220);
   };
 
-  const sheetStyle    = useAnimatedStyle(() => ({ transform: [{ translateY: sheetY.value }] }));
+  const sheetStyle    = useAnimatedStyle(() => ({ opacity: sheetOp.value }));
   const backdropStyle = useAnimatedStyle(() => ({ opacity: backdropOp.value }));
 
   if (!visible) return null;

@@ -429,12 +429,14 @@ export function LoadingScreen({
               {isCompleted ? (
                 <Ionicons name="checkmark" size={9} color="rgba(255,255,255,0.85)" />
               ) : isActive ? (
+                // Opacity-only pulse — the prior 0.8→1.2 scale on a 5×5 px dot
+                // rasterized between integer pixel sizes and produced visible
+                // pixelation at the centre of each "in progress" pill.
                 <RNAnimated.View
                   style={[
                     styles.pillGlowDot,
                     {
                       opacity: pillGlow.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1.0] }),
-                      transform: [{ scale: pillGlow.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.2] }) }],
                     },
                   ]}
                   renderToHardwareTextureAndroid={IS_ANDROID}

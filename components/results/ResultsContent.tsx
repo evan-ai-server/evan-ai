@@ -22,7 +22,6 @@ import { Ionicons } from "@expo/vector-icons";
 import Reanimated, {
   useSharedValue,
   useAnimatedStyle,
-  withSpring,
   withTiming,
   withDelay,
   interpolate,
@@ -199,14 +198,13 @@ export const ResultsContent = React.memo(function ResultsContent({
     || (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
 
   // ── Transition shared values ──────────────────────────────────────────────
-  // Loading container: enters with spring scale+opacity, exits scale up + fade
+  // Opacity-only fade for both containers. Previously the loading→results
+  // transition used scale (0.94→1, then 1→1.04) plus a 16px translateY
+  // bloom. On the user's iPhones this rasterized the entire results tree at
+  // sub-pixel scales and produced the "loading-screen-pixelates-before-
+  // results-mount" jank. Plain opacity is GPU-cheap and never rasterizes.
   const loadingOpacity  = useSharedValue(loadingResults ? 0 : 0);
-  const loadingScale    = useSharedValue(loadingResults ? 0.94 : 1);
-
-  // Results container: Singularity — opacity + translateY + scale bloom
   const resultsOpacity  = useSharedValue(loadingResults ? 0 : 1);
-  const resultsTranslateY = useSharedValue(loadingResults ? SINGULARITY.fromTranslateY : 0);
-  const resultsScale    = useSharedValue(loadingResults ? SINGULARITY.fromScale : 1);
 
   // Sub-element entrance — runs after the results container settles.
   // Verdict hero owns its own internal choreography; this only stages
@@ -223,48 +221,37 @@ export const ResultsContent = React.memo(function ResultsContent({
     setDeckIndex(0);
   }, [activeResult]);
 
-  // Loading screen entrance: Panthere fade (heavy start → silk finish) + spring scale
+  // Loading screen entrance: opacity-only Panthere fade.
   useEffect(() => {
     if (loadingResults) {
       hasShownLoading.current = true;
       loadingOpacity.value = 0;
-      loadingScale.value = 0.94;
       loadingOpacity.value = withTiming(1, { duration: SINGULARITY.duration, easing: panthere });
-      loadingScale.value = withSpring(1, { damping: 22, stiffness: 200 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingResults]);
 
-  // Transition: loading → results (Singularity curve for all fades)
+  // Transition: loading → results — pure cross-fade.
   useEffect(() => {
     if (!loadingResults && activeResult) {
-      // 1. Animate loading container out: scale 1→1.04 + opacity 1→0 (Panthere)
+      // 1. Loading container fades out.
       loadingOpacity.value = withTiming(0, { duration: 280, easing: panthere });
-      loadingScale.value = withTiming(1.04, { duration: 280, easing: panthere });
 
-      // 2. After 120ms delay, animate results in — Singularity bloom
+      // 2. Results container fades in after a short overlap window.
       resultsOpacity.value = 0;
-      resultsTranslateY.value = SINGULARITY.fromTranslateY;
-      resultsScale.value = SINGULARITY.fromScale;
       resultsOpacity.value = withDelay(
         120,
         withTiming(1, { duration: SINGULARITY.duration, easing: panthere }),
       );
-      resultsTranslateY.value = withDelay(
-        120,
-        withTiming(0, { duration: SINGULARITY.duration, easing: panthere }),
-      );
-      resultsScale.value = withDelay(
-        120,
-        withTiming(1, { duration: SINGULARITY.duration, easing: panthere }),
-      );
 
-      // 3. Stage the surrounding chrome — identity breadcrumb fades up first,
-      //    deck waits for the verdict to land. No pulse, no flourish.
+      // 3. Stage the surrounding chrome — identity breadcrumb fades in first,
+      //    deck waits for the verdict to land. Opacity-only, no springs on
+      //    transform so the parent screen never visually shifts behind the
+      //    fade.
       chromeEntrance.value = 0;
       deckEntrance.value   = 0;
-      chromeEntrance.value = withDelay(160, withSpring(1, { mass: 1.0, damping: 24, stiffness: 200 }));
-      deckEntrance.value   = withDelay(620, withSpring(1, { mass: 1.0, damping: 24, stiffness: 180 }));
+      chromeEntrance.value = withDelay(160, withTiming(1, { duration: 320, easing: panthere }));
+      deckEntrance.value   = withDelay(620, withTiming(1, { duration: 340, easing: panthere }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingResults, activeResult]);
@@ -272,43 +259,22 @@ export const ResultsContent = React.memo(function ResultsContent({
   // ── Animated styles ───────────────────────────────────────────────────────
   const loadingContainerStyle = useAnimatedStyle(() => ({
     opacity: loadingOpacity.value,
-    transform: [{ scale: loadingScale.value }] as any,
   }));
 
   const resultsContainerStyle = useAnimatedStyle(() => ({
     opacity: resultsOpacity.value,
-    transform: [
-      { scale: resultsScale.value },
-      { translateY: resultsTranslateY.value },
-    ] as any,
   }));
 
+  // Opacity-only chrome + deck entrances. The prior translateY 6→0 / 12→0
+  // bloom moved large parent containers a few pixels during entry — enough
+  // to expose the dark spatial background "sliding up" behind them, which
+  // read as flicker. Pure opacity reveals stay anchored.
   const chromeAnimStyle = useAnimatedStyle(() => ({
     opacity: interpolate(chromeEntrance.value, [0, 1], [0, 1], Extrapolation.CLAMP),
-    transform: [
-      {
-        translateY: interpolate(
-          chromeEntrance.value,
-          [0, 1],
-          [6, 0],
-          Extrapolation.CLAMP,
-        ),
-      },
-    ] as any,
   }));
 
   const deckAnimStyle = useAnimatedStyle(() => ({
     opacity: interpolate(deckEntrance.value, [0, 1], [0, 1], Extrapolation.CLAMP),
-    transform: [
-      {
-        translateY: interpolate(
-          deckEntrance.value,
-          [0, 1],
-          [12, 0],
-          Extrapolation.CLAMP,
-        ),
-      },
-    ] as any,
   }));
 
   const handleSnap = useCallback((idx: number) => {
@@ -710,63 +676,38 @@ function VerdictHero({
   const marketValue = median ?? (Number.isFinite(avg) ? avg : null);
 
   // ── Sequenced reveal ──────────────────────────────────────────────────────
-  // Phase 1 (0–360ms):    verdict word fades+scales in (gentle spring)
-  // Phase 2 (200–520ms):  dollar amount lifts in
-  // Phase 3 (380–680ms):  context line whispers in
-  // Phase 4 (520–840ms):  strip slides up
-  // Glow:   80–560ms      barely-there spotlight under the word
+  // Sequenced reveal — opacity-only across the board. The previous version
+  // scaled the verdict word (0.94→1.0) and lifted the dollar/strip with a
+  // small translateY. Even small text-scale animations rasterized the
+  // BUY/PASS glyph between renders and the user saw pixelation on the
+  // word at the moment of reveal. Keeping the timing/staggers identical
+  // preserves the choreography; only the transform pieces are gone.
   const wordOpacity   = useSharedValue(0);
-  const wordScale     = useSharedValue(0.94);
   const dollarOpacity = useSharedValue(0);
-  const dollarLift    = useSharedValue(8);
   const subOpacity    = useSharedValue(0);
   const stripOpacity  = useSharedValue(0);
-  const stripLift     = useSharedValue(6);
   const glowOpacity   = useSharedValue(0);
 
   useEffect(() => {
-    // Reset for each new scan — every decision gets its own moment
     wordOpacity.value   = 0;
-    wordScale.value     = 0.94;
     dollarOpacity.value = 0;
-    dollarLift.value    = 8;
     subOpacity.value    = 0;
     stripOpacity.value  = 0;
-    stripLift.value     = 6;
     glowOpacity.value   = 0;
 
-    wordOpacity.value = withTiming(1, { duration: 360, easing: panthere });
-    wordScale.value   = withSpring(1, { damping: 18, stiffness: 200, mass: 1.0 });
-    glowOpacity.value = withDelay(80, withTiming(1, { duration: 480, easing: panthere }));
-
+    wordOpacity.value   = withTiming(1, { duration: 360, easing: panthere });
+    glowOpacity.value   = withDelay(80,  withTiming(1, { duration: 480, easing: panthere }));
     dollarOpacity.value = withDelay(200, withTiming(1, { duration: 320, easing: panthere }));
-    dollarLift.value    = withDelay(200, withSpring(0, { damping: 22, stiffness: 200, mass: 1.0 }));
-
-    subOpacity.value = withDelay(380, withTiming(1, { duration: 300, easing: panthere }));
-
-    stripOpacity.value = withDelay(520, withTiming(1, { duration: 320, easing: panthere }));
-    stripLift.value    = withDelay(520, withSpring(0, { damping: 24, stiffness: 200, mass: 1.0 }));
+    subOpacity.value    = withDelay(380, withTiming(1, { duration: 300, easing: panthere }));
+    stripOpacity.value  = withDelay(520, withTiming(1, { duration: 320, easing: panthere }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeResult]);
 
-  const wordStyle = useAnimatedStyle(() => ({
-    opacity: wordOpacity.value,
-    transform: [{ scale: wordScale.value }] as any,
-  }));
-  const glowStyleHero = useAnimatedStyle(() => ({
-    opacity: glowOpacity.value,
-  }));
-  const dollarStyle = useAnimatedStyle(() => ({
-    opacity: dollarOpacity.value,
-    transform: [{ translateY: dollarLift.value }] as any,
-  }));
-  const subStyle = useAnimatedStyle(() => ({
-    opacity: subOpacity.value,
-  }));
-  const stripStyle = useAnimatedStyle(() => ({
-    opacity: stripOpacity.value,
-    transform: [{ translateY: stripLift.value }] as any,
-  }));
+  const wordStyle = useAnimatedStyle(() => ({ opacity: wordOpacity.value }));
+  const glowStyleHero = useAnimatedStyle(() => ({ opacity: glowOpacity.value }));
+  const dollarStyle = useAnimatedStyle(() => ({ opacity: dollarOpacity.value }));
+  const subStyle = useAnimatedStyle(() => ({ opacity: subOpacity.value }));
+  const stripStyle = useAnimatedStyle(() => ({ opacity: stripOpacity.value }));
 
   return (
     <View style={heroStyles.outer}>
