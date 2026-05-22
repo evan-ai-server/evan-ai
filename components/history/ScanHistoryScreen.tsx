@@ -24,7 +24,7 @@ import {
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { C, SP, R, TY, IOS, verdictStyle, fmtMoney } from "../design/DS";
+import { C, SP, R, TY, IOS, fmtMoney } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
 import { MarketTruthService } from "../../services/MarketTruthService";
 
@@ -90,19 +90,26 @@ function formatAge(ts: number | null): string {
   return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function decisionLabel(decision: LoopDecision | null): { text: string; color: string } {
-  if (!decision) return { text: "PENDING", color: C.text4 };
-  if (decision.decision === "BUY")       return { text: "BOUGHT", color: C.good };
-  if (decision.decision === "PASS")      return { text: "PASSED", color: C.text3 };
-  return { text: "UNDECIDED", color: C.warn };
+function decisionLabel(decision: LoopDecision | null): { text: string; tone: "buy" | "pass" | "neutral" | "warn" } {
+  if (!decision) return { text: "PENDING", tone: "neutral" };
+  if (decision.decision === "BUY")  return { text: "BOUGHT", tone: "buy" };
+  if (decision.decision === "PASS") return { text: "PASSED", tone: "pass" };
+  return { text: "UNDECIDED", tone: "warn" };
 }
 
-function outcomeLabel(outcome: LoopOutcome | null): { text: string; color: string } | null {
+function outcomeLabel(outcome: LoopOutcome | null): { text: string; tone: "buy" | "pass" | "neutral" | "warn" } | null {
   if (!outcome) return null;
-  if (outcome.outcomeStatus === "SOLD")     return { text: "SOLD", color: C.good };
-  if (outcome.outcomeStatus === "RETURNED") return { text: "RETURNED", color: C.warn };
-  return { text: "UNSOLD", color: C.danger };
+  if (outcome.outcomeStatus === "SOLD")     return { text: "SOLD",     tone: "buy" };
+  if (outcome.outcomeStatus === "RETURNED") return { text: "RETURNED", tone: "warn" };
+  return { text: "UNSOLD", tone: "pass" };
 }
+
+const TONE: Record<"buy" | "pass" | "neutral" | "warn", string> = {
+  buy:     "rgba(180,255,200,0.92)",
+  pass:    "rgba(255,170,150,0.78)",
+  neutral: C.text3,
+  warn:    "rgba(255,210,100,0.85)",
+};
 
 // ─── Outcome sheet ────────────────────────────────────────────────────────────
 
@@ -188,7 +195,7 @@ function OutcomeSheet({
   if (!visible) return null;
 
   return (
-    <Modal transparent animationType="slide" visible={visible} onRequestClose={onClose} presentationStyle="overFullScreen">
+    <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose} presentationStyle="overFullScreen">
       <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
         <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, SP.xl) + SP.md }]}>
@@ -202,7 +209,7 @@ function OutcomeSheet({
           <Text style={styles.sheetTitle}>Record sale outcome</Text>
 
           {/* Status */}
-          <View style={styles.statusRow}>
+          <View style={styles.statusChipRow}>
             {(["SOLD", "UNSOLD", "RETURNED"] as const).map((s) => (
               <TouchableOpacity
                 key={s}
@@ -309,21 +316,22 @@ function OutcomeSheet({
 // ─── Skeleton card ────────────────────────────────────────────────────────────
 
 function SkeletonCard() {
-  const opacity = React.useRef(new RNAnimated.Value(0.4)).current;
+  const opacity = React.useRef(new RNAnimated.Value(0.35)).current;
   React.useEffect(() => {
     RNAnimated.loop(RNAnimated.sequence([
-      RNAnimated.timing(opacity, { toValue: 0.85, duration: 700, useNativeDriver: true }),
-      RNAnimated.timing(opacity, { toValue: 0.4,  duration: 700, useNativeDriver: true }),
+      RNAnimated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: true }),
+      RNAnimated.timing(opacity, { toValue: 0.35, duration: 800, useNativeDriver: true }),
     ])).start();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
     <RNAnimated.View style={[styles.card, { opacity }]}>
+      <View style={[styles.rail, { backgroundColor: C.s2 }]} />
       <View style={styles.cardBody}>
-        <View style={[styles.skel, { width: "55%", marginBottom: SP.xs }]} />
-        <View style={[styles.skel, { width: "35%", height: 10 }]} />
+        <View style={[styles.skel, { width: "60%", marginBottom: 6 }]} />
+        <View style={[styles.skel, { width: "40%", height: 9 }]} />
       </View>
-      <View style={[styles.skel, { width: 52, height: 22, borderRadius: R.pill }]} />
+      <View style={[styles.skel, { width: 64, height: 14 }]} />
     </RNAnimated.View>
   );
 }
@@ -344,62 +352,76 @@ function ScanCard({
   const [outcomeOpen, setOutcomeOpen] = useState(false);
   const dl = decisionLabel(item.decision);
   const ol = outcomeLabel(item.outcome);
-  const vs = item.signal ? verdictStyle(item.signal) : null;
   const canRecordOutcome = item.decision?.decision === "BUY" && !item.outcome;
+
+  // Profit number — the dominant value on each row, like a brokerage P/L
+  const realizedProfit = item.outcome?.outcomeStatus === "SOLD"
+    ? item.outcome.netProfit
+    : null;
+  const profitTone = realizedProfit != null
+    ? (realizedProfit >= 0 ? TONE.buy : TONE.pass)
+    : C.text3;
+
+  // Status line directly under name — quiet trail of context
+  const statusBits: string[] = [];
+  if (item.source) {
+    statusBits.push(item.source.sourceType);
+    if (item.source.city) statusBits.push(item.source.city);
+  }
+  if (item.ts) statusBits.push(formatAge(item.ts));
 
   return (
     <>
       <View style={styles.card}>
+        {/* Decision rail — color slab on left edge tells the story instantly */}
+        <View style={[styles.rail, { backgroundColor: TONE[dl.tone] }]} />
+
         <View style={styles.cardBody}>
           <Text style={styles.cardName} numberOfLines={1}>
             {item.itemName || item.category || "Scan"}
           </Text>
-          <View style={styles.cardMetaRow}>
-            {/* Signal badge */}
-            {vs && item.signal ? (
-              <View style={[styles.signalBadge, { backgroundColor: vs.bg, borderColor: vs.border }]}>
-                <Text style={[styles.signalText, { color: vs.text }]} numberOfLines={1}>
-                  {item.signal.replace("STRONG ", "★ ")}
-                </Text>
-              </View>
-            ) : null}
-            <Text style={styles.cardMeta}>{formatAge(item.ts)}</Text>
+
+          {/* Status: BOUGHT · eBay · Brooklyn · 2d ago — single quiet line */}
+          <View style={styles.statusRow}>
+            <Text style={[styles.statusDecision, { color: TONE[dl.tone] }]} numberOfLines={1}>
+              {dl.text}
+            </Text>
+            {statusBits.map((bit, i) => (
+              <React.Fragment key={`${bit}-${i}`}>
+                <Text style={styles.statusSep}>·</Text>
+                <Text style={styles.statusBit} numberOfLines={1}>{bit}</Text>
+              </React.Fragment>
+            ))}
           </View>
-          {/* Source info if bought */}
-          {item.source ? (
-            <Text style={styles.sourceInfo}>
-              {item.source.sourceType} · {item.source.city} · {fmtMoney(item.source.purchasePrice)} paid
-            </Text>
-          ) : null}
-          {/* Outcome profit if sold */}
-          {item.outcome?.outcomeStatus === "SOLD" && item.outcome.netProfit != null ? (
-            <Text style={[
-              styles.profitLine,
-              { color: item.outcome.netProfit >= 0 ? C.good : C.danger },
-            ]}>
-              {item.outcome.netProfit >= 0 ? "+" : ""}{fmtMoney(item.outcome.netProfit)} profit
-            </Text>
-          ) : null}
         </View>
 
         <View style={styles.cardRight}>
-          {/* Decision badge */}
-          <View style={[styles.decisionBadge, { borderColor: dl.color + "44" }]}>
-            <Text style={[styles.decisionText, { color: dl.color }]}>{dl.text}</Text>
-          </View>
-          {/* Outcome badge or CTA */}
+          {/* Profit — the number that matters */}
+          {realizedProfit != null ? (
+            <Text style={[styles.profit, { color: profitTone }]} numberOfLines={1}>
+              {realizedProfit >= 0 ? "+" : "−"}{fmtMoney(Math.abs(realizedProfit))}
+            </Text>
+          ) : item.source?.purchasePrice != null ? (
+            <Text style={styles.profitNeutral} numberOfLines={1}>
+              {fmtMoney(item.source.purchasePrice)}
+            </Text>
+          ) : null}
+
+          {/* Sub-line: outcome status or record CTA */}
           {ol ? (
-            <View style={[styles.outcomeBadge, { borderColor: ol.color + "44" }]}>
-              <Text style={[styles.outcomeText, { color: ol.color }]}>{ol.text}</Text>
-            </View>
+            <Text style={[styles.outcomeStatus, { color: TONE[ol.tone] }]} numberOfLines={1}>
+              {ol.text}
+            </Text>
           ) : canRecordOutcome ? (
             <TouchableOpacity
               onPress={() => setOutcomeOpen(true)}
               style={styles.recordOutcomeBtn}
-              activeOpacity={0.75}
+              activeOpacity={0.7}
             >
-              <Text style={styles.recordOutcomeText}>Record sale</Text>
+              <Text style={styles.recordOutcomeText}>Log sale</Text>
             </TouchableOpacity>
+          ) : item.source?.purchasePrice != null ? (
+            <Text style={styles.outcomeStatusMuted} numberOfLines={1}>PAID</Text>
           ) : null}
         </View>
       </View>
@@ -465,12 +487,12 @@ export default function ScanHistoryScreen({
       {IOS ? <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} /> : null}
       <View style={styles.bg} />
 
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + SP.lg }]}>
-        <Text style={styles.headerTitle}>Scan History</Text>
-        <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-          <Text style={styles.closeBtnText}>Done</Text>
-        </TouchableOpacity>
+      {/* Header — minimal eyebrow, journal feel */}
+      <View style={[styles.header, { paddingTop: insets.top + SP.xl }]}>
+        <View>
+          <Text style={styles.headerEyebrow}>JOURNAL</Text>
+          <Text style={styles.headerTitle}>Decisions</Text>
+        </View>
       </View>
 
       {loading ? (
@@ -536,129 +558,127 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     paddingHorizontal: SP.xl,
-    paddingBottom: SP.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    paddingBottom: SP.xl,
+  },
+  headerEyebrow: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 2.0,
+    color: C.text4,
+    marginBottom: 4,
   },
   headerTitle: {
-    ...TY.h2,
+    fontSize: 28,
+    fontWeight: "900",
     color: C.text,
-  },
-  closeBtn: {
-    paddingVertical: SP.xs,
-    paddingHorizontal: SP.md,
-    backgroundColor: C.s2,
-    borderRadius: R.pill,
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  closeBtnText: {
-    ...TY.label,
-    color: C.text2,
+    letterSpacing: -0.6,
+    lineHeight: 32,
   },
 
   listContent: {
-    padding: SP.lg,
-    gap: SP.sm,
+    paddingHorizontal: SP.lg,
+    paddingTop: SP.xs,
+    paddingBottom: SP.xl,
+    gap: SP.xs,
   },
 
-  // ── Card ───────────────────────────────────────────────────────────────────
+  // ── Card — brokerage-style row ────────────────────────────────────────────
   card: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    backgroundColor: C.s1,
-    borderRadius: R.lg,
-    borderWidth: 1,
-    borderColor: C.border,
-    padding: SP.md,
-    gap: SP.sm,
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.025)",
+    borderRadius: R.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.06)",
+    paddingVertical: SP.md,
+    paddingRight: SP.lg,
+    gap: SP.md,
+    overflow: "hidden",
+  },
+  // Decision rail — color slab on left edge, the trade direction at a glance
+  rail: {
+    width: 3,
+    alignSelf: "stretch",
+    opacity: 0.85,
   },
   cardBody: {
     flex: 1,
+    minWidth: 0,
   },
   cardName: {
-    ...TY.bodyBold,
+    fontSize: 15,
+    fontWeight: "700",
     color: C.text,
-    marginBottom: SP.xs,
+    letterSpacing: -0.1,
+    marginBottom: 2,
   },
-  cardMetaRow: {
+  statusRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: SP.sm,
-    flexWrap: "wrap",
+    gap: 6,
+    flexWrap: "nowrap",
+    overflow: "hidden",
   },
-  cardMeta: {
-    ...TY.cap,
-    color: C.text4,
-  },
-  signalBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: R.xs,
-    borderWidth: 1,
-  },
-  signalText: {
-    ...TY.cap,
-    fontSize: 9,
-  },
-  sourceInfo: {
-    ...TY.cap,
-    color: C.text4,
-    marginTop: SP.xs,
-    textTransform: "uppercase",
-  },
-  profitLine: {
-    ...TY.label,
-    marginTop: SP.xs,
+  statusDecision: {
+    fontSize: 10,
     fontWeight: "900",
+    letterSpacing: 1.2,
+    flexShrink: 0,
+  },
+  statusSep: {
+    fontSize: 10,
+    color: C.text4,
+    flexShrink: 0,
+  },
+  statusBit: {
+    fontSize: 11,
+    color: C.text3,
+    fontWeight: "600",
+    letterSpacing: 0.1,
+    flexShrink: 1,
   },
 
   cardRight: {
     alignItems: "flex-end",
-    gap: SP.xs,
+    gap: 2,
     flexShrink: 0,
   },
-  decisionBadge: {
-    paddingHorizontal: SP.sm,
-    paddingVertical: 3,
-    borderRadius: R.pill,
-    borderWidth: 1,
-    backgroundColor: "rgba(255,255,255,0.05)",
+  profit: {
+    fontSize: 17,
+    fontWeight: "900",
+    letterSpacing: -0.3,
   },
-  decisionText: {
-    ...TY.cap,
+  profitNeutral: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: C.text2,
+    letterSpacing: -0.2,
+  },
+  outcomeStatus: {
     fontSize: 9,
     fontWeight: "900",
+    letterSpacing: 1.2,
   },
-  outcomeBadge: {
-    paddingHorizontal: SP.sm,
-    paddingVertical: 3,
-    borderRadius: R.pill,
-    borderWidth: 1,
-    backgroundColor: "rgba(255,255,255,0.05)",
-  },
-  outcomeText: {
-    ...TY.cap,
+  outcomeStatusMuted: {
     fontSize: 9,
     fontWeight: "900",
+    letterSpacing: 1.2,
+    color: C.text4,
   },
   recordOutcomeBtn: {
     paddingHorizontal: SP.sm,
-    paddingVertical: 3,
-    borderRadius: R.pill,
-    borderWidth: 1,
-    borderColor: "rgba(0,210,120,0.30)",
-    backgroundColor: "rgba(0,210,120,0.08)",
+    paddingVertical: 4,
+    borderRadius: R.xs,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(180,255,200,0.22)",
+    backgroundColor: "rgba(180,255,200,0.06)",
   },
   recordOutcomeText: {
-    ...TY.cap,
     fontSize: 9,
-    color: "rgba(120,255,160,0.85)",
     fontWeight: "900",
+    letterSpacing: 1.2,
+    color: "rgba(180,255,200,0.92)",
   },
 
   // ── Skeleton ───────────────────────────────────────────────────────────────
@@ -747,8 +767,8 @@ const styles = StyleSheet.create({
     marginBottom: SP.xl,
   },
 
-  // Status chips
-  statusRow: {
+  // Status chips (OutcomeSheet)
+  statusChipRow: {
     flexDirection: "row",
     gap: SP.sm,
     marginBottom: SP.lg,

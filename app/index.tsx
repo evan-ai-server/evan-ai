@@ -2601,31 +2601,45 @@ const surveyCompleteLockRef = useRef(false);
 const handleSurveyComplete = useCallback(async (ans: SurveyAnswers, goTutorial: boolean) => {
   if (surveyCompleteLockRef.current) return;
   surveyCompleteLockRef.current = true;
+  console.log("INTRO_EXPLORE_TAP", { goTutorial });
   try { await AsyncStorage.setItem("EVAN_SURVEY_V1", JSON.stringify(ans)); } catch {}
   setShowSurvey(false);
   if (goTutorial) {
-    // 380ms: matches survey fade-out duration — tutorial mounts on a clean frame.
-    setTimeout(() => openTutorial(), 380);
+    // Wait the FULL OnboardingFlow fade-out (520ms in OnboardingFlow.handleComplete)
+    // before mounting the tutorial. The prior 380 ms gap let the tutorial card
+    // mount + slide-up while the OnboardingFlow was still finishing its
+    // fade — three opacity animations stacked produced the visible
+    // double-flicker. 540 ms gives 20ms of headroom over the 520ms exit so
+    // we're past the last frame, and React commits the unmount before the
+    // tutorial enters.
+    console.log("INTRO_TRANSITION_START");
+    setTimeout(() => {
+      openTutorial();
+      console.log("INTRO_TRANSITION_DONE");
+    }, 540);
   }
 }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 const animTutorialContentIn = () => {
-  tutorialContentY.setValue(22);
-  tutorialIconScale.setValue(0.68);
+  // Fade-only to prevent overlay bleed/pixelation. The prior version animated
+  // translateY 22→0 + iconScale 0.68→1 in parallel with the opacity fade —
+  // which combined with the survey's own fade-out produced the double-flicker
+  // on Explore Evan AI taps. Keep static positions; rely on the opacity.
+  tutorialContentY.setValue(0);
+  tutorialIconScale.setValue(1);
   tutorialContentOp.setValue(0);
-  RNAnimated.parallel([
-    RNAnimated.spring(tutorialContentY, { toValue: 0, damping: 20, stiffness: 210, useNativeDriver: true }),
-    RNAnimated.timing(tutorialContentOp, { toValue: 1, duration: 300, useNativeDriver: true }),
-    RNAnimated.spring(tutorialIconScale, { toValue: 1, damping: 14, stiffness: 240, useNativeDriver: true }),
-  ]).start();
+  RNAnimated.timing(tutorialContentOp, {
+    toValue: 1, duration: 260, useNativeDriver: true,
+  }).start();
 };
 
 const advanceTutorialStep = () => {
   try { Haptics.selectionAsync(); } catch {}
-  RNAnimated.parallel([
-    RNAnimated.timing(tutorialContentOp, { toValue: 0, duration: 120, useNativeDriver: true }),
-    RNAnimated.timing(tutorialContentY, { toValue: -10, duration: 120, useNativeDriver: true }),
-  ]).start(() => {
+  // Fade-only step transitions — no translateY nudge. The prior -10 nudge
+  // visibly jumped the layout for one frame between steps.
+  RNAnimated.timing(tutorialContentOp, {
+    toValue: 0, duration: 120, useNativeDriver: true,
+  }).start(() => {
     setTutorialStep(s => s + 1);
     animTutorialContentIn();
   });
@@ -2696,12 +2710,14 @@ const closeInteractiveTutorial = useCallback(() => {
 }, [iTutBgOp, iTutCardOp, iTutSpotOp, iTutRingOpacity]);
 
 const animITutCardIn = useCallback(() => {
-  iTutCardY.setValue(26);
+  // Fade-only to prevent overlay bleed/pixelation. Removed the translateY
+  // 26→0 spring — combined with the bg-opacity ramp it produced a visible
+  // staircase effect on the tutorial card's entry.
+  iTutCardY.setValue(0);
   iTutCardOp.setValue(0);
-  RNAnimated.parallel([
-    RNAnimated.spring(iTutCardY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
-    RNAnimated.timing(iTutCardOp, { toValue: 1, duration: 280, useNativeDriver: true }),
-  ]).start();
+  RNAnimated.timing(iTutCardOp, {
+    toValue: 1, duration: 260, useNativeDriver: true,
+  }).start();
 }, [iTutCardY, iTutCardOp]);
 
 const startITutRingPulse = useCallback(() => {
@@ -13121,7 +13137,7 @@ style={[
     if (!activeResult) return;
     hapticSelect?.();
     await Clipboard.setStringAsync(buildShareCardTextV2(activeResult));
-    setSavedToast("Copied");
+    setSavedToast("Copied!");
   }}
   onScanAgain={async () => {
     if (!activeResult?.photoUri || loadingResults) return;

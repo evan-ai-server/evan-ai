@@ -109,21 +109,24 @@ const evidenceStyles = StyleSheet.create({
 });
 
 export function ShareCard({ visible, data, onClose }: ShareCardProps) {
-  const translateY = useSharedValue(500);
-  const opacity    = useSharedValue(0);
+  // Fade-only to prevent overlay bleed/pixelation.
+  // Was translateY 500→0 spring; now a 4-px nudge + opacity so the share
+  // card no longer drags the background up during entry.
+  const nudge   = useSharedValue(4);
+  const opacity = useSharedValue(0);
 
   const cardStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
+    transform: [{ translateY: nudge.value }],
     opacity: opacity.value,
   }));
 
   React.useEffect(() => {
     if (visible) {
-      opacity.value    = withTiming(1, { duration: 200 });
-      translateY.value = withSpring(0, { mass: 0.7, damping: 22, stiffness: 260 });
+      opacity.value = withTiming(1, { duration: 220 });
+      nudge.value   = withTiming(0, { duration: 220 });
     } else {
-      opacity.value    = withTiming(0, { duration: 180 });
-      translateY.value = withSpring(400, { mass: 0.7, damping: 22, stiffness: 280 });
+      opacity.value = withTiming(0, { duration: 180 });
+      nudge.value   = withTiming(4, { duration: 180 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);

@@ -23,6 +23,8 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
+  Easing,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { C, SP, R, TY } from "../design/DS";
@@ -77,16 +79,23 @@ export function NegotiationCoach({ visible, context, apiBase, onClose }: Negotia
   const inputRef = useRef<TextInput>(null);
   const abortRef = useRef<(() => void) | null>(null);
 
-  const translateY = useSharedValue(600);
+  // Fade-only to prevent overlay bleed/pixelation.
+  // Was translateY 600→0 spring; now opacity + 4-px nudge so the dark
+  // background underneath doesn't drag upward during entry.
+  const sheetOpacity = useSharedValue(0);
+  const sheetNudge   = useSharedValue(4);
   const animStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
+    opacity: sheetOpacity.value,
+    transform: [{ translateY: sheetNudge.value }],
   }));
 
   useEffect(() => {
-    translateY.value = visible
-      ? withSpring(0, { mass: 0.8, damping: 22, stiffness: 260 })
-      : withSpring(700, { mass: 0.8, damping: 24, stiffness: 280 });
-    if (!visible) {
+    if (visible) {
+      sheetOpacity.value = withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) });
+      sheetNudge.value   = withTiming(0, { duration: 240, easing: Easing.out(Easing.cubic) });
+    } else {
+      sheetOpacity.value = withTiming(0, { duration: 180 });
+      sheetNudge.value   = withTiming(4, { duration: 180 });
       abortRef.current?.();
       setMessages([]);
       setInput("");

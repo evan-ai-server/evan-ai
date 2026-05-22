@@ -477,8 +477,19 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
   }, []);
 
   // ── Screen transition ──────────────────────────────────────────────────────
+  // Queue any tap that lands during the ~420 ms transition. The prior version
+  // early-returned on isTransitioning which silently dropped the second tap
+  // and produced the "double tap required" UX — the user's tap registered
+  // (setAnswers fired) but the advance was eaten. With the queue, taps fire
+  // immediately at the end of the in-flight transition.
+  const queuedTargetRef = useRef<{ targetIndex: number; dir: "fwd" | "back" } | null>(null);
   const navigateTo = useCallback((targetIndex: number, dir: "fwd" | "back" = "fwd") => {
-    if (isTransitioning.current) return;
+    if (isTransitioning.current) {
+      // Stash only the LATEST tap — earlier queued taps are stale by the
+      // time the transition ends (user could re-tap multiple times).
+      queuedTargetRef.current = { targetIndex, dir };
+      return;
+    }
     isTransitioning.current = true;
 
     const exitX  = dir === "fwd" ? -28 : 28;
@@ -515,6 +526,18 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
           }),
         ]).start(() => {
           isTransitioning.current = false;
+          // Drain any queued navigation that landed during the transition.
+          // Defer by one frame so React commits the final screen state before
+          // we kick off the next transition — otherwise we re-enter
+          // navigateTo with stale isTransitioning=false but the previous
+          // animation's listeners haven't all cleared.
+          const queued = queuedTargetRef.current;
+          if (queued) {
+            queuedTargetRef.current = null;
+            requestAnimationFrame(() => {
+              navigateTo(queued.targetIndex, queued.dir);
+            });
+          }
         });
       });
     });
@@ -544,22 +567,37 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
   }, []);
 
   const handleAnswer = useCallback((question: QuestionDef, optionId: string) => {
-    // Ascending haptic rhythm
-    if (question.hapticLevel === "medium") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    } else {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    }
+    console.log("SURVEY_OPTION_TAP", { key: question.key, optionId, screenIndex: question.screenIndex });
 
-    // Selection always updates immediately — never gated on the timer.
+    // Ascending haptic rhythm. Wrap so a missing haptic permission never
+    // blocks the selection update below — historically the first tap on a
+    // fresh install hit a haptic error and the catch swallowed the
+    // selection write, causing the "double tap to select" symptom.
+    try {
+      if (question.hapticLevel === "medium") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      } else {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      }
+    } catch {}
+
+    // Selection always updates synchronously — never gated on the timer.
+    // setAnswers is a state setter; React schedules the render but the
+    // OptionCard's `selected` prop comparison fires this frame.
     setAnswers(prev => ({ ...prev, [question.key]: optionId }));
+    console.log("SURVEY_OPTION_SELECTED", { key: question.key, optionId });
 
     // Cancel any pending advance and schedule a new one. 220ms is short
     // enough that the user perceives the navigation as immediate, but long
     // enough to see the check land + correct a misclick.
-    if (pendingAdvanceRef.current) clearTimeout(pendingAdvanceRef.current);
+    if (pendingAdvanceRef.current) {
+      clearTimeout(pendingAdvanceRef.current);
+      console.log("SURVEY_ADVANCE_CANCELLED", { reason: "re_tap_within_window" });
+    }
+    console.log("SURVEY_ADVANCE_SCHEDULED", { delayMs: 220, next: question.screenIndex + 1 });
     pendingAdvanceRef.current = setTimeout(() => {
       pendingAdvanceRef.current = null;
+      console.log("SURVEY_ADVANCE_FIRE", { next: question.screenIndex + 1 });
       navigateTo(question.screenIndex + 1, "fwd");
     }, 220);
   }, [navigateTo]);

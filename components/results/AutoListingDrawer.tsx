@@ -62,17 +62,23 @@ export function AutoListingDrawer({ visible, scanContext, apiBase, onClose }: Au
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [shareDrawerOpen, setShareDrawerOpen] = useState(false);
 
-  // ── Slide animation ──────────────────────────────────────────────────────
-  const translateY = useSharedValue(600);
-  const backdropOp = useSharedValue(0);
+  // ── Fade-only to prevent overlay bleed/pixelation.
+  // Replaced the translateY 600→0 slide spring with opacity + a 4-px nudge.
+  // The slide was visibly dragging the dark background upward during entry
+  // — the bleed effect the user flagged across all bottom sheets.
+  const drawerOpacity = useSharedValue(0);
+  const drawerNudge   = useSharedValue(4);
+  const backdropOp    = useSharedValue(0);
 
   useEffect(() => {
     if (visible) {
-      backdropOp.value = withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) });
-      translateY.value = withSpring(0, { damping: 28, stiffness: 260, mass: 1 });
+      backdropOp.value    = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
+      drawerOpacity.value = withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) });
+      drawerNudge.value   = withTiming(0, { duration: 240, easing: Easing.out(Easing.cubic) });
     } else {
-      backdropOp.value = withTiming(0, { duration: 200 });
-      translateY.value = withSpring(600, { damping: 28, stiffness: 260, mass: 1 });
+      backdropOp.value    = withTiming(0, { duration: 180 });
+      drawerOpacity.value = withTiming(0, { duration: 180 });
+      drawerNudge.value   = withTiming(4, { duration: 180 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -93,7 +99,8 @@ export function AutoListingDrawer({ visible, scanContext, apiBase, onClose }: Au
   }, [visible]);
 
   const drawerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
+    opacity: drawerOpacity.value,
+    transform: [{ translateY: drawerNudge.value }],
   }));
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: backdropOp.value,
@@ -168,7 +175,8 @@ export function AutoListingDrawer({ visible, scanContext, apiBase, onClose }: Au
 
   // ─────────────────────────────────────────────────────────────────────────
 
-  if (!visible && translateY.value >= 599) return null;
+  // Unmount once the fade-out finishes so the drawer can't intercept taps invisibly.
+  if (!visible && drawerOpacity.value < 0.02) return null;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents={visible ? "auto" : "none"}>

@@ -189,9 +189,11 @@ export const ResultsContent = React.memo(function ResultsContent({
   const handleBoughtIt = useCallback(() => {
     setAskAIOpen(false);
     setAutoListOpen(false);
-    setConfettiKey(Date.now());
+    const fireKey = Date.now();
+    setConfettiKey(fireKey);
+    console.log("CONFETTI_FIRE", { fireKey, item: activeResult?.itemName || null });
     if (onBoughtIt) onBoughtIt();
-  }, [onBoughtIt]);
+  }, [onBoughtIt, activeResult]);
   const resolvedApiBase = (apiBase
     ?? (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_API_URL))
     || (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
@@ -476,13 +478,40 @@ export const ResultsContent = React.memo(function ResultsContent({
               onAutoList={openAutoList}
               onLowball={onLowball ? openLowballExclusive : undefined}
               onBoughtIt={handleBoughtIt}
+              isTracked={(() => {
+                // Match a watchlist entry on whichever identifier is
+                // available. Avoids the "Track always says Add" bug — the
+                // watchlist sometimes stores `query` (from scan), sometimes
+                // `title` (from manual add); the active result has
+                // visionQuery, itemName, and title. Check all of them.
+                const q  = String(activeResult?.visionQuery || activeResult?.itemName || activeResult?.title || "").trim().toLowerCase();
+                if (!q) return false;
+                return (watchlist || []).some((w: any) => {
+                  const wq = String(w?.query || w?.title || w?.itemName || "").trim().toLowerCase();
+                  return wq === q;
+                });
+              })()}
             />
           ) : null}
 
           {/* Premium confetti burst — fires on Bought It tap.
-              Sits above the dock (zIndex via render order) but pointerEvents
-              none so it never blocks subsequent taps mid-animation. */}
-          <ConfettiBurst fireKey={confettiKey} />
+              Wrapped in an absolutely-positioned View with high zIndex +
+              Android elevation so the particles render ABOVE the dock and
+              the DecisionSheet that opens immediately after. Previously the
+              burst sat in render order under the dock and was visually
+              clipped by the dock's blur layer. pointerEvents="none" so it
+              never blocks taps. */}
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              top: 0, left: 0, right: 0, bottom: 0,
+              zIndex: 9999,
+              elevation: 30,
+            }}
+          >
+            <ConfettiBurst fireKey={confettiKey} />
+          </View>
 
 
           {/* Ask AI slide-up drawer */}

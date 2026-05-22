@@ -210,7 +210,7 @@ export function DecisionSheet({
   return (
     <Modal
       transparent
-      animationType="slide"
+      animationType="fade"
       visible={visible}
       onRequestClose={handleClose}
       presentationStyle="overFullScreen"

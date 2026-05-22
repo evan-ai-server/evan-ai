@@ -160,39 +160,79 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose }: AskAIDra
     setInput("");
     setLoading(true);
     const startedAt = Date.now();
+    const requestBody = { messages: nextMessages, scanContext };
     console.log("ASK_AI_SEND_START", {
       apiBase,
       messageCount: nextMessages.length,
       preview: trimmed.slice(0, 80),
       item: scanContext?.itemName || null,
     });
+    console.log("ASK_AI_SEND_REQUEST_BODY", {
+      url: `${apiBase}/api/ask`,
+      bodyPreview: JSON.stringify(requestBody).slice(0, 280),
+    });
 
     // Scroll to bottom after user message
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+
+    // Multi-field reply extraction. Server canonical shape is {ok, reply},
+    // but we accept several likely alternates so a field-rename on the
+    // backend can't render a blank bubble: reply / answer / message / text
+    // / content / data.{reply,answer,message,text,content}. If none match,
+    // surface the raw keys + status so the user (and logs) see what came
+    // back instead of an empty assistant turn.
+    const extractReply = (j: any): string | null => {
+      if (!j || typeof j !== "object") return null;
+      const candidates = [
+        j.reply, j.answer, j.message, j.text, j.content,
+        j.data?.reply, j.data?.answer, j.data?.message, j.data?.text, j.data?.content,
+        j.choices?.[0]?.message?.content, j.choices?.[0]?.text,
+      ];
+      for (const c of candidates) {
+        if (typeof c === "string" && c.trim()) return c.trim();
+      }
+      return null;
+    };
 
     try {
       const resp = await fetch(`${apiBase}/api/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages, scanContext }),
+        body: JSON.stringify(requestBody),
         signal: AbortSignal.timeout(20000),
       });
-      const json = await resp.json().catch(() => ({} as any));
-      if (!resp.ok || json?.ok === false || !json?.reply) {
-        const errMsg = json?.error || `HTTP ${resp.status}`;
-        console.log("ASK_AI_SEND_ERROR", { apiBase, status: resp.status, error: errMsg, ms: Date.now() - startedAt });
+      console.log("ASK_AI_SEND_HTTP_STATUS", { status: resp.status, ok: resp.ok });
+      const rawText = await resp.text();
+      console.log("ASK_AI_SEND_RAW_RESPONSE", {
+        len: rawText.length,
+        preview: rawText.slice(0, 400),
+      });
+      let json: any = {};
+      try { json = rawText ? JSON.parse(rawText) : {}; } catch { json = { _raw: rawText }; }
+
+      const reply = extractReply(json);
+      if (!resp.ok || json?.ok === false || !reply) {
+        const errMsg =
+          json?.error ||
+          json?.message ||
+          (reply ? null : `No reply field. Server returned keys: ${Object.keys(json || {}).join(", ") || "(none)"}`) ||
+          `HTTP ${resp.status}`;
+        console.log("ASK_AI_SEND_ERROR", { status: resp.status, error: errMsg, ms: Date.now() - startedAt, json });
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", content: `Sorry, I couldn't get a response (${errMsg}). Tap to retry.` },
+          {
+            role: "assistant",
+            content: `I couldn't get a clean response (${errMsg}). Tap the send button to retry, or check your connection.`,
+          },
         ]);
         return;
       }
-      console.log("ASK_AI_SEND_SUCCESS", {
-        apiBase, replyLen: String(json.reply).length, ms: Date.now() - startedAt,
+      console.log("ASK_AI_SEND_PARSED_REPLY", {
+        replyLen: reply.length, preview: reply.slice(0, 120), ms: Date.now() - startedAt,
       });
-      setMessages((prev) => [...prev, { role: "assistant", content: String(json.reply) }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
     } catch (e: any) {
-      console.log("ASK_AI_SEND_ERROR", { apiBase, error: e?.message || String(e), ms: Date.now() - startedAt });
+      console.log("ASK_AI_SEND_ERROR", { error: e?.message || String(e), ms: Date.now() - startedAt });
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: "Network error — check your connection and try again." },

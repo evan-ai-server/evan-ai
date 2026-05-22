@@ -328,20 +328,41 @@ export function CardDeck({
   }, [activeResult]);
 
   const handleSnap = useCallback((idx: number) => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current) {
+      console.log("CARD_SWIPE_BLOCKED", { reason: "unmounted", idx });
+      return;
+    }
     // Clamp again on the JS side — defensive in case the worklet sent us
     // a stale index after `cards` shrank (new scan rebuilt the deck while
     // the spring was still settling).
     const safe = Number.isFinite(idx) ? Math.max(0, Math.min(idx, Math.max(0, cards.length - 1))) : 0;
-    setSnappedIndex(safe);
-    onSnapToIndex?.(safe);
-    snapHaptic();
+    try {
+      console.log("CARD_SWIPE_SNAP", { idx, safe, cardCount: cards.length });
+      setSnappedIndex(safe);
+      onSnapToIndex?.(safe);
+      snapHaptic();
+    } catch (e: any) {
+      console.log("CARD_SWIPE_ERROR", { stage: "snap", error: e?.message || String(e) });
+    }
   }, [onSnapToIndex, cards.length]);
 
   const handleWatchlistSwipe = useCallback(() => {
-    if (!mountedRef.current) return;
-    const card = cards[0]; // always the hero when swiping from index 0
-    if (card) { onToggleWatchlist?.(card); heavyHaptic(); }
+    if (!mountedRef.current) {
+      console.log("CARD_SWIPE_BLOCKED", { reason: "unmounted_watchlist" });
+      return;
+    }
+    try {
+      const card = cards[0]; // always the hero when swiping from index 0
+      if (card) {
+        console.log("CARD_SWIPE_END", { action: "watchlist_add", title: card?.itemName || card?.title || null });
+        onToggleWatchlist?.(card);
+        heavyHaptic();
+      } else {
+        console.log("CARD_SWIPE_BLOCKED", { reason: "no_hero_card" });
+      }
+    } catch (e: any) {
+      console.log("CARD_SWIPE_ERROR", { stage: "watchlist", error: e?.message || String(e) });
+    }
   }, [cards, onToggleWatchlist]);
 
   // Single-card / empty-deck short-circuit: don't construct a pan gesture that
@@ -351,6 +372,33 @@ export function CardDeck({
   // target Math.round(NaN) → undefined-behavior). Returning an empty gesture
   // also avoids holding a stale closure over cards[] if the deck rebuilds.
   const maxIndex = Math.max(0, cardCount - 1);
+
+  // JS-side helpers driven by runOnJS — each wraps its work in try/catch so a
+  // single exception inside the worklet→JS hop can never bubble back into
+  // the gesture handler and tear the app down. Logs route through here so we
+  // see the gesture lifecycle in production diagnostics.
+  const onSwipeBegin = useCallback((startIdx: number) => {
+    if (!mountedRef.current) return;
+    try { console.log("CARD_SWIPE_BEGIN", { startIdx, cardCount, maxIndex }); } catch {}
+  }, [cardCount, maxIndex]);
+
+  const onSwipeUpdateInvalid = useCallback((reason: string) => {
+    if (!mountedRef.current) return;
+    try { console.log("CARD_SWIPE_UPDATE_INVALID", { reason, cardCount }); } catch {}
+  }, [cardCount]);
+
+  const onSwipeEnd = useCallback((target: number, velocityX: number, translationX: number) => {
+    if (!mountedRef.current) return;
+    try {
+      console.log("CARD_SWIPE_END", {
+        target,
+        velocityX: Math.round(velocityX),
+        translationX: Math.round(translationX),
+        cardCount,
+      });
+    } catch {}
+  }, [cardCount]);
+
   const pan = Gesture.Pan()
     .enabled(cardCount > 1)
     .activeOffsetX([-10, 10])
@@ -358,20 +406,35 @@ export function CardDeck({
     .onBegin(() => {
       'worklet';
       startIndex.value = activeIndex.value;
+      runOnJS(onSwipeBegin)(startIndex.value);
     })
     .onUpdate((e) => {
       'worklet';
-      if (maxIndex <= 0) return;
+      if (maxIndex <= 0) {
+        runOnJS(onSwipeUpdateInvalid)("maxIndex_zero");
+        return;
+      }
       const slot = CARD.slotWidth || 1;
       const delta = -e.translationX / slot;
       const next = startIndex.value + delta;
       // Guard against NaN/Infinity propagating into the spring target below.
-      if (!Number.isFinite(next)) return;
+      if (!Number.isFinite(next)) {
+        runOnJS(onSwipeUpdateInvalid)("non_finite_next");
+        return;
+      }
       activeIndex.value = clampVal(next, 0, maxIndex);
     })
     .onEnd((e) => {
       'worklet';
-      if (maxIndex <= 0) return;
+      // If the deck shrank to ≤1 card mid-gesture (active result cleared
+      // by a parallel new-scan), don't fire withSpring — snap activeIndex
+      // back to 0 directly so we can't drive the spring with a stale upper
+      // bound. JS-side handleSnap also re-clamps for double safety.
+      if (maxIndex <= 0) {
+        activeIndex.value = 0;
+        runOnJS(handleSnap)(0);
+        return;
+      }
       // Long-swipe RIGHT on first card → add to watchlist
       if (
         startIndex.value < 0.1 &&
@@ -379,6 +442,7 @@ export function CardDeck({
       ) {
         activeIndex.value = withSpring(0, MO.spring.card);
         runOnJS(handleWatchlistSwipe)();
+        runOnJS(onSwipeEnd)(0, e.velocityX, e.translationX);
         return;
       }
 
@@ -388,8 +452,15 @@ export function CardDeck({
       // Belt-and-suspenders: clamp BEFORE rounding so Math.round can't see NaN.
       const clamped = clampVal(Number.isFinite(raw) ? raw : 0, 0, maxIndex);
       const target  = Math.round(clamped);
-      activeIndex.value = withSpring(target, MO.spring.card);
-      runOnJS(handleSnap)(target);
+      // Final integer-bounds check — Math.round on Infinity yields Infinity
+      // which then sneaks into the array reads downstream. With clamped
+      // first and finite test second, we get a real array index every time.
+      const safeTarget = Number.isFinite(target) && target >= 0 && target <= maxIndex
+        ? target
+        : 0;
+      activeIndex.value = withSpring(safeTarget, MO.spring.card);
+      runOnJS(handleSnap)(safeTarget);
+      runOnJS(onSwipeEnd)(safeTarget, e.velocityX, e.translationX);
     });
 
   const handleCardPress = useCallback((idx: number) => {

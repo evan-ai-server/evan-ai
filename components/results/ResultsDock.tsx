@@ -44,6 +44,13 @@ interface ResultsDockProps {
    * If omitted, falls back to the local DecisionSheet without confetti.
    */
   onBoughtIt?: () => void;
+  /**
+   * Whether the active result is currently in the watchlist. Drives the
+   * Track chip's visual state (warm gold tint when tracked, neutral grey
+   * when untracked). Toggling visibility is owned by the parent via
+   * onTrack — the dock just renders the state.
+   */
+  isTracked?: boolean;
 }
 
 export function ResultsDock({
@@ -62,6 +69,7 @@ export function ResultsDock({
   onAutoList,
   onLowball,
   onBoughtIt,
+  isTracked,
 }: ResultsDockProps) {
   const insets = useSafeAreaInsets();
   const [decisionOpen, setDecisionOpen] = useState(false);
@@ -196,7 +204,12 @@ export function ResultsDock({
         {onAutoList ? (
           <ActionChip icon="document-text-outline" label="List it" onPress={onAutoList} highlight />
         ) : null}
-        <ActionChip icon="bookmark-outline" label="Track" onPress={onTrack} />
+        <ActionChip
+          icon={isTracked ? "bookmark" : "bookmark-outline"}
+          label={isTracked ? "Tracking" : "Track"}
+          onPress={onTrack}
+          tracked={isTracked}
+        />
         <ActionChip icon="copy-outline"     label="Copy"    onPress={onCopy} />
         {onScanAgain ? (
           <ActionChip icon="refresh-outline"  label="Rescan"  onPress={onScanAgain} />
@@ -230,22 +243,40 @@ function ActionChip({
   label,
   onPress,
   highlight,
+  tracked,
 }: {
   icon: string;
   label: string;
   onPress?: () => void;
   highlight?: boolean;
+  /** Warm gold tracked state — distinct from highlight so the Track chip
+   *  reads as a toggle, not a CTA. Tracked > highlight visually. */
+  tracked?: boolean;
 }) {
+  // tracked takes precedence over highlight to avoid the Track chip ever
+  // showing the white-tinted "premium CTA" look while it's already on.
+  const iconColor =
+    tracked   ? "rgba(255,205,90,0.95)" :
+    highlight ? "rgba(255,255,255,0.9)" :
+    C.text2;
   return (
     <PressableScale
       onPress={onPress}
-      style={[styles.chip, highlight && styles.chipHighlight]}
+      style={[
+        styles.chip,
+        highlight && !tracked && styles.chipHighlight,
+        tracked && styles.chipTracked,
+      ]}
       scale={0.94}
       haptic
     >
-      <Ionicons name={icon as any} size={15} color={highlight ? "rgba(255,255,255,0.9)" : C.text2} />
+      <Ionicons name={icon as any} size={15} color={iconColor} />
       <Text
-        style={[styles.chipText, highlight && styles.chipTextHighlight]}
+        style={[
+          styles.chipText,
+          highlight && !tracked && styles.chipTextHighlight,
+          tracked && styles.chipTextTracked,
+        ]}
         allowFontScaling={false}
         numberOfLines={1}
       >
@@ -338,9 +369,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 
-  // Secondary chip grid — wraps cleanly across 2–3 rows on phones.
-  // Each chip claims ~28% of the row width so 3 fit per line with the gap.
-  // minWidth keeps the chips visually equal even when labels are 4–8 chars.
+  // Premium 2-column grid — every chip is exactly half-width minus the gap,
+  // every chip is the same height, every chip aligns to a clean grid line.
+  // The prior flex-basis-28% / flexGrow-1 layout produced a cramped 3-up
+  // row that resized chips based on label length (Bought it wider than
+  // Copy, etc.) — looked chaotic. With flexBasis "48%" the two columns are
+  // identical and the rows stack cleanly.
   secondaryRow: {
     flexDirection: "row",
     gap: SP.sm,
@@ -351,16 +385,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 5,
+    gap: 6,
+    height: 44,
     paddingHorizontal: SP.md,
-    paddingVertical: 10,
     borderRadius: R.md,
     backgroundColor: C.s1,
     borderWidth: 1,
     borderColor: C.border,
-    minWidth: 96,
-    flexGrow: 1,
-    flexBasis: "28%",
+    flexBasis: "48%",
+    flexGrow: 0,
   },
   chipText: {
     ...TY.label,
@@ -375,5 +408,14 @@ const styles = StyleSheet.create({
   chipTextHighlight: {
     color: "rgba(255,255,255,0.92)",
     fontWeight: "700" as const,
+  },
+  // Warm gold tracked state — premium toggle look, distinct from white CTA.
+  chipTracked: {
+    backgroundColor: "rgba(255,205,90,0.12)",
+    borderColor: "rgba(255,205,90,0.45)",
+  },
+  chipTextTracked: {
+    color: "rgba(255,225,150,0.95)",
+    fontWeight: "800" as const,
   },
 });
