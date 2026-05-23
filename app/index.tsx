@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useEffect, useRef, useState } from "react"
 import { sanitizeHint, sanitizePropContext, devLog, devWarn } from "../lib/security";
 import { SubscriptionModal } from "../components/subscription/SubscriptionModal";
 import { ResultsContent } from "../components/results/ResultsContent";
+import { ConfettiBurst } from "../components/results/ConfettiBurst";
 import {
   useNetworkStatus,
   useOfflineQueue,
@@ -3609,6 +3610,10 @@ useEffect(() => {
 const [_enrich, _setEnrich] = useState(null);
   // Active result
  const [profitCalcOpen, setProfitCalcOpen] = useState(false);
+ // Confetti burst trigger. Lives at the tab-root so it can render OUTSIDE
+ // the results ScrollView and stay screen-anchored without a Modal. Set
+ // to Date.now() to fire a fresh burst; 0 = idle.
+ const [confettiKey, setConfettiKey] = useState(0);
  // Feature 5: hyperlocal pricing — user's zip code
  const [zipCode, setZipCode] = useState<string>("");
  // Feature 11: Deep auth scan result (lazy, fires after scan result loads)
@@ -13258,6 +13263,7 @@ style={[
   onOrbPress={handleOrbPress}
   isNet={netProfitEnabled}
   onLowball={openLowball}
+  onBoughtIt={() => setConfettiKey(Date.now())}
 />
 
 {/* "More details" toggle — collapses every secondary panel under one tap. */}
@@ -13695,6 +13701,25 @@ style={[
 
 </ScrollView>
 </SafeAreaView>
+
+{/* CONFETTI — sibling of SafeAreaView, screen-anchored.
+    pointerEvents="none" at every wrapper level + inside ConfettiBurst's
+    own root + on every particle. Replaces the previous Modal mount that
+    captured touches on iOS and froze the dock for the burst's ~3.8s
+    lifetime. Verified by CONFETTI_POINTER_SAFE log. */}
+<View
+  pointerEvents="none"
+  style={{
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 999,
+  }}
+>
+  <ConfettiBurst fireKey={confettiKey} />
+</View>
 </RNAnimated.View>
 
 

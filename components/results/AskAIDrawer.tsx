@@ -272,24 +272,40 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
     // Anthropic Messages (content[0].text). If nothing extracts cleanly we
     // surface the raw keys + status so the user (and logs) see what came
     // back instead of an empty assistant turn.
+    // Reply extractor — every documented shape from every provider we (or
+    // any future middleware) might route through. Order matches likelihood:
+    // server's canonical {reply} first, then alias keys, then OpenAI Chat,
+    // OpenAI Responses, Anthropic Messages, and a final defensive sweep
+    // for `response/result/completion` keys some proxies wrap.
     const extractReply = (j: any): { text: string | null; source: string } => {
       if (!j || typeof j !== "object") return { text: null, source: "non_object" };
       const candidates: { value: any; src: string }[] = [
-        { value: j.reply,                              src: "reply" },
-        { value: j.answer,                             src: "answer" },
-        { value: j.message,                            src: "message" },
-        { value: j.text,                               src: "text" },
-        { value: j.content,                            src: "content" },
-        { value: j.data?.reply,                        src: "data.reply" },
-        { value: j.data?.answer,                       src: "data.answer" },
-        { value: j.data?.message,                      src: "data.message" },
-        { value: j.data?.text,                         src: "data.text" },
-        { value: j.data?.content,                      src: "data.content" },
-        { value: j.choices?.[0]?.message?.content,     src: "choices[0].message.content" },
-        { value: j.choices?.[0]?.text,                 src: "choices[0].text" },
-        { value: j.output_text,                        src: "output_text" },
-        { value: j.output?.[0]?.content?.[0]?.text,    src: "output[0].content[0].text" },
-        { value: Array.isArray(j.content) ? j.content?.[0]?.text : null, src: "content[0].text" },
+        // Server canonical
+        { value: j.reply,                                              src: "reply" },
+        { value: j.answer,                                             src: "answer" },
+        { value: j.message,                                            src: "message" },
+        { value: j.text,                                               src: "text" },
+        { value: j.content,                                            src: "content" },
+        // data.* wrappers
+        { value: j.data?.reply,                                        src: "data.reply" },
+        { value: j.data?.answer,                                       src: "data.answer" },
+        { value: j.data?.message,                                      src: "data.message" },
+        { value: j.data?.text,                                         src: "data.text" },
+        { value: j.data?.content,                                      src: "data.content" },
+        // Proxy / middleware wrappers
+        { value: j.response,                                           src: "response" },
+        { value: j.result,                                             src: "result" },
+        { value: j.completion,                                         src: "completion" },
+        // OpenAI Chat Completions
+        { value: j.choices?.[0]?.message?.content,                     src: "choices[0].message.content" },
+        { value: j.choices?.[0]?.text,                                 src: "choices[0].text" },
+        // OpenAI Responses API
+        { value: j.output_text,                                        src: "output_text" },
+        { value: j.output?.[0]?.content?.[0]?.text,                    src: "output[0].content[0].text" },
+        { value: j.output?.[0]?.content?.[0]?.content,                 src: "output[0].content[0].content" },
+        // Anthropic Messages
+        { value: Array.isArray(j.content) ? j.content?.[0]?.text    : null, src: "content[0].text" },
+        { value: Array.isArray(j.content) ? j.content?.[0]?.content : null, src: "content[0].content" },
       ];
       for (const c of candidates) {
         if (typeof c.value === "string" && c.value.trim()) {
@@ -308,44 +324,66 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
       });
       console.log("ASK_AI_SEND_HTTP_STATUS", { status: resp.status, ok: resp.ok });
       const rawText = await resp.text();
+      // Spec-required raw log — before JSON.parse so we see exactly what
+      // came over the wire even when the body isn't valid JSON. 500-char
+      // preview matches the error-bubble truncation below so log + UI
+      // stay in lockstep.
+      console.log("ASK_AI_RAW_RESPONSE_TEXT", {
+        status: resp.status, len: rawText.length, preview: rawText.slice(0, 500),
+      });
       console.log("ASK_AI_SEND_RAW_RESPONSE", {
-        len: rawText.length,
-        preview: rawText.slice(0, 400),
+        len: rawText.length, preview: rawText.slice(0, 400),
       });
       let json: any = {};
-      try { json = rawText ? JSON.parse(rawText) : {}; } catch { json = { _raw: rawText }; }
+      let parseError: string | null = null;
+      try { json = rawText ? JSON.parse(rawText) : {}; }
+      catch (e: any) { parseError = e?.message || "parse_error"; json = { _raw: rawText }; }
+      const parsedKeys = json && typeof json === "object" ? Object.keys(json) : [];
+      console.log("ASK_AI_PARSED_KEYS", { keys: parsedKeys, parseError });
 
       const { text: reply, source: replySource } = extractReply(json);
-      if (!resp.ok || json?.ok === false || !reply) {
+      // Trimmed-length check matches the render-time gate so we never
+      // accept whitespace-only content into the message array.
+      const replyTrimmed = typeof reply === "string" ? reply.trim() : "";
+      if (!resp.ok || json?.ok === false || replyTrimmed.length === 0) {
         console.log("ASK_AI_EXTRACT_REPLY_EMPTY", {
           status: resp.status,
-          keys: Object.keys(json || {}),
+          keys: parsedKeys,
           replySource,
+          rawPreview: rawText.slice(0, 500),
+          parseError,
         });
         const errMsg =
           json?.error ||
           json?.message ||
-          (reply ? null : `No reply field. Server returned keys: ${Object.keys(json || {}).join(", ") || "(none)"}`) ||
+          parseError ||
+          (replyTrimmed
+            ? null
+            : `No reply field. Server keys: ${parsedKeys.join(", ") || "(none)"}`) ||
           `HTTP ${resp.status}`;
-        console.log("ASK_AI_SEND_ERROR", { status: resp.status, error: errMsg, ms: Date.now() - startedAt, json });
-        // Never append an empty assistant bubble. Show a visible error
-        // message instead so the user knows the turn failed and can retry.
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `I couldn't generate an answer for this item (${errMsg}). Tap send to retry.`,
-          },
-        ]);
+        console.log("ASK_AI_SEND_ERROR", { status: resp.status, error: errMsg, ms: Date.now() - startedAt });
+        // Visible error bubble — surfaces the actual parsed keys + raw
+        // preview so a backend rename gets diagnosed in-product instead
+        // of from logs. Always non-empty so the render-time fallback
+        // never has to fire.
+        const errBody = [
+          `I couldn't read a reply from the server.`,
+          `Error: ${errMsg}`,
+          parsedKeys.length ? `Keys: ${parsedKeys.join(", ")}` : null,
+          rawText ? `Raw: ${rawText.slice(0, 500)}` : null,
+        ].filter(Boolean).join("\n");
+        setMessages((prev) => [...prev, { role: "assistant", content: errBody }]);
         return;
       }
       console.log("ASK_AI_EXTRACT_REPLY_SUCCESS", {
-        replySource, replyLen: reply.length, preview: reply.slice(0, 120),
+        replySource, replyLen: replyTrimmed.length, preview: replyTrimmed.slice(0, 120),
       });
       console.log("ASK_AI_SEND_PARSED_REPLY", {
-        replyLen: reply.length, preview: reply.slice(0, 120), ms: Date.now() - startedAt,
+        replyLen: replyTrimmed.length, preview: replyTrimmed.slice(0, 120), ms: Date.now() - startedAt,
       });
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      // Final guard — never push an empty assistant turn.
+      if (replyTrimmed.length === 0) return;
+      setMessages((prev) => [...prev, { role: "assistant", content: replyTrimmed }]);
     } catch (e: any) {
       console.log("ASK_AI_SEND_ERROR", { error: e?.message || String(e), ms: Date.now() - startedAt });
       setMessages((prev) => [
@@ -538,11 +576,18 @@ const styles = StyleSheet.create({
     alignItems: "stretch",
     paddingHorizontal: SP.lg,
   },
+  // Drawer sizes to its children — header (≈64px) + bounded message list
+  // (maxHeight 320px, scrolls past that) + input row (≈64px). Hard pixel
+  // cap of 520 means it never expands into the safe-area / dynamic-island
+  // even on long conversations; the prior `maxHeight: "78%"` + `flex:1`
+  // on the message list combined to force the drawer to fill 78% of the
+  // available KAV space regardless of how little content was inside, which
+  // is what produced the "panel pinned to the top of the screen" bug in
+  // the field screenshots.
   drawer: {
     borderRadius: R.xxl,
     overflow: "hidden",
-    maxHeight: "78%",
-    minHeight: 320,
+    maxHeight: 520,
     backgroundColor: "rgba(10,10,10,0.96)",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.12)",
@@ -618,9 +663,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  // Messages
+  // Messages — bounded scroll area instead of flex:1. With flex:1 the
+  // ScrollView demanded all available drawer space, which forced the
+  // drawer's `maxHeight: 78%` to actually materialize even when only the
+  // suggested-questions strip was on screen. Hard 320px cap means the
+  // panel stays compact when empty and only grows the visible chat
+  // window once messages exist.
   messageList: {
-    flex: 1,
+    maxHeight: 320,
   },
   messageContent: {
     padding: SP.lg,

@@ -192,13 +192,13 @@ export const MO = {
 } as const;
 
 // ─── CARD DIMENSIONS ─────────────────────────────────────────────────────────
-// PEEK: amount of the neighboring card visible on screen edge.
-// Bumped 28 → 38 to give the next-card preview a real, deliberate sliver
-// (~24 px visible on each side after subtracting the gap). The previous
-// 28-margin / 14-gap left only 14 px peeking — small enough that the deck
-// read as a single static card instead of a premium stack. The wider margin
-// trades ~20 px of active-card width for an unmistakable carousel signal.
-const CARD_SIDE_MARGIN = 38;   // horizontal margin for active card (each side)
+// PEEK = CARD_SIDE_MARGIN - CARD_GAP, i.e. the strip of the neighbouring
+// card visible on each side of the active card. TestFlight spec calls for
+// 28–36 px; 44 - 14 = 30 px lands cleanly inside the range. Combined with
+// the new ScrollView paging (no scale shrink on side cards), the next
+// card now reads as a deliberate, full-size slice rather than a faint
+// ghost.
+const CARD_SIDE_MARGIN = 44;   // horizontal margin for active card (each side)
 const CARD_GAP = 14;           // gap between cards
 
 export const CARD = {

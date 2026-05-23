@@ -34,7 +34,6 @@ import { ResultsDock } from "./ResultsDock";
 import { AskAIDrawer, ScanContext } from "./AskAIDrawer";
 import { AutoListingDrawer } from "./AutoListingDrawer";
 import { OfflineBanner } from "./OfflineBanner";
-import { ConfettiBurst } from "./ConfettiBurst";
 import { C, SP, R, TY, fmtMoney, EASE_PANTHERE, SINGULARITY } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
 
@@ -166,8 +165,12 @@ export const ResultsContent = React.memo(function ResultsContent({
   const [askAIOpen, setAskAIOpen] = useState(false);
   // Auto-Listing drawer
   const [autoListOpen, setAutoListOpen] = useState(false);
-  // Confetti burst trigger (epoch ms; 0 = idle, set to Date.now() to fire once).
-  const [confettiKey, setConfettiKey] = useState(0);
+  // Confetti burst trigger is OWNED BY THE PARENT (index.tsx tab root).
+  // ConfettiBurst was previously rendered here inside the ScrollView, which
+  // forced it into a transparent Modal to escape scroll offset; the Modal
+  // captured touches on iOS and froze the dock for the burst's ~3.8s life.
+  // It now lives one level above the ScrollView so it can be a plain
+  // absolute layer with pointerEvents="none" and no Modal at all.
 
   // ── Single-focus rule ──────────────────────────────────────────────────────
   // Only one drawer/sheet may be open at a time. Opening a new one closes the
@@ -190,9 +193,9 @@ export const ResultsContent = React.memo(function ResultsContent({
   const handleBoughtIt = useCallback(() => {
     setAskAIOpen(false);
     setAutoListOpen(false);
-    const fireKey = Date.now();
-    setConfettiKey(fireKey);
-    console.log("CONFETTI_FIRE", { fireKey, item: activeResult?.itemName || null });
+    console.log("CONFETTI_FIRE", { item: activeResult?.itemName || null });
+    // Parent owns the burst mount; we just signal intent. If the parent
+    // didn't wire a confetti hook, fall back to legacy onBoughtIt only.
     if (onBoughtIt) onBoughtIt();
   }, [onBoughtIt, activeResult]);
   const resolvedApiBase = (apiBase
@@ -462,14 +465,10 @@ export const ResultsContent = React.memo(function ResultsContent({
             />
           ) : null}
 
-          {/* Premium confetti burst — fires on Bought It tap.
-              ConfettiBurst now mounts itself in a transparent Modal so it
-              renders at the device root, screen-anchored, and immune to
-              the parent ScrollView's scroll offset. Previously the burst
-              was an absolute layer inside the scrollable resultsWrap, so
-              when the user was scrolled near the dock the upper-third
-              origin landed off-screen above the viewport. */}
-          <ConfettiBurst fireKey={confettiKey} />
+          {/* Confetti is mounted ONE LEVEL UP (index.tsx tab root) as a
+              sibling of the ScrollView with pointerEvents="none" at every
+              wrapper, so it never blocks dock/card interaction. See
+              CONFETTI_POINTER_SAFE log for verification. */}
 
 
           {/* Ask AI centered drawer — scoped per-scan */}
