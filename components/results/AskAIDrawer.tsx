@@ -556,6 +556,9 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
       });
       // Final guard — never push an empty assistant turn.
       if (replyTrimmed.length === 0) return;
+      console.log("ASK_AI_APPEND_ASSISTANT", {
+        replyLen: replyTrimmed.length, preview: replyTrimmed.slice(0, 120),
+      });
       setMessages((prev) => [...prev, { role: "assistant", content: replyTrimmed }]);
     } catch (e: any) {
       console.log("ASK_AI_SEND_ERROR", { error: e?.message || String(e), ms: Date.now() - startedAt });
@@ -583,31 +586,25 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       </Animated.View>
 
-      {/* Centered floating panel. KeyboardAvoidingView with behavior="padding"
-          shrinks the available space from below when the keyboard appears.
-          When the keyboard is DOWN we center the panel in the full viewport
-          (premium "fixed centered modal" read). When the keyboard is UP we
-          pin the panel to the bottom of the padded area so the input row
-          sits directly above the keyboard — no dead-space gap between
-          input and keys, which was the alignment complaint. The switch is
-          a single style change synchronized with the KAV's own padding
-          animation, so the panel travels up smoothly with the keyboard
-          instead of teleporting. */}
+      {/* Floating panel pinned to flex-end ALWAYS. The KAV's behavior="padding"
+          smoothly raises the panel as the keyboard slides up — no
+          justifyContent switch, no teleport. When the keyboard is down we
+          add a safe-area inset gap so the panel sits comfortably above the
+          home indicator instead of slamming the screen bottom. When the
+          keyboard is up that gap collapses to a small breathing margin so
+          the input row sits directly above the keys (the alignment ask).
+          Single style mode = no jumping panel regardless of focus state. */}
       <KeyboardAvoidingView
         style={[
           styles.kavWrap,
-          { justifyContent: kbVisible ? "flex-end" : "center" },
-          // Tiny breathing space above the keyboard so the input's drop
-          // shadow / border isn't visually fused with the keyboard's top
-          // edge. Skipped when no keyboard (bottom-center already comfy).
-          kbVisible ? { paddingBottom: SP.sm } : null,
+          {
+            justifyContent: "flex-end",
+            paddingBottom: kbVisible ? SP.sm : Math.max(insets.bottom, SP.xl),
+          },
         ]}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         // The KAV fills the entire window (parent is StyleSheet.absoluteFill)
-        // so its top edge IS the device top — no offset needed. The earlier
-        // insets.top offset over-corrected and pushed the centered panel
-        // up too far when the keyboard opened, which read as a "drawer
-        // jumps" jitter the moment the input focused.
+        // so its top edge IS the device top — no offset needed.
         keyboardVerticalOffset={0}
         pointerEvents="box-none"
       >
@@ -663,15 +660,45 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
 
             {/* Message bubbles. Primer (when present) renders here as the
                 first assistant turn, then any real user/assistant turns.
-                Belt-and-suspenders: even though every code path that
-                mutates `messages` already refuses to push an empty assistant
-                turn, render-time still falls back to a visible retry string
-                if a legacy persisted message somehow slipped in with
-                whitespace-only content. The user must never see a stub. */}
+                The assistant bubble has its own background + padding (just
+                like the user bubble) and renders text directly with no
+                inner flex:1 row — the previous dot+text avatar row had
+                `<Text flex:1>` inside a content-sized parent, which
+                collapses to 0 width and was the cause of the "blank dot
+                only" bubbles in the field screenshots. The dot now only
+                lives in the loading bubble below.
+
+                Render-time fallback string is preserved: if a legacy
+                persisted message somehow slipped through with empty
+                content, we surface a visible retry message instead of
+                an invisible/dot-only bubble. */}
+            {(() => {
+              try {
+                const roles = messages.map((m) => (m && m.role === "user" ? "u" : "a")).join("");
+                const emptyAssistantCount = messages.reduce(
+                  (n, m) =>
+                    n +
+                    (m && m.role === "assistant" && (typeof m.content !== "string" || !m.content.trim()) ? 1 : 0),
+                  0,
+                );
+                console.log("ASK_AI_RENDER_MESSAGES", {
+                  count: messages.length,
+                  roles,
+                  emptyAssistantCount,
+                  loading,
+                  hydrating,
+                });
+              } catch {}
+              return null;
+            })()}
             {messages.map((m, i) => {
               const txt = typeof m.content === "string" ? m.content.trim() : "";
               if (m.role === "assistant") {
-                const display = txt || "I couldn't generate an answer for this item. Tap send to retry.";
+                // Never render a dot-only / empty assistant row. If the
+                // content somehow ended up empty (legacy persisted message,
+                // unexpected payload shape), show a real fallback string so
+                // the user can retry — never a silent ghost bubble.
+                const display = txt || "I couldn't read a reply. Tap send to retry.";
                 // Primer detection — the first assistant turn before any
                 // user reply gets a subtly elevated container (intel-card
                 // styling). It's still an AI bubble, just visually marked
@@ -685,31 +712,33 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
                     style={[
                       styles.bubble,
                       styles.bubbleAI,
-                      isPrimer && styles.bubblePrimer,
+                      isPrimer ? styles.bubblePrimer : null,
                     ]}
                   >
-                    <View style={styles.aiAvatarRow}>
-                      <View style={styles.aiDot} />
-                      <Text style={[styles.bubbleTextAI, isPrimer && styles.bubblePrimerText]}>{display}</Text>
-                    </View>
+                    <Text
+                      style={[styles.bubbleTextAI, isPrimer && styles.bubblePrimerText]}
+                      allowFontScaling={false}
+                    >
+                      {display}
+                    </Text>
                   </View>
                 );
               }
               if (!txt) return null;
               return (
                 <View key={i} style={[styles.bubble, styles.bubbleUser]}>
-                  <Text style={styles.bubbleTextUser}>{txt}</Text>
+                  <Text style={styles.bubbleTextUser} allowFontScaling={false}>{txt}</Text>
                 </View>
               );
             })}
 
-            {/* Loading indicator */}
+            {/* Loading indicator — the ONLY place the dot/spinner appears.
+                Once a real assistant reply lands, this unmounts and the
+                actual text bubble takes its place. Never persists. */}
             {loading ? (
-              <View style={[styles.bubble, styles.bubbleAI]}>
-                <View style={styles.aiAvatarRow}>
-                  <View style={styles.aiDot} />
-                  <ActivityIndicator size="small" color={C.text3} />
-                </View>
+              <View style={[styles.bubble, styles.bubbleAI, styles.bubbleLoading]}>
+                <ActivityIndicator size="small" color={C.text3} />
+                <Text style={styles.loadingText} allowFontScaling={false}>Thinking…</Text>
               </View>
             ) : null}
 
@@ -997,40 +1026,52 @@ const styles = StyleSheet.create({
     paddingHorizontal: SP.md,
     paddingVertical: SP.sm + 2,
   },
+  // AI bubble — now a real visible card with its own background + padding.
+  // Previously this was just `alignSelf: flex-start` with an inner flex:1
+  // text row, which collapsed to 0 width inside a content-sized parent
+  // and produced the "blank dot only" assistant bubbles seen in the field
+  // screenshots. Same shape as the user bubble, mirrored to the left.
   bubbleAI: {
     alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.10)",
+    borderRadius: R.lg,
+    borderBottomLeftRadius: R.xs,
+    paddingHorizontal: SP.md,
+    paddingVertical: SP.sm + 2,
+  },
+  // Loading bubble — spinner + "Thinking…" label. Inline row so the
+  // typography stays compact and reads as a momentary status, not a
+  // missing message.
+  bubbleLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SP.sm,
+  },
+  loadingText: {
+    ...TY.label,
+    color: C.text3,
+    fontSize: 12,
+    fontWeight: "600" as const,
+    letterSpacing: 0.2,
   },
   // Primer (pre-seeded intel) — first assistant turn before any user reply.
   // Subtle elevated container so the opening intel reads as "the model has
   // already done the work" rather than a normal chat reply. Slim border,
   // very low-alpha green wash to inherit the resale-terminal brand tone.
+  // Overrides the bubbleAI background/border so the primer reads distinctly.
   bubblePrimer: {
     alignSelf: "stretch",
     maxWidth: "100%",
-    backgroundColor: "rgba(80,220,150,0.04)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(80,220,150,0.14)",
-    borderRadius: R.lg,
-    paddingHorizontal: SP.md,
-    paddingVertical: SP.sm + 2,
+    backgroundColor: "rgba(80,220,150,0.06)",
+    borderColor: "rgba(80,220,150,0.18)",
+    borderBottomLeftRadius: R.lg,
   },
   bubblePrimerText: {
     color: C.text2,
     lineHeight: 20,
     letterSpacing: 0.1,
-  },
-  aiAvatarRow: {
-    flexDirection: "row",
-    gap: SP.sm,
-    alignItems: "flex-start",
-  },
-  aiDot: {
-    width: 6,
-    height: 6,
-    borderRadius: R.pill,
-    backgroundColor: "rgba(255,255,255,0.45)",
-    marginTop: 5,
-    flexShrink: 0,
   },
   bubbleTextUser: {
     ...TY.body,
@@ -1043,7 +1084,6 @@ const styles = StyleSheet.create({
     color: C.text2,
     fontSize: 14,
     lineHeight: 21,
-    flex: 1,
   },
 
   // Input

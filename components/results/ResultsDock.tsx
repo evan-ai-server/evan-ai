@@ -130,8 +130,24 @@ export function ResultsDock({
       shouldRasterizeIOS={!IS_ANDROID}
       needsOffscreenAlphaCompositing={IS_ANDROID}
     >
-      <BlurView intensity={72} tint="dark" style={StyleSheet.absoluteFillObject} />
+      <BlurView intensity={68} tint="dark" style={StyleSheet.absoluteFillObject} />
+      {/* Top-fade ladder — 3 stacked low-alpha bands that ramp from nearly
+          transparent to the dock's main opaque fill. The dock visually
+          EMERGES from the surrounding darkness instead of slamming in as a
+          rectangle, killing the "settings panel" silhouette the user
+          flagged. Combined with the reduced DOCK_SAFE_HEIGHT this also
+          makes the active card's bottom curve appear to dissolve into the
+          dock rather than float above a black void. Three flat Views are
+          cheaper than a LinearGradient and don't require expo-linear-
+          gradient on Android. */}
+      <View style={styles.dockFadeTop1} pointerEvents="none" />
+      <View style={styles.dockFadeTop2} pointerEvents="none" />
+      <View style={styles.dockFadeTop3} pointerEvents="none" />
       <View style={styles.dockOverlay} />
+      {/* 1px inner highlight just below the fade ladder — sits where the
+          opaque dock fill starts. Reads as a soft ambient light catching
+          the "real" top edge of the controls instead of an outlined panel. */}
+      <View style={styles.dockTopHighlight} pointerEvents="none" />
 
       {/* Intelligence strip */}
       {(hasSaved || price != null) ? (
@@ -193,7 +209,6 @@ export function ResultsDock({
         <ActionChip
           icon="bag-check-outline"
           label="Bought"
-          highlight
           onPress={() => {
             // Confetti is parent-owned (it overlays the entire results screen
             // via a screen-anchored Modal); the dock just signals the intent.
@@ -259,12 +274,16 @@ function ActionChip({
    *  reads as a toggle, not a CTA. Tracked > highlight visually. */
   tracked?: boolean;
 }) {
-  // tracked takes precedence over highlight to avoid the Track chip ever
-  // showing the white-tinted "premium CTA" look while it's already on.
+  // Visual hierarchy: tracked (gold toggle) > highlight (secondary CTA, e.g.
+  // Ask AI) > default (tertiary tools — Bought, Track, Copy, Rescan, etc.).
+  // Tertiary icon/text both dim further than the prior pass so the eye lands
+  // on the white primary CTA and the secondary highlight chip first; the
+  // tertiary grid recedes into "options available" instead of competing for
+  // attention. Dashboard energy → calm tool palette.
   const iconColor =
     tracked   ? "rgba(255,205,90,0.95)" :
-    highlight ? "rgba(255,255,255,0.9)" :
-    C.text2;
+    highlight ? "rgba(255,255,255,0.92)" :
+    "rgba(255,255,255,0.42)";
   return (
     <PressableScale
       onPress={onPress}
@@ -293,22 +312,73 @@ function ActionChip({
 }
 
 const styles = StyleSheet.create({
+  // Floating-controls dock. The dock now reads as "controls emerging from
+  // darkness" via three composed pieces:
+  //   1. SH.dock ambient shadow (carries the float)
+  //   2. dockFadeTop1/2/3 gradient ladder — three stacked low-alpha bands
+  //      so the top edge dissolves into the screen instead of slamming
+  //      in as a rectangle
+  //   3. R.xxl top-corner radius — the silhouette is rounded, not slab
+  // No visible top border (the prior hairline read as outlined panel).
+  // paddingTop bumped to absorb the 32px fade ladder so the intel strip
+  // doesn't render inside the fade region.
   dockWrap: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    paddingTop: SP.md,
+    paddingTop: SP.lg + SP.lg, // 32px → clears the fade ladder
     paddingHorizontal: SP.lg,
-    marginTop: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: C.borderMid,
+    borderTopLeftRadius: R.xxl,
+    borderTopRightRadius: R.xxl,
     overflow: "hidden",
     ...SH.dock,
   },
+  // Main opaque fill — starts BELOW the fade ladder so the top 32px stay
+  // soft. Alpha kept at 0.50 from the previous pass (further reduction
+  // would let too much screen content show through the action grid).
   dockOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(4,4,4,0.60)",
+    position: "absolute",
+    top: 32,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(4,4,4,0.50)",
+  },
+  // 3-step fade ladder. Each band is ~11px tall with stepped alpha so the
+  // composition reads as a smooth gradient on iOS without LinearGradient.
+  // Hardware-rasterized cost is essentially zero — three flat color Views.
+  dockFadeTop1: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 11,
+    backgroundColor: "rgba(4,4,4,0.12)",
+  },
+  dockFadeTop2: {
+    position: "absolute",
+    top: 11,
+    left: 0,
+    right: 0,
+    height: 11,
+    backgroundColor: "rgba(4,4,4,0.28)",
+  },
+  dockFadeTop3: {
+    position: "absolute",
+    top: 22,
+    left: 0,
+    right: 0,
+    height: 10,
+    backgroundColor: "rgba(4,4,4,0.42)",
+  },
+  dockTopHighlight: {
+    position: "absolute",
+    top: 32,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.05)",
   },
 
   // Intelligence strip
@@ -360,9 +430,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 48,
     borderRadius: R.lg,
-    backgroundColor: C.s2,
-    borderWidth: 1,
-    borderColor: C.borderMid,
+    backgroundColor: "rgba(255,255,255,0.07)",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -387,6 +455,12 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     rowGap: SP.sm,
   },
+  // Chips: pure soft-fill pills with NO border. The prior hairline at 7%
+  // still rendered as a visible rectangle outline against the dock's
+  // glass — it read as a "settings panel of buttons" rather than premium
+  // floating controls. Fill alone defines the chip silhouette now;
+  // highlight/tracked states bump the fill alpha (and add an accent
+  // tint for gold) instead of drawing a border.
   chip: {
     flexDirection: "row",
     alignItems: "center",
@@ -395,30 +469,27 @@ const styles = StyleSheet.create({
     height: 44,
     paddingHorizontal: SP.md,
     borderRadius: R.md,
-    backgroundColor: C.s1,
-    borderWidth: 1,
-    borderColor: C.border,
+    backgroundColor: "rgba(255,255,255,0.05)",
     flexBasis: "48%",
     flexGrow: 0,
   },
   chipText: {
     ...TY.label,
-    color: C.text2,
+    color: "rgba(255,255,255,0.55)",
     fontSize: 12,
     fontWeight: "600" as const,
   },
   chipHighlight: {
-    backgroundColor: "rgba(255,255,255,0.10)",
-    borderColor: "rgba(255,255,255,0.22)",
+    backgroundColor: "rgba(255,255,255,0.11)",
   },
   chipTextHighlight: {
     color: "rgba(255,255,255,0.92)",
     fontWeight: "700" as const,
   },
   // Warm gold tracked state — premium toggle look, distinct from white CTA.
+  // Border-free; the gold-tinted fill alone signals the tracked state.
   chipTracked: {
-    backgroundColor: "rgba(255,205,90,0.12)",
-    borderColor: "rgba(255,205,90,0.45)",
+    backgroundColor: "rgba(255,205,90,0.14)",
   },
   chipTextTracked: {
     color: "rgba(255,225,150,0.95)",

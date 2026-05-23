@@ -1106,102 +1106,19 @@ export function ResultCard({
             </View>
           ) : null}
 
-          {/* Hero-only: price history sparkline (Feature 2) */}
-          {isHero ? (
-            <PriceHistoryChart
-              query={name}
-              chartPoints={data.priceChartPoints ?? undefined}
-              height={42}
-              width={CARD.width - SP.lg * 2}
-            />
-          ) : null}
-
-          {/* Margin range — quiet, single line */}
+          {/* Margin range — quiet, single line. Kept because it's a SINGLE
+              compact line and gives the user the "what's the typical
+              spread" answer at a glance. Everything heavier (price-history
+              sparkline, PriceLadder, PremiumIntelPanel, secondary intel
+              rows) moved to the Details modal so the card stays focused
+              on image · title · price · chips · source · one reason —
+              the layout that fits without being clipped behind the dock. */}
           {hasConfRange ? (
             <View style={styles.confRangeRow}>
               <Text style={styles.confRangeText} allowFontScaling={false} numberOfLines={1}>
                 {`${fmtMoney(confLow)} – ${fmtMoney(confHigh)}`}
               </Text>
             </View>
-          ) : null}
-
-          {/* Feature 8: Best time to buy signal */}
-          {isHero && (data.seasonalFlip?.topSignal || data.trendIntel?.buyAdvice) ? (
-            <View style={styles.intelRow}>
-              <Ionicons name="calendar-outline" size={11} color="rgba(255,255,255,0.50)" />
-              <Text numberOfLines={2} style={styles.intelText}>
-                {data.seasonalFlip?.topSignal || data.trendIntel?.buyAdvice}
-              </Text>
-            </View>
-          ) : null}
-
-          {/* Feature 10: Authenticity signal */}
-          {isHero && data.authenticityIntel?.topSignal ? (
-            <View style={styles.intelRow}>
-              <Ionicons
-                name={
-                  data.authenticityIntel.tier === "critical" || data.authenticityIntel.tier === "high"
-                    ? "shield-outline"
-                    : "checkmark-circle-outline"
-                }
-                size={11}
-                color={
-                  data.authenticityIntel.tier === "critical" || data.authenticityIntel.tier === "high"
-                    ? "rgba(255,160,80,0.85)"
-                    : "rgba(120,255,180,0.7)"
-                }
-              />
-              <Text numberOfLines={2} style={[
-                styles.intelText,
-                (data.authenticityIntel.tier === "critical" || data.authenticityIntel.tier === "high")
-                  ? { color: "rgba(255,160,80,0.85)" }
-                  : null,
-              ]}>
-                {data.authenticityIntel.topSignal}
-              </Text>
-            </View>
-          ) : null}
-
-          {/* Feature 3: Sold Velocity Badge */}
-          {isHero && data.ebaySoldComps?.count ? (
-            <VelocityBadge comps={data.ebaySoldComps} />
-          ) : null}
-
-          {/* Tweak 1: Volatile Asset Badge — fires when 14d price delta > 15% */}
-          {velocitySignal?.isVolatile ? (
-            <VolatileAssetBadge signal={velocitySignal} />
-          ) : null}
-
-          {/* Feature 5: Local / hyperlocal comps */}
-          {isHero && data.localComps?.count ? (
-            <View style={styles.intelRow}>
-              <Ionicons name="location-outline" size={11} color="rgba(160,255,160,0.75)" />
-              <Text numberOfLines={1} style={styles.intelText}>
-                {`Near ${data.localComps.location}: $${data.localComps.low}–$${data.localComps.high} · median $${data.localComps.median}`}
-              </Text>
-            </View>
-          ) : null}
-
-          {/* Price Ladder — profit scenario breakdown (hero + avgMarket + scannedPrice) */}
-          {isHero && data.avgMarket != null && _scannedPrice != null ? (
-            <PriceLadder avgMarket={Number(data.avgMarket)} cost={_scannedPrice} isNet={isNet} />
-          ) : null}
-
-          {/* Hero: Premium Intel Panel (pro gated) */}
-          {isHero ? (
-            <PremiumIntelPanel
-              costBasis={_scannedPrice}
-              avgMarket={Number.isFinite(Number(data.avgMarket)) ? Number(data.avgMarket) : null}
-              source={store}
-              verdict={data.buyVerdict}
-              confidence={conf}
-              dealScore={data.buyScore ?? null}
-              trendIntel={data.trendIntel}
-              authenticityIntel={data.authenticityIntel}
-              ebaySoldComps={data.ebaySoldComps}
-              isPro={isPro}
-              onUnlock={onUnlockPro ?? (() => {})}
-            />
           ) : null}
 
           {/* Hero: tracked buy CTA */}
@@ -1237,29 +1154,11 @@ export function ResultCard({
             </TouchableOpacity>
           ) : null}
 
-          {/* Hero: sell mode trigger */}
-          {isHero && onSell ? (
-            <TouchableOpacity
-              activeOpacity={0.72}
-              onPress={onSell}
-              style={styles.sellBar}
-            >
-              <Ionicons name="storefront-outline" size={12} color={C.text3} />
-              <Text style={styles.sellBarText}>Want to sell this?  →</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          {/* Community comps (hero only) */}
-          {isHero && apiBase ? (
-            <CommunityCompsPanel
-              query={data.itemName || data.title || ""}
-              scannedPrice={
-                Number.isFinite(Number(data.scannedPrice)) ? Number(data.scannedPrice) : null
-              }
-              apiBase={apiBase}
-              userId={userId}
-            />
-          ) : null}
+          {/* Sell mode trigger + Community comps removed from inline hero
+              card. Both live in the Details modal (dock's Details chip) so
+              the hero card body fits cleanly above the dock without
+              clipping. Re-add here only if a future card height bump
+              gives room. */}
 
           {/* Alt: Tracked listing CTA */}
           {!isHero ? (
