@@ -104,14 +104,20 @@ interface ResultsContentProps {
   onBoughtIt?: () => void;
 }
 
-// Dock approximate height + safe area buffer. The dock renders an intel
-// strip (~30px) + a primary row (48 + 8 gap = 56px) + a 4-row 2-column
-// action grid (4*44 + 3*8 = 200px) + ~26px of internal padding + ~34px of
-// iPhone home-indicator safe area = ~346px. Earlier value of 290 left the
-// last line of the active card (and the "swipe to compare" hint) clipped
-// behind the dock blur. 340 gives the active card a clean breathing
-// margin from the dock's top edge.
-const DOCK_SAFE_HEIGHT = 340;
+// Dock approximate height + safe area buffer + deck breathing room. The
+// dock renders an intel strip (~30px) + a primary row (48 + 8 gap = 56px)
+// + a 4-row 2-column action grid (4*44 + 3*8 = 200px) + ~26px of internal
+// padding + ~34px of iPhone home-indicator safe area = ~346px.
+//
+// Second refinement pass tightened this back from 380 → 332 to KILL the
+// dead-black "abyss" between the deck and the dock that the previous
+// extra-safe spacing introduced. The dock now also renders a tall top
+// gradient-fade band (32px of softly increasing opacity, see
+// dockFadeTop1/2/3 in ResultsDock) so the lifted active card's bottom
+// curve still lands inside the soft fade — the card looks like it's
+// floating ABOVE a misty control surface instead of sitting above an
+// empty void. The fade absorbs the clearance the spacer used to provide.
+const DOCK_SAFE_HEIGHT = 332;
 
 export const ResultsContent = React.memo(function ResultsContent({
   activeResult,
@@ -776,7 +782,15 @@ function VerdictHero({
 
   return (
     <View style={heroStyles.outer}>
-      <View style={heroStyles.card}>
+      <View
+        style={[
+          heroStyles.card,
+          tone.silent && heroStyles.cardSilent,
+          // HOLD: inset the card horizontally so it reads as a quiet
+          // annotation, not a full-width banner.
+          tone.silent && { marginHorizontal: SP.md },
+        ]}
+      >
         {/* Soft spotlight glow under the verdict — depth, not noise */}
         <Reanimated.View
           pointerEvents="none"
@@ -789,7 +803,10 @@ function VerdictHero({
           shouldRasterizeIOS={!IS_ANDROID}
         />
 
-        {/* The decision word — the eye lands here */}
+        {/* The decision word. Silent HOLD uses a smaller, calmer treatment
+            (verdictSilent override) so the screen reads as a Bloomberg-calm
+            "model declines to call it" rather than a giant AI-warning
+            billboard. BUY / PASS keep their full 38pt presence. */}
         <Reanimated.View
           style={wordStyle as any}
           renderToHardwareTextureAndroid={IS_ANDROID}
@@ -797,7 +814,11 @@ function VerdictHero({
         >
           <Text
             allowFontScaling={false}
-            style={[heroStyles.verdict, { color: tone.wordColor }]}
+            style={[
+              heroStyles.verdict,
+              tone.silent && heroStyles.verdictSilent,
+              { color: tone.wordColor },
+            ]}
           >
             {tone.word}
           </Text>
@@ -892,82 +913,105 @@ function VerdictHero({
 const heroStyles = StyleSheet.create({
   outer: {
     paddingHorizontal: SP.lg,
-    paddingTop: SP.lg,
-    paddingBottom: SP.md,
+    paddingTop: SP.sm,
+    paddingBottom: SP.xs,
   },
   card: {
     paddingHorizontal: SP.xl,
-    paddingTop: SP.xxxl,
-    paddingBottom: SP.xxl,
+    paddingTop: SP.xxl,
+    paddingBottom: SP.xl,
     borderRadius: R.xl,
-    backgroundColor: "rgba(255,255,255,0.025)",
+    backgroundColor: "rgba(255,255,255,0.022)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(255,255,255,0.055)",
     alignItems: "center",
     overflow: "hidden",
   },
+  // Silent / HOLD card variant — Bloomberg-calm. Width narrowed via
+  // self margins (set on outer in the component), padding compressed
+  // further so the bubble reads as a quiet annotation rather than an
+  // alert panel. Background even more transparent, border softer.
+  cardSilent: {
+    paddingTop: SP.lg,
+    paddingBottom: SP.md,
+    paddingHorizontal: SP.lg,
+    borderRadius: R.lg,
+    backgroundColor: "rgba(255,255,255,0.012)",
+    borderColor: "rgba(255,255,255,0.035)",
+  },
   glow: {
     position: "absolute",
-    top: SP.xl,
+    top: SP.md,
     left: "50%",
-    marginLeft: -160,
-    width: 320,
-    height: 120,
-    borderRadius: 160,
+    marginLeft: -140,
+    width: 280,
+    height: 96,
+    borderRadius: 140,
   },
   verdict: {
-    fontSize: 38,
+    fontSize: 36,
     fontWeight: "900",
-    letterSpacing: 5.5,
-    lineHeight: 44,
+    letterSpacing: 5.0,
+    lineHeight: 42,
     textAlign: "center",
   },
+  // Silent HOLD: even calmer. 22pt with reduced tracking lands
+  // as institutional confidence — visually equivalent weight to a
+  // section header, not a billboard.
+  verdictSilent: {
+    fontSize: 22,
+    letterSpacing: 3.0,
+    lineHeight: 28,
+  },
   dollar: {
-    marginTop: SP.lg,
-    fontSize: 42,
+    marginTop: SP.md,
+    fontSize: 40,
     fontWeight: "900",
     color: C.text,
     letterSpacing: -1.0,
-    lineHeight: 46,
+    lineHeight: 44,
     textAlign: "center",
   },
   dollarSign: {
-    fontSize: 42,
+    fontSize: 40,
     fontWeight: "900",
     letterSpacing: -1.0,
   },
   context: {
-    marginTop: SP.sm,
+    marginTop: SP.xs,
     fontSize: 10,
     fontWeight: "900",
     letterSpacing: 2.0,
     color: C.text3,
     textAlign: "center",
   },
-  // Confidence-silence variants — quieter, smaller, honest
+  // Confidence-silence variants — tighter still. Reason sits closer to
+  // the verdict word; price reads as quiet annotation, not headline.
   silentSub: {
-    marginTop: SP.lg,
-    fontSize: 13,
-    fontWeight: "600",
-    color: C.text3,
+    marginTop: SP.sm,
+    fontSize: 12,
+    fontWeight: "500",
+    color: "rgba(255,255,255,0.44)",
     textAlign: "center",
-    letterSpacing: 0.2,
+    letterSpacing: 0.15,
+    lineHeight: 16,
+    paddingHorizontal: SP.xs,
   },
   silentPrice: {
-    marginTop: SP.sm,
-    fontSize: 22,
-    fontWeight: "800",
-    color: C.text2,
+    marginTop: 2,
+    fontSize: 17,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.58)",
     textAlign: "center",
-    letterSpacing: -0.4,
+    letterSpacing: -0.3,
   },
   strip: {
     flexDirection: "row",
-    gap: SP.xxxl,
-    marginTop: SP.xxl,
-    paddingTop: SP.lg,
+    gap: SP.xxl,
+    marginTop: SP.lg,
+    paddingTop: SP.md,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.06)",
+    borderTopColor: "rgba(255,255,255,0.05)",
     alignSelf: "stretch",
     justifyContent: "center",
   },
@@ -1106,8 +1150,8 @@ const styles = StyleSheet.create({
   // Identity header — quiet breadcrumb above the verdict
   identityHeader: {
     paddingHorizontal: SP.xl,
-    paddingTop: SP.md,
-    paddingBottom: SP.xs,
+    paddingTop: SP.xs,
+    paddingBottom: 2,
   },
   identityRow: {
     flexDirection: "row",
@@ -1132,10 +1176,10 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   identityName: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: C.text3,
-    lineHeight: 18,
+    fontSize: 12,
+    fontWeight: "600",
+    color: C.text4,
+    lineHeight: 17,
     letterSpacing: 0.1,
   },
 

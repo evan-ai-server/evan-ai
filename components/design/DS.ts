@@ -193,12 +193,11 @@ export const MO = {
 
 // ─── CARD DIMENSIONS ─────────────────────────────────────────────────────────
 // PEEK = CARD_SIDE_MARGIN - CARD_GAP, i.e. the strip of the neighbouring
-// card visible on each side of the active card. TestFlight spec calls for
-// 28–36 px; 44 - 14 = 30 px lands cleanly inside the range. Combined with
-// the new ScrollView paging (no scale shrink on side cards), the next
-// card now reads as a deliberate, full-size slice rather than a faint
-// ghost.
-const CARD_SIDE_MARGIN = 44;   // horizontal margin for active card (each side)
+// card visible on each side of the active card. Refinement pass widened the
+// peek from 30 → 40 px and shaved the active card ~7% so the deck reads as
+// an obvious stack on first glance, no tutorial copy required. The side
+// CardDeck native-driver fade now does the rest of the work.
+const CARD_SIDE_MARGIN = 54;   // horizontal margin for active card (each side)
 const CARD_GAP = 14;           // gap between cards
 
 export const CARD = {
@@ -211,33 +210,42 @@ export const CARD = {
 } as const;
 
 // ─── SHADOWS ──────────────────────────────────────────────────────────────────
+// Polish pass: shadows retuned to the values the design direction calls for.
+// Pure-black drop shadows are nearly invisible against a black background, so
+// "floating" really comes from the ambient green glow rendered by the card
+// itself (see AmbientGlow). The shadow tokens here provide the directional
+// hint underneath that glow — opacity 0.30, radius ≈36, y-offset 18. Tight,
+// directional, but quiet. The active card gets the same offset with slightly
+// more spread + opacity so the eye reads it as "lifted forward in the deck."
 export const SH = {
   card: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 20 },
-    shadowOpacity: IOS ? 0.60 : 0,
-    shadowRadius: 40,
-    elevation: 18,
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: IOS ? 0.30 : 0,
+    shadowRadius: 36,
+    elevation: 16,
   },
   cardActive: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 24 },
-    shadowOpacity: IOS ? 0.70 : 0,
-    shadowRadius: 50,
-    elevation: 22,
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: IOS ? 0.34 : 0,
+    shadowRadius: 40,
+    elevation: 20,
   },
+  // Dock — quiet ambient lift. -8 y-offset, low opacity, soft radius so
+  // the dock reads as a floating control plate above the deck.
   dock: {
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: -6 },
-    shadowOpacity: IOS ? 0.40 : 0,
-    shadowRadius: 24,
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: IOS ? 0.26 : 0,
+    shadowRadius: 28,
     elevation: 14,
   },
   soft: {
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: IOS ? 0.28 : 0,
-    shadowRadius: 18,
+    shadowOpacity: IOS ? 0.22 : 0,
+    shadowRadius: 20,
     elevation: 8,
   },
 } as const;

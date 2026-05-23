@@ -40,7 +40,7 @@ import {
   NativeScrollEvent,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import { C, SP, R, TY, CARD, SCREEN, EASE_PANTHERE } from "../design/DS";
+import { C, SP, R, CARD, SCREEN, EASE_PANTHERE } from "../design/DS";
 import { ResultCard, CardData } from "./ResultCard";
 
 const IS_ANDROID = Platform.OS === "android";
@@ -335,25 +335,19 @@ export function CardDeck({
   }, [watchlistQueries]);
 
   // Entrance fade for the deck row + counter — opacity only, no transform.
+  // The previous "swipe to compare" hint copy was removed in the refinement
+  // pass per the no-tutorial-text directive — the widened peek (CARD_SIDE_MARGIN
+  // 44 → 54) plus the stronger side-card fade (opacity 0.58 → 0.50, scale
+  // 0.93 → 0.90, lift -8 → -10) does the discoverability work on its own.
   const entrance = useRef(new RNAnimated.Value(0)).current;
-  const swipeHintOpacity = useRef(new RNAnimated.Value(0)).current;
   useEffect(() => {
     entrance.setValue(0);
-    swipeHintOpacity.setValue(0);
     const fadeIn = RNAnimated.timing(entrance, {
       toValue: 1, duration: 320, easing: panthereRN, useNativeDriver: true,
     });
-    const hint = RNAnimated.sequence([
-      RNAnimated.delay(1100),
-      RNAnimated.timing(swipeHintOpacity, {
-        toValue: 0.55, duration: 480, easing: panthereRN, useNativeDriver: true,
-      }),
-    ]);
     fadeIn.start();
-    hint.start();
     return () => {
       try { fadeIn.stop(); } catch {}
-      try { hint.stop(); } catch {}
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeResult]);
@@ -372,6 +366,15 @@ export function CardDeck({
           </Text>
         </View>
       ) : null}
+
+      {/* ── External resale-terminal halo ───────────────────────────
+          Soft green ellipse pinned to viewport center, sits BEHIND the
+          card scroll row. Since snapped cards always land at viewport
+          center, this halo is the "floating premium object" glow the
+          internal AmbientGlow can't deliver (the card has overflow:hidden
+          so its own glow is clipped by the rounded rect). Pointer-events
+          disabled so it never blocks card taps. */}
+      <View pointerEvents="none" style={styles.deckHalo} />
 
       {/* ── Card row ──────────────────────────────────────────────── */}
       <RNAnimated.ScrollView
@@ -416,17 +419,21 @@ export function CardDeck({
           ];
           const cardOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.58, 1.0, 0.58],
+            outputRange: [0.42, 1.0, 0.42],
             extrapolate: "clamp",
           });
+          // Active card gets a subtle 1.02 zoom — feels "in focus" / "lens
+          // pulled forward" without overlapping the adjacent peek. Side
+          // cards shrink slightly more (0.89) so the central card lands
+          // as the unambiguous focal point, not a peer in a row.
           const cardScale = scrollX.interpolate({
             inputRange,
-            outputRange: [0.93, 1.0, 0.93],
+            outputRange: [0.89, 1.02, 0.89],
             extrapolate: "clamp",
           });
           const cardLift = scrollX.interpolate({
             inputRange,
-            outputRange: [0, -8, 0],
+            outputRange: [0, -10, 0],
             extrapolate: "clamp",
           });
           return (
@@ -480,26 +487,16 @@ export function CardDeck({
                 style={[
                   styles.dot,
                   {
-                    width: isActive ? 22 : 6,
+                    width: isActive ? 20 : 5,
                     backgroundColor: isActive
-                      ? "rgba(255,255,255,0.92)"
-                      : "rgba(255,255,255,0.35)",
+                      ? "rgba(255,255,255,0.78)"
+                      : "rgba(255,255,255,0.20)",
                   },
                 ]}
               />
             );
           })}
         </View>
-      ) : null}
-
-      {cardCount > 1 ? (
-        <RNAnimated.Text
-          style={[styles.swipeHint, { opacity: swipeHintOpacity }]}
-          allowFontScaling={false}
-          numberOfLines={1}
-        >
-          swipe to compare
-        </RNAnimated.Text>
       ) : null}
     </RNAnimated.View>
   );
@@ -508,11 +505,16 @@ export function CardDeck({
 const styles = StyleSheet.create({
   deckOuter: {
     alignItems: "center",
+    // Negative top margin pulls the deck up under the verdict by ~10px.
+    // Combined with the compressed HOLD bubble + tighter identity row,
+    // the active card lands centered with breathing room instead of
+    // bottom-clipped by the dock.
+    marginTop: -SP.sm,
   },
 
   counterRow: {
     width: CARD.width,
-    marginBottom: SP.sm,
+    marginBottom: SP.xs,
     alignItems: "flex-start",
   },
   counterText: {
@@ -523,26 +525,45 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
 
+  // ScrollView height is CARD.height + 44 to fully expose:
+  //   * the -10px active-card lift (transform translateY)
+  //   * the ~28px ambient shadow that radiates BELOW SH.cardActive
+  //   * a few pixels of breathing room before the pagination dots
+  // Without this extra height the ScrollView clipped the bottom of the
+  // active card's drop shadow and the deck read as a hard-edged rectangle
+  // pasted onto a backdrop instead of a card floating above one.
   scrollView: {
     width: SCREEN.width,
-    height: CARD.height,
+    height: CARD.height + 44,
+    overflow: "visible",
+  },
+
+  // ── Resale-terminal halo ──────────────────────────────────────────────────
+  // Soft green wash positioned absolutely behind the card row, centered in
+  // the viewport (where the snapped card always lands). Absolute children
+  // ignore alignSelf in RN, so the centering uses explicit left math against
+  // SCREEN.width. Wide + tall with heavy borderRadius so the edge falloff
+  // feels radial. Alpha is intentionally low (~0.10) — the eye reads it as
+  // "the air around this card is warmer," not as a colored panel.
+  deckHalo: {
+    position: "absolute",
+    top: 36,
+    left: (SCREEN.width - CARD.width * 1.18) / 2,
+    width: CARD.width * 1.18,
+    height: CARD.height * 0.92,
+    borderRadius: 240,
+    backgroundColor: "rgba(80,220,150,0.10)",
   },
 
   dotsRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: SP.xs,
-    marginTop: SP.lg,
+    marginTop: SP.sm,
+    marginBottom: SP.xs,
   },
   dot: {
-    height: 3,
+    height: 2.5,
     borderRadius: R.pill,
-  },
-
-  swipeHint: {
-    ...TY.cap,
-    color: C.text4,
-    marginTop: SP.sm,
-    letterSpacing: 0.5,
   },
 });

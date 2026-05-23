@@ -31,7 +31,7 @@ import Animated, {
   Easing,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
-import { C, SP, R, TY } from "../design/DS";
+import { C, SP, R, TY, fmtMoney, EASE_PANTHERE } from "../design/DS";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -88,6 +88,76 @@ interface AskAIDrawerProps {
 // the oldest turn pairs — keeps storage bounded and load times instant.
 const MAX_PERSISTED_MESSAGES = 60;
 
+// ─── Intel header (empty-state context) ──────────────────────────────────────
+// Renders 2-4 hard signals from the scan context so the drawer doesn't open
+// to a blank dialog. Each row is gated by whether the underlying value is
+// actually present — we never invent data, and the whole block self-hides
+// if nothing resolves. Reads like a Bloomberg terminal row, not a chatbot
+// greeting.
+
+function IntelHeader({ context }: { context: ScanContext }) {
+  const price        = Number.isFinite(Number(context?.price)) ? Number(context.price) : null;
+  const avg          = Number.isFinite(Number(context?.avgMarket)) ? Number(context.avgMarket) : null;
+  const histLow      = Number.isFinite(Number(context?.historicalLow))  ? Number(context.historicalLow)  : null;
+  const histHigh     = Number.isFinite(Number(context?.historicalHigh)) ? Number(context.historicalHigh) : null;
+  const conf         = Number.isFinite(Number(context?.visionConfidence)) ? Number(context.visionConfidence) : null;
+  const verdict      = String(context?.buyVerdict || "").toUpperCase();
+  const velocity     = context?.ebaySoldComps?.velocityLabel || context?.ebaySoldComps?.velocityTier || null;
+  const compCount    = Number(context?.ebaySoldComps?.count ?? 0);
+
+  // Build row list lazily so each line only renders when we genuinely have
+  // the data. Order is intentional: market context first (the user's
+  // benchmark), then this listing, then the model's certainty, then demand.
+  const rows: Array<{ label: string; value: string }> = [];
+
+  if (histLow != null && histHigh != null && histHigh > histLow) {
+    rows.push({ label: "Market range", value: `${fmtMoney(histLow)} – ${fmtMoney(histHigh)}` });
+  } else if (avg != null) {
+    rows.push({ label: "Market avg", value: fmtMoney(avg) });
+  }
+
+  if (price != null) {
+    rows.push({ label: "This listing", value: fmtMoney(price) });
+  }
+
+  if (conf != null) {
+    const confLabel = conf >= 0.88 ? "high"
+      : conf >= 0.70 ? "good"
+      : conf >= 0.50 ? "moderate"
+      : "low";
+    rows.push({ label: "Confidence", value: confLabel });
+  }
+
+  if (velocity) {
+    rows.push({ label: "Demand", value: String(velocity).toLowerCase() });
+  } else if (compCount > 0) {
+    rows.push({ label: "Demand", value: `${compCount} recent comps` });
+  } else if (verdict) {
+    // Lowest-signal fallback so the panel never opens with just one row.
+    rows.push({ label: "Verdict", value: verdict.toLowerCase() });
+  }
+
+  if (rows.length === 0) return null;
+
+  return (
+    <View style={styles.intelHeader}>
+      {rows.map((r, i) => (
+        <View
+          key={r.label}
+          style={[styles.intelRow, i < rows.length - 1 ? styles.intelRowBorder : null]}
+        >
+          <Text style={styles.intelLabel} allowFontScaling={false} numberOfLines={1}>
+            {r.label}
+          </Text>
+          <Text style={styles.intelValue} allowFontScaling={false} numberOfLines={1}>
+            {r.value}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // ─── Suggested prompts ────────────────────────────────────────────────────────
 
 const PROMPTS = [
@@ -97,6 +167,78 @@ const PROMPTS = [
   "Will this flip well?",
   "What's a fair price to pay?",
 ];
+
+// ─── Primer (pre-seeded assistant intel) ─────────────────────────────────────
+// Builds the assistant's opening turn from the scan context. The drawer
+// previously opened to a blank message list with a separate IntelHeader
+// chrome panel — visually unfinished, read as "the AI hasn't started yet."
+// The primer collapses that intel into a real assistant bubble so the
+// drawer opens already mid-conversation. Returns null when no useful
+// intel is available, in which case the drawer falls back to the prompt
+// chips alone (same behavior as before).
+function buildPrimer(context: ScanContext): string | null {
+  if (!context) return null;
+  const price        = Number.isFinite(Number(context.price))           ? Number(context.price)         : null;
+  const scanned      = Number.isFinite(Number(context.scannedPrice))    ? Number(context.scannedPrice)  : null;
+  const avg          = Number.isFinite(Number(context.avgMarket))       ? Number(context.avgMarket)     : null;
+  const histLow      = Number.isFinite(Number(context.historicalLow))   ? Number(context.historicalLow) : null;
+  const histHigh     = Number.isFinite(Number(context.historicalHigh))  ? Number(context.historicalHigh): null;
+  const conf         = Number.isFinite(Number(context.visionConfidence))? Number(context.visionConfidence) : null;
+  const cheaperPct   = Number.isFinite(Number(context.cheaperPct))      ? Number(context.cheaperPct)    : null;
+  const verdict      = String(context.buyVerdict || "").toUpperCase();
+  const velocity     = context.ebaySoldComps?.velocityLabel || context.ebaySoldComps?.velocityTier || null;
+  const compCount    = Number(context.ebaySoldComps?.count ?? 0);
+
+  // Recommendation phrasing — derive from verdict + price-vs-market without
+  // claiming certainty the data doesn't support.
+  const userPrice = scanned ?? price;
+  let recommendation: string | null = null;
+  if (verdict === "BUY") {
+    recommendation = cheaperPct && cheaperPct > 10
+      ? `BUY — ${Math.round(cheaperPct)}% under market`
+      : "BUY — priced below market";
+  } else if (verdict === "PASS") {
+    recommendation = "PASS — priced above market";
+  } else if (userPrice != null && avg != null) {
+    const diffPct = ((userPrice - avg) / avg) * 100;
+    if (diffPct > 8)        recommendation = "Negotiate lower — currently above market";
+    else if (diffPct < -8)  recommendation = "Reasonable buy — below market";
+    else                    recommendation = "Tracks market — no clear edge";
+  } else if (compCount < 2) {
+    recommendation = "Thin comp data — gather more signal before committing";
+  }
+
+  const confLabel = conf == null ? null
+    : conf >= 0.88 ? "high"
+    : conf >= 0.70 ? "good"
+    : conf >= 0.50 ? "moderate"
+    : "low";
+
+  const lines: string[] = [];
+  if (histLow != null && histHigh != null && histHigh > histLow) {
+    lines.push(`• Market range: ${fmtMoney(histLow)}–${fmtMoney(histHigh)}`);
+  } else if (avg != null) {
+    lines.push(`• Market avg: ${fmtMoney(avg)}`);
+  }
+  if (userPrice != null) {
+    lines.push(`• Your price: ${fmtMoney(userPrice)}`);
+  }
+  if (recommendation) {
+    lines.push(`• Recommendation: ${recommendation}`);
+  }
+  if (confLabel) {
+    lines.push(`• Confidence: ${confLabel}`);
+  }
+  if (velocity && compCount > 0) {
+    lines.push(`• Demand: ${String(velocity).toLowerCase()} · ${compCount} comps`);
+  } else if (compCount > 0) {
+    lines.push(`• Demand: ${compCount} recent comp${compCount === 1 ? "" : "s"}`);
+  }
+
+  if (lines.length < 2) return null;
+
+  return lines.join("\n");
+}
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -134,13 +276,20 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
   const backdropOp    = useSharedValue(0);
 
   useEffect(() => {
+    // Panthere ease — calmer settle than the prior cubic-out, so the
+    // drawer's entrance reads as "slid in from a deeper plane" rather
+    // than "popped on." Backdrop leads slightly so the dim arrives a
+    // beat before the surface, then both finish together.
+    const panthereEase = Easing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
     if (visible) {
-      backdropOp.value    = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
-      drawerOpacity.value = withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) });
-      setTimeout(() => inputRef.current?.focus(), 280);
+      backdropOp.value    = withTiming(1, { duration: 280, easing: panthereEase });
+      drawerOpacity.value = withTiming(1, { duration: 320, easing: panthereEase });
+      // Auto-focus delay nudged up so the keyboard appears after the
+      // drawer's opacity has settled — no overlap-jitter on first frame.
+      setTimeout(() => inputRef.current?.focus(), 340);
     } else {
-      backdropOp.value    = withTiming(0, { duration: 180 });
-      drawerOpacity.value = withTiming(0, { duration: 180 });
+      backdropOp.value    = withTiming(0, { duration: 200, easing: panthereEase });
+      drawerOpacity.value = withTiming(0, { duration: 200, easing: panthereEase });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -150,6 +299,13 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
   // saved chat. When the key changes WHILE the drawer is closed we still
   // wipe the in-memory log so reopening doesn't briefly flash the prior
   // scan's transcript before the load resolves.
+  //
+  // First-open primer: when hydration resolves to an empty list AND the
+  // scan context has enough intel to build a primer (≥2 intel lines), we
+  // inject a synthesized assistant bubble as the opening turn. The drawer
+  // then opens already mid-conversation — Bloomberg-terminal feel, not
+  // blank chat dialog. Persistence layer treats the primer as a normal
+  // message, so on next open we just hydrate it back.
   const prevKeyRef = useRef<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -166,8 +322,15 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
         const raw = await AsyncStorage.getItem(storageKey);
         if (cancelled) return;
         if (!raw) {
-          setMessages([]);
-          console.log("ASK_AI_CHAT_LOAD", { key: storageKey, count: 0 });
+          // Empty conversation — try to seed a primer from scan intel.
+          const primer = buildPrimer(scanContext);
+          if (primer) {
+            setMessages([{ role: "assistant", content: primer }]);
+            console.log("ASK_AI_CHAT_LOAD", { key: storageKey, count: 0, primerLines: primer.split("\n").length });
+          } else {
+            setMessages([]);
+            console.log("ASK_AI_CHAT_LOAD", { key: storageKey, count: 0, primer: false });
+          }
         } else {
           const parsed = JSON.parse(raw);
           const list = Array.isArray(parsed?.messages) ? parsed.messages : [];
@@ -186,6 +349,7 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
     };
     load();
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey, visible]);
 
   // Persist on every change to messages. Debounced via a microtask so
@@ -489,39 +653,44 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* Suggested prompts (shown when empty) */}
+            {/* Intel-only fallback — rendered only when the primer couldn't
+                be built (no scan context resolved). The primer covers the
+                same ground inside a real assistant bubble in every other
+                case, so this only shows on truly intel-less scans. */}
             {messages.length === 0 && !loading && !hydrating ? (
-              <View style={styles.suggestionsWrap}>
-                <Text style={styles.suggestionsLabel}>Suggested questions</Text>
-                <View style={styles.chips}>
-                  {PROMPTS.map((p) => (
-                    <Pressable
-                      key={p}
-                      onPress={() => send(p)}
-                      style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
-                    >
-                      <Text style={styles.chipText}>{p}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
+              <IntelHeader context={scanContext} />
             ) : null}
 
-            {/* Message bubbles. Belt-and-suspenders: even though every
-                code path that mutates `messages` already refuses to push
-                an empty assistant turn, render-time still falls back to a
-                visible retry string if some legacy persisted message
-                somehow slipped in with whitespace-only content. The user
-                must never see a stub bubble. */}
+            {/* Message bubbles. Primer (when present) renders here as the
+                first assistant turn, then any real user/assistant turns.
+                Belt-and-suspenders: even though every code path that
+                mutates `messages` already refuses to push an empty assistant
+                turn, render-time still falls back to a visible retry string
+                if a legacy persisted message somehow slipped in with
+                whitespace-only content. The user must never see a stub. */}
             {messages.map((m, i) => {
               const txt = typeof m.content === "string" ? m.content.trim() : "";
               if (m.role === "assistant") {
                 const display = txt || "I couldn't generate an answer for this item. Tap send to retry.";
+                // Primer detection — the first assistant turn before any
+                // user reply gets a subtly elevated container (intel-card
+                // styling). It's still an AI bubble, just visually marked
+                // as "the model's opening intel" rather than a chat reply.
+                const isPrimer = i === 0
+                  && messages.slice(0, i + 1).every((mm) => mm.role === "assistant")
+                  && !messages.slice(i + 1).some((mm) => mm.role === "user");
                 return (
-                  <View key={i} style={[styles.bubble, styles.bubbleAI]}>
+                  <View
+                    key={i}
+                    style={[
+                      styles.bubble,
+                      styles.bubbleAI,
+                      isPrimer && styles.bubblePrimer,
+                    ]}
+                  >
                     <View style={styles.aiAvatarRow}>
                       <View style={styles.aiDot} />
-                      <Text style={styles.bubbleTextAI}>{display}</Text>
+                      <Text style={[styles.bubbleTextAI, isPrimer && styles.bubblePrimerText]}>{display}</Text>
                     </View>
                   </View>
                 );
@@ -540,6 +709,49 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
                 <View style={styles.aiAvatarRow}>
                   <View style={styles.aiDot} />
                   <ActivityIndicator size="small" color={C.text3} />
+                </View>
+              </View>
+            ) : null}
+
+            {/* Suggested prompts — shown while the conversation has only
+                assistant turns (i.e. the user hasn't typed their first
+                question yet). Once a user message lands, the chips retire
+                so the dialog reads as a real conversation. Renders BELOW
+                the primer so the intel lands first, then the suggestions
+                hint at how to dig in. */}
+            {!hydrating && !loading && messages.length > 0 && messages.every((m) => m.role === "assistant") ? (
+              <View style={styles.suggestionsWrap}>
+                <Text style={styles.suggestionsLabel}>Try one of these</Text>
+                <View style={styles.chips}>
+                  {PROMPTS.map((p) => (
+                    <Pressable
+                      key={p}
+                      onPress={() => send(p)}
+                      style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
+                    >
+                      <Text style={styles.chipText}>{p}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
+            {/* Fallback — when no primer could be built (no scan context),
+                show the chips above the empty space so the drawer still
+                gives the user a clear entry point. */}
+            {!hydrating && !loading && messages.length === 0 ? (
+              <View style={styles.suggestionsWrap}>
+                <Text style={styles.suggestionsLabel}>Ask anything about this item</Text>
+                <View style={styles.chips}>
+                  {PROMPTS.map((p) => (
+                    <Pressable
+                      key={p}
+                      onPress={() => send(p)}
+                      style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
+                    >
+                      <Text style={styles.chipText}>{p}</Text>
+                    </Pressable>
+                  ))}
                 </View>
               </View>
             ) : null}
@@ -697,36 +909,78 @@ const styles = StyleSheet.create({
     paddingBottom: SP.md,
   },
 
-  // Suggested prompts
+  // ── Intel header (empty-state context) ──────────────────────────────────
+  // Compact terminal-style key/value list rendered ABOVE the suggested
+  // prompts when the chat is empty. Reads as pre-loaded market intel, not
+  // a blank chat dialog. Border is hairline at very low alpha so the rows
+  // separate but never read as a heavy table.
+  intelHeader: {
+    marginBottom: SP.md,
+    paddingHorizontal: SP.md,
+    paddingVertical: SP.xs,
+    backgroundColor: "rgba(255,255,255,0.03)",
+    borderRadius: R.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.06)",
+  },
+  intelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: SP.sm,
+  },
+  intelRowBorder: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(255,255,255,0.05)",
+  },
+  intelLabel: {
+    ...TY.cap,
+    color: C.text4,
+    letterSpacing: 0.4,
+    fontSize: 10,
+  },
+  intelValue: {
+    ...TY.label,
+    color: C.text2,
+    fontSize: 12,
+    fontWeight: "700" as const,
+  },
+
+  // Suggested prompts — chips read as quiet quick-action hints, not loud CTAs.
   suggestionsWrap: {
+    marginTop: SP.sm,
     marginBottom: SP.md,
   },
   suggestionsLabel: {
     ...TY.cap,
     color: C.text4,
-    letterSpacing: 0.8,
+    letterSpacing: 1.4,
+    fontSize: 9,
     marginBottom: SP.sm,
+    textTransform: "uppercase",
   },
   chips: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: SP.sm,
+    gap: 6,
   },
   chip: {
-    paddingHorizontal: SP.md,
-    paddingVertical: SP.sm,
+    paddingHorizontal: SP.sm + 2,
+    paddingVertical: 6,
     borderRadius: R.pill,
-    backgroundColor: "rgba(255,255,255,0.06)",
+    backgroundColor: "rgba(255,255,255,0.04)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.12)",
+    borderColor: "rgba(255,255,255,0.10)",
   },
   chipPressed: {
-    backgroundColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.09)",
   },
   chipText: {
     ...TY.label,
-    color: C.text2,
-    fontSize: 12,
+    color: C.text3,
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 0.1,
   },
 
   // Bubbles
@@ -745,6 +999,25 @@ const styles = StyleSheet.create({
   },
   bubbleAI: {
     alignSelf: "flex-start",
+  },
+  // Primer (pre-seeded intel) — first assistant turn before any user reply.
+  // Subtle elevated container so the opening intel reads as "the model has
+  // already done the work" rather than a normal chat reply. Slim border,
+  // very low-alpha green wash to inherit the resale-terminal brand tone.
+  bubblePrimer: {
+    alignSelf: "stretch",
+    maxWidth: "100%",
+    backgroundColor: "rgba(80,220,150,0.04)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(80,220,150,0.14)",
+    borderRadius: R.lg,
+    paddingHorizontal: SP.md,
+    paddingVertical: SP.sm + 2,
+  },
+  bubblePrimerText: {
+    color: C.text2,
+    lineHeight: 20,
+    letterSpacing: 0.1,
   },
   aiAvatarRow: {
     flexDirection: "row",

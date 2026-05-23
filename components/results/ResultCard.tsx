@@ -321,19 +321,19 @@ const velocityStyles = StyleSheet.create({
   badge: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 4,
     alignSelf: "flex-start",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 6.5,
+    paddingVertical: 3,
     borderRadius: R.pill,
     borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: 4,
+    marginBottom: 3,
   },
   text: {
     ...TY.cap,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "600",
-    letterSpacing: 0.3,
+    letterSpacing: 0.25,
   },
 });
 
@@ -384,19 +384,20 @@ function VolatileAssetBadge({ signal }: { signal: VelocitySignal }) {
 // card. None require new server fields — they animate or derive from data
 // the card already receives.
 
-// AmbientGlow — soft pulsing colored aura behind the hero card. Sits between
-// the card background and the image scrim so it reads as light bleeding
-// through the panel, not as a noisy overlay. Color follows verdict tone
-// (BUY=green halo, PASS=amber halo, HOLD=neutral). Runs forever on the UI
-// thread via Reanimated's worklet loop — zero JS-bridge cost.
+// AmbientGlow — soft pulsing colored aura behind the active (hero) card. The
+// resale-terminal brand signature: a quiet green wash that the eye reads as
+// "this card is alive." Color shifts subtly with verdict (BUY=fuller green,
+// PASS=warm amber, HOLD=muted green-grey) but the green family persists
+// across all states so the deck has a consistent emotional tone, not a
+// traffic-light. Runs forever on the UI thread via Reanimated's worklet loop.
 type GlowTone = "buy" | "hold" | "pass";
 function AmbientGlow({ tone }: { tone: GlowTone }) {
-  const pulse = useSharedValue(0.45);
+  const pulse = useSharedValue(0.55);
   useEffect(() => {
     pulse.value = withRepeat(
       withSequence(
-        withTiming(0.85, { duration: 2400, easing: Easing.inOut(Easing.sin) }),
-        withTiming(0.40, { duration: 2400, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0.95, { duration: 2600, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0.55, { duration: 2600, easing: Easing.inOut(Easing.sin) }),
       ),
       -1,
       false,
@@ -405,9 +406,9 @@ function AmbientGlow({ tone }: { tone: GlowTone }) {
   }, []);
   const animStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
   const color =
-    tone === "buy"  ? "rgba(80,255,160,0.18)" :
-    tone === "pass" ? "rgba(255,120,100,0.15)" :
-                      "rgba(255,255,255,0.06)";
+    tone === "buy"  ? "rgba(80,255,160,0.26)"   :
+    tone === "pass" ? "rgba(255,140,110,0.18)"  :
+                      "rgba(120,220,170,0.12)";
   return (
     <Reanimated.View
       pointerEvents="none"
@@ -871,10 +872,19 @@ export function ResultCard({
           </View>
         )}
 
-        {/* 3-layer image scrim for cinematic depth */}
+        {/* Cinematic depth treatment.
+            - imageScrim1/2/3: the 3-band bottom→top darkening already in
+              place (heavy bottom, mid fade, slight top tint)
+            - imageVignetteLeft/Right: thin soft side vignettes that frame
+              the product photo, killing the "pasted flat" feel
+            - imageTopHighlight: 1px ambient light catching the top edge
+              of the image, like a lens framing the object */}
         <View style={styles.imageScrim1} pointerEvents="none" />
         <View style={styles.imageScrim2} pointerEvents="none" />
         <View style={styles.imageScrim3} pointerEvents="none" />
+        <View style={styles.imageVignetteLeft} pointerEvents="none" />
+        <View style={styles.imageVignetteRight} pointerEvents="none" />
+        <View style={styles.imageTopHighlight} pointerEvents="none" />
 
         {/* Card label badge (top-left). Premium-status labels (LOWEST,
             HIDDEN GEM, TOP FLIP, BEST DEAL, RARE LOW, UNCOMMON) get a
@@ -916,6 +926,11 @@ export function ResultCard({
           <BlurView intensity={62} tint="dark" style={StyleSheet.absoluteFillObject} />
         ) : null}
         <View style={[StyleSheet.absoluteFillObject, styles.panelOverlay]} />
+        {/* Premium edge: a 1px inner highlight just below where the image
+            scrim meets the panel. Replaces what used to read as a hard
+            gray border line — now it's an ambient light highlight, the
+            kind you'd see on brushed-aluminum hardware. */}
+        <View style={styles.panelTopHighlight} pointerEvents="none" />
 
         <View style={styles.panelContent}>
           {/* Item name — 2-line clamp so long titles ("Retro Oval Cat Eye
@@ -1072,27 +1087,22 @@ export function ResultCard({
             </View>
           ) : null}
 
-          {/* Why-this-listing — 2–3 micro-bullets that justify the pick
-              psychologically. Pulled from server-provided rankWhy/scanWhy
-              when present, otherwise synthesized from lowest/match/seller/
-              comp count. Hero only — alt cards use the delta pill instead. */}
+          {/* Single inline "why" signal — one line max, no header, no
+              paragraph. Refinement pass collapsed the prior 3-bullet
+              PICKED BECAUSE block down to whyChips[0] only so the compact
+              card prioritizes image · title · price · savings · rarity ·
+              source. Full rankWhy explanation lives in the Details modal
+              (app/index.tsx — "Why this is ranked #1"). */}
           {isHero && whyChips.length > 0 ? (
-            <View style={styles.whyBlock}>
-              <Text style={styles.whyHeader} allowFontScaling={false}>
-                PICKED BECAUSE
+            <View style={styles.whyTaglineRow}>
+              <View style={styles.whyTaglineDot} />
+              <Text
+                style={styles.whyTagline}
+                allowFontScaling={false}
+                numberOfLines={1}
+              >
+                {whyChips[0]}
               </Text>
-              {whyChips.map((w, i) => (
-                <View key={i} style={styles.whyRow}>
-                  <View style={styles.whyBullet} />
-                  <Text
-                    style={styles.whyText}
-                    allowFontScaling={false}
-                    numberOfLines={2}
-                  >
-                    {w}
-                  </Text>
-                </View>
-              ))}
             </View>
           ) : null}
 
@@ -1293,6 +1303,12 @@ const styles = StyleSheet.create({
     borderRadius: CARD.radius,
     overflow: "hidden",
     backgroundColor: "#0a0a0a",
+    // Hairline white border defines the card edge against the black canvas
+    // when the drop shadow alone can't (black-on-black). Pairs with the
+    // CardDeck halo so the active card reads as a bounded floating object,
+    // not a black region of the screen.
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.08)",
   },
 
   // ── Image section ──────────────────────────────────────────────────────────
@@ -1314,15 +1330,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 80,
-    backgroundColor: "rgba(0,0,0,0.65)",
+    backgroundColor: "rgba(0,0,0,0.62)",
   },
   imageScrim2: {
     position: "absolute",
     bottom: 80,
     left: 0,
     right: 0,
-    height: 80,
-    backgroundColor: "rgba(0,0,0,0.28)",
+    height: 92,
+    backgroundColor: "rgba(0,0,0,0.22)",
   },
   imageScrim3: {
     position: "absolute",
@@ -1330,7 +1346,38 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 40,
-    backgroundColor: "rgba(0,0,0,0.12)",
+    backgroundColor: "rgba(0,0,0,0.16)",
+  },
+  // ── Cinematic vignettes & top highlight ───────────────────────────────────
+  // Thin side bands at low alpha — soft "frame" that draws the eye to the
+  // product photo. The visible delta is small (~10% darken at the very
+  // edge) so the image still reads as full-bleed, but the corners now feel
+  // recessed instead of pasted flat to the card boundary.
+  imageVignetteLeft: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 24,
+    backgroundColor: "rgba(0,0,0,0.10)",
+  },
+  imageVignetteRight: {
+    position: "absolute",
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 24,
+    backgroundColor: "rgba(0,0,0,0.10)",
+  },
+  // 1px hairline of ambient light at the very top of the image — gives
+  // the image a "lens edge" feel where it meets the card's top radius.
+  imageTopHighlight: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.08)",
   },
 
   // ── Overlay actions (heart + share) ───────────────────────────────────────
@@ -1347,12 +1394,12 @@ const styles = StyleSheet.create({
     borderRadius: R.pill,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.38)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(0,0,0,0.42)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.08)",
   },
   shareBtnBg: {
-    backgroundColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.10)",
   },
 
   // ── Info panel ────────────────────────────────────────────────────────────
@@ -1365,6 +1412,18 @@ const styles = StyleSheet.create({
   },
   panelOverlay: {
     backgroundColor: "rgba(8,8,8,0.28)",
+  },
+  // 1px ambient highlight at the very top of the info panel. Sits over
+  // the BlurView so the panel reads as if it has a soft inner light along
+  // the edge where it meets the image — premium hardware feel, no hard
+  // border line.
+  panelTopHighlight: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.07)",
   },
   panelContent: {
     flex: 1,
@@ -1397,31 +1456,34 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
-    paddingHorizontal: SP.sm,
-    paddingVertical: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
     borderRadius: R.pill,
-    backgroundColor: C.goodBg,
-    borderWidth: 1,
-    borderColor: C.goodBorder,
+    backgroundColor: "rgba(0,210,120,0.08)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(0,210,120,0.16)",
   },
   savingsText: {
     ...TY.label,
     color: C.good,
-    fontSize: 11,
-    fontWeight: "900",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.2,
   },
   deltaPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
-    paddingHorizontal: SP.sm,
-    paddingVertical: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
     borderRadius: R.pill,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   deltaText: {
     ...TY.label,
-    fontSize: 11,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.2,
   },
 
   // ── Meta row ──────────────────────────────────────────────────────────────
@@ -1469,8 +1531,8 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     gap: 4,
     marginTop: 3,
-    borderLeftWidth: 1.5,
-    borderLeftColor: "rgba(255,255,255,0.12)",
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: "rgba(255,255,255,0.07)",
     paddingLeft: 6,
   },
   intelText: {
@@ -1486,7 +1548,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.08)",
+    borderTopColor: "rgba(255,255,255,0.05)",
     alignItems: "flex-end",
   },
   viewListingText: {
@@ -1505,7 +1567,7 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(0,210,120,0.14)",
+    borderTopColor: "rgba(0,210,120,0.10)",
   },
   heroBuyText: {
     fontSize: 11,
@@ -1521,7 +1583,7 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingTop: 6,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.08)",
+    borderTopColor: "rgba(255,255,255,0.05)",
   },
   sellBarText: {
     fontSize: 10,
@@ -1535,25 +1597,25 @@ const styles = StyleSheet.create({
   // stays inside the badge rectangle instead of bleeding across the image.
   labelBadge: {
     position: "absolute",
-    top: 12,
-    left: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    top: 11,
+    left: 11,
+    borderRadius: 7,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
     overflow: "hidden",
   },
   labelBadgeHeavy: {
-    borderWidth: 1.5,
+    borderWidth: 1,
     shadowColor: "rgba(180,140,255,1)",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.28,
-    shadowRadius: 6,
+    shadowOpacity: 0.22,
+    shadowRadius: 5,
   },
   labelText: {
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: "900",
-    letterSpacing: 1.4,
+    letterSpacing: 1.2,
     textTransform: "uppercase",
   },
 
@@ -1598,30 +1660,30 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2.5,
     borderRadius: R.pill,
     borderWidth: StyleSheet.hairlineWidth,
-    backgroundColor: "rgba(8,18,12,0.72)",
-    borderColor: "rgba(180,255,200,0.38)",
+    backgroundColor: "rgba(8,18,12,0.62)",
+    borderColor: "rgba(180,255,200,0.28)",
   },
   rarityChipRare: {
-    backgroundColor: "rgba(8,22,14,0.86)",
-    borderColor: "rgba(180,255,200,0.55)",
+    backgroundColor: "rgba(8,22,14,0.74)",
+    borderColor: "rgba(180,255,200,0.40)",
   },
   rarityChipUncommon: {
-    backgroundColor: "rgba(8,18,12,0.66)",
-    borderColor: "rgba(180,255,200,0.30)",
+    backgroundColor: "rgba(8,18,12,0.56)",
+    borderColor: "rgba(180,255,200,0.22)",
   },
   rarityChipPeak: {
-    backgroundColor: "rgba(28,18,8,0.74)",
-    borderColor: "rgba(255,180,100,0.40)",
+    backgroundColor: "rgba(28,18,8,0.64)",
+    borderColor: "rgba(255,180,100,0.30)",
   },
   rarityChipText: {
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: "900",
-    letterSpacing: 1.2,
-    color: "rgba(180,255,200,0.95)",
+    letterSpacing: 1.0,
+    color: "rgba(180,255,200,0.92)",
   },
 
   // ── Insight strip (confidence · pulse) ────────────────────────────────────
@@ -1663,42 +1725,29 @@ const styles = StyleSheet.create({
   },
 
   // ── Why this listing (hero only) ──────────────────────────────────────────
-  // 2–3 micro-bullets that justify the pick. Header is a tiny uppercase
-  // eyebrow ("PICKED BECAUSE"), bullets are thin dots aligned vertically.
-  // Kept compact so this whole block adds <60px of card height.
-  whyBlock: {
-    marginTop: SP.sm,
-    paddingTop: SP.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.08)",
-  },
-  whyHeader: {
-    fontSize: 9,
-    fontWeight: "900",
-    letterSpacing: 1.4,
-    color: C.text4,
-    marginBottom: 4,
-  },
-  whyRow: {
+  // Single-line inline signal. The full multi-bullet "PICKED BECAUSE" block
+  // moved into the Details modal in app/index.tsx — on-card we keep ONE
+  // terse sentence (e.g. "Lowest verified price in comps", "Strong resale
+  // comps", "Trusted seller · Amazon") so the compact deck card stays
+  // scannable. ~14px tall, no header, no paragraph.
+  whyTaglineRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
-    marginTop: 3,
+    alignItems: "center",
+    gap: 5,
+    marginTop: 4,
   },
-  whyBullet: {
+  whyTaglineDot: {
     width: 3,
     height: 3,
     borderRadius: R.pill,
-    backgroundColor: "rgba(180,255,200,0.75)",
-    marginTop: 6,
+    backgroundColor: "rgba(180,255,200,0.7)",
     flexShrink: 0,
   },
-  whyText: {
-    ...TY.label,
+  whyTagline: {
     fontSize: 11,
-    lineHeight: 15,
-    color: C.text2,
-    fontWeight: "500",
-    flex: 1,
+    fontWeight: "600",
+    color: C.text3,
+    letterSpacing: 0.1,
+    flexShrink: 1,
   },
 });
