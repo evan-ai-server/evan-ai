@@ -406,24 +406,31 @@ export const ResultsContent = React.memo(function ResultsContent({
               {/* The decision moment — verdict hero with self-sequenced reveal */}
               <VerdictHero activeResult={activeResult} results={results} />
 
-              {/* Card deck — proof, slid in after the verdict lands */}
+              {/* Card deck — proof, slid in after the verdict lands.
+                  Wrapped in CardDeckBoundary so a render-phase throw inside
+                  any individual card (image NSException retry storms, a
+                  malformed comp blowing up PremiumIntelPanel, etc.) collapses
+                  to an empty space instead of unmounting the entire results
+                  tree. The verdict + dock survive even if the deck explodes. */}
               <Reanimated.View
                 style={deckAnimStyle as any}
                 renderToHardwareTextureAndroid={IS_ANDROID}
                 shouldRasterizeIOS={!IS_ANDROID}
               >
-                <CardDeck
-                  activeResult={activeResult}
-                  results={results}
-                  watchlistQueries={watchlistQueries}
-                  onPressCard={onOpenListing}
-                  onZoomImage={onZoomImage}
-                  onSnapToIndex={handleSnap}
-                  onToggleWatchlist={onToggleWatchlist}
-                  onShare={onShareCard}
-                  onVaultSave={onVaultSave}
-                  isNet={isNet}
-                />
+                <CardDeckBoundary>
+                  <CardDeck
+                    activeResult={activeResult}
+                    results={results}
+                    watchlistQueries={watchlistQueries}
+                    onPressCard={onOpenListing}
+                    onZoomImage={onZoomImage}
+                    onSnapToIndex={handleSnap}
+                    onToggleWatchlist={onToggleWatchlist}
+                    onShare={onShareCard}
+                    onVaultSave={onVaultSave}
+                    isNet={isNet}
+                  />
+                </CardDeckBoundary>
               </Reanimated.View>
             </>
           ) : null}
@@ -949,6 +956,39 @@ function IdentityHeader({
       </View>
     </View>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CARD DECK ERROR BOUNDARY
+//
+// React doesn't catch render-phase throws inside functional children — an
+// unguarded throw inside ResultCard or any of its sub-panels (community
+// comps, premium intel, price history chart) unmounts the entire results
+// tree, which read as a "swiping crashes the app" symptom in the field.
+// This boundary contains the blast radius: any throw becomes a quiet
+// fallback view and a CARD_DECK_BOUNDARY_CAUGHT log line, while the verdict
+// hero + dock stay mounted so the user can still act on the scan.
+// ─────────────────────────────────────────────────────────────────────────────
+class CardDeckBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hadError: boolean }
+> {
+  state = { hadError: false };
+  static getDerivedStateFromError() { return { hadError: true }; }
+  componentDidCatch(err: any, info: any) {
+    try {
+      console.log("CARD_DECK_BOUNDARY_CAUGHT", {
+        error: err?.message || String(err),
+        stack: String(info?.componentStack || "").slice(0, 400),
+      });
+    } catch {}
+  }
+  render() {
+    if (this.state.hadError) {
+      return <View style={{ height: 12 }} />;
+    }
+    return this.props.children as any;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

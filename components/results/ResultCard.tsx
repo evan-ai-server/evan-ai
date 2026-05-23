@@ -498,7 +498,21 @@ export function ResultCard({
   onUnlockPro,
   onSell,
 }: ResultCardProps) {
-  const imageUri = data.image || data.photoUri || null;
+  // Image URI sanity — reject malformed values before React Native's
+  // <Image> handles them. RCTImageView on iOS throws NSException for
+  // schemes it can't resolve (e.g. "//" / "blob:foo" / random whitespace),
+  // and an NSException from the native side bypasses every JS try/catch
+  // around captureRef and tears the deck down on swipe. Only http(s)/file/
+  // data URIs survive this gate; everything else falls back to the photoUri
+  // and ultimately the placeholder icon.
+  const isValidImageUri = (u: any): boolean => {
+    if (typeof u !== "string") return false;
+    const t = u.trim();
+    if (!t) return false;
+    return /^(https?:|file:|data:image\/|asset:)/.test(t);
+  };
+  const rawImageUri = data.image || data.photoUri || null;
+  const imageUri = isValidImageUri(rawImageUri) ? rawImageUri : null;
   const price    = Number.isFinite(Number(data.price)) ? Number(data.price) : null;
   const name     = data.itemName || data.title || "Listing";
   const store    = data.store || data.source || null;

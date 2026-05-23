@@ -113,9 +113,54 @@ export function CardDeck({
       localComps:       activeResult?.localComps ?? null,
     };
 
+    // ── Aggressive client-side dedup + relevance filter ─────────────────────
+    // Server occasionally returns near-duplicate listings (Amazon clones with
+    // identical titles, same image hosted at multiple URLs, two SERP rows
+    // pointing at the same product page). Each dupe wastes a card slot and
+    // hurts perceived signal quality. The hero is the canonical entry; we
+    // pull the rest of the corpus, normalize identity, drop matches against
+    // the hero AND against previously-accepted alts, drop entries that
+    // can't actually render (no image OR no price), then re-rank to favor
+    // cheap-but-relevant listings ahead of premium anchors. We over-pull
+    // up to 12 candidates so dedup attrition still leaves us ≥4 cards.
+    const norm = (s: any): string => String(s ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    // Image-host identity. Amazon mirrors the same product photo at
+    // m.media-amazon.com/images/I/<HASH>._SX...jpg and ..._SY...jpg etc.;
+    // strip the size suffix so the dedup key matches across variants.
+    const imageKey = (u: any): string => {
+      const raw = String(u ?? "").trim().toLowerCase();
+      if (!raw) return "";
+      try {
+        const m = raw.match(/([a-z0-9]{8,})\.(jpg|jpeg|png|webp)/i);
+        return m ? m[1] : raw.split("?")[0];
+      } catch { return raw; }
+    };
+    const titleKey = (t: any): string => {
+      const n = norm(t);
+      if (!n) return "";
+      // Collapse near-identical titles: "Retro Oval Cat Eye Sunglasses for
+      // Women — Black" and "Retro Oval Cat Eye Sunglasses for Women, Black"
+      // should hash to the same key. Use the first 6 significant words.
+      return n.split(" ").filter(Boolean).slice(0, 6).join(" ");
+    };
+
+    const seenTitles = new Set<string>();
+    const seenImages = new Set<string>();
+    const heroTitleK = titleKey(heroCard.itemName);
+    const heroImageK = imageKey(heroCard.image);
+    if (heroTitleK) seenTitles.add(heroTitleK);
+    if (heroImageK) seenImages.add(heroImageK);
+
     const anchorThreshold = _scannedPrice != null ? _scannedPrice * 2.5 : Infinity;
+
+    // Over-pull from positions 1..12 so dedup can drop liberally and we
+    // still land ≥4 alts when the corpus has them.
     const rawAlts: CardData[] = (results || [])
-      .slice(1, 5)
+      .slice(1, 13)
       .map((r: any) => ({
         itemName: r?.itemName || r?.title,
         store:    r?.source   || r?.store,
@@ -124,13 +169,48 @@ export function CardDeck({
         image:    r?.image    || r?.thumbnail,
       }));
 
-    const alts = [...rawAlts].sort((a, b) => {
+    const dedupedAlts: CardData[] = [];
+    for (const alt of rawAlts) {
+      const tk = titleKey(alt.itemName);
+      const ik = imageKey(alt.image);
+      // Must have both image AND a finite price > 0 — otherwise the card
+      // renders as a placeholder square with "$NaN" and reads as junk.
+      const priceN = Number(alt.price);
+      if (!alt.image) continue;
+      if (!Number.isFinite(priceN) || priceN <= 0) continue;
+      // Skip if title OR image matches hero / any prior accepted alt.
+      if (tk && seenTitles.has(tk)) continue;
+      if (ik && seenImages.has(ik)) continue;
+      if (tk) seenTitles.add(tk);
+      if (ik) seenImages.add(ik);
+      dedupedAlts.push(alt);
+      // Soft cap — 6 alts is plenty even before the premium re-sort below
+      // (display layer slices to whatever fits). Hard cap of 4 happens after
+      // sort so the cheapest-and-most-relevant survive.
+      if (dedupedAlts.length >= 8) break;
+    }
+
+    // Re-rank: premium-anchor listings (price > 2.5× scannedPrice) go to
+    // the tail, then sort the remainder by ascending price so the deck
+    // leads with the cheapest credible matches. Equal-price ties break by
+    // image presence (alread guaranteed), then by title length (shorter
+    // = cleaner SEO title, usually a real listing not a placeholder).
+    const alts = dedupedAlts.sort((a, b) => {
       const pa = Number(a.price ?? Infinity);
       const pb = Number(b.price ?? Infinity);
       const aIsPrem = pa > anchorThreshold;
       const bIsPrem = pb > anchorThreshold;
       if (aIsPrem !== bIsPrem) return aIsPrem ? 1 : -1;
-      return 0;
+      if (pa !== pb) return pa - pb;
+      const la = String(a.itemName ?? "").length;
+      const lb = String(b.itemName ?? "").length;
+      return la - lb;
+    }).slice(0, 4);
+
+    console.log("CARD_DECK_BUILD", {
+      rawCount: (results || []).length,
+      pickedAlts: alts.length,
+      hadHeroImage: !!heroCard.image,
     });
 
     return [heroCard, ...alts];

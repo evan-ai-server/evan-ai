@@ -340,6 +340,15 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
       catch (e: any) { parseError = e?.message || "parse_error"; json = { _raw: rawText }; }
       const parsedKeys = json && typeof json === "object" ? Object.keys(json) : [];
       console.log("ASK_AI_PARSED_KEYS", { keys: parsedKeys, parseError });
+      // Spec-exact log shape: `ASK_AI_RAW_RESPONSE { status, keys, json }`.
+      // Logs the parsed object directly so any field-rename on the
+      // server side is visible at a glance in Metro / Sentry breadcrumbs
+      // without scrolling through a 500-char preview.
+      console.log("ASK_AI_RAW_RESPONSE", {
+        status: resp.status,
+        keys: parsedKeys,
+        json,
+      });
 
       const { text: reply, source: replySource } = extractReply(json);
       // Trimmed-length check matches the render-time gate so we never
@@ -411,14 +420,24 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
       </Animated.View>
 
       {/* Centered floating panel. KeyboardAvoidingView with behavior="padding"
-          shrinks the available space from below when the keyboard appears,
-          and `justifyContent: 'center'` re-centers the panel inside the
-          remaining viewport — input + chat travel together as a single
-          locked unit, no slide-up sheet, no drag, no re-measure flicker.
-          marginHorizontal gives the panel a clear premium float against
-          the dimmed backdrop. */}
+          shrinks the available space from below when the keyboard appears.
+          When the keyboard is DOWN we center the panel in the full viewport
+          (premium "fixed centered modal" read). When the keyboard is UP we
+          pin the panel to the bottom of the padded area so the input row
+          sits directly above the keyboard — no dead-space gap between
+          input and keys, which was the alignment complaint. The switch is
+          a single style change synchronized with the KAV's own padding
+          animation, so the panel travels up smoothly with the keyboard
+          instead of teleporting. */}
       <KeyboardAvoidingView
-        style={styles.kavWrap}
+        style={[
+          styles.kavWrap,
+          { justifyContent: kbVisible ? "flex-end" : "center" },
+          // Tiny breathing space above the keyboard so the input's drop
+          // shadow / border isn't visually fused with the keyboard's top
+          // edge. Skipped when no keyboard (bottom-center already comfy).
+          kbVisible ? { paddingBottom: SP.sm } : null,
+        ]}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         // The KAV fills the entire window (parent is StyleSheet.absoluteFill)
         // so its top edge IS the device top — no offset needed. The earlier
