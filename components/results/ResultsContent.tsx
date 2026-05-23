@@ -569,7 +569,66 @@ type VerdictTone = {
   glow: string;
   /** Whether to render the dominant verdict layout vs. confidence-silence layout */
   silent: boolean;
+  /** When silent=true, the AI-derived reason shown under the HOLD word.
+   *  Set only on the silent branch — undefined elsewhere. */
+  silentReason?: string;
 };
+
+// ── Silent (HOLD) reason synthesis ──────────────────────────────────────────
+// Used to replace the generic "Need more comps to lock the call" with a real
+// AI-feeling explanation that names the actual missing signal. We branch on
+// the dominant gap (vision uncertain vs sparse comps vs upstream-flagged
+// HOLD) and, on the upstream branch, name the specific pricing context
+// ("above market", "tracks market", "below market") so the user knows why
+// the model wasn't willing to commit.
+function deriveSilentReason(args: {
+  lowVision: boolean;
+  tooFewComps: boolean;
+  upstreamHold: boolean;
+  conf: number;
+  compCount: number;
+  scanned: number | null;
+  avg: number | null;
+  ebayComps: { count?: number } | null;
+  cheaperPct: number | null;
+}): string {
+  const { lowVision, tooFewComps, upstreamHold, compCount, scanned, avg, ebayComps, cheaperPct } = args;
+  const ebayCount = Number(ebayComps?.count ?? 0);
+
+  // Vision uncertainty trumps everything — if we can't tell what the item
+  // is, no amount of comps fix the call.
+  if (lowVision) {
+    return "Visual match is uncertain — rescan with a tighter, sharper frame for a confident call.";
+  }
+  // Sparse comp set. Differentiate "zero recent sales" vs "only a couple"
+  // so the user knows whether to wait or to trust the price strip.
+  if (tooFewComps) {
+    if (ebayCount === 0 && compCount === 0) {
+      return "No recent sold comps surfaced yet. Treat this price as informational, not benchmarked.";
+    }
+    return "Comp data is thin — too few recent sales to call a firm direction with confidence.";
+  }
+  // Upstream HOLD with enough comps to talk about — explain the pricing
+  // context rather than just shrugging.
+  if (upstreamHold) {
+    if (scanned != null && avg != null) {
+      const diffPct = ((scanned - avg) / avg) * 100;
+      if (Math.abs(diffPct) < 7) {
+        return "Price tracks the market average. There's no clear edge in either direction right now.";
+      }
+      if (diffPct > 0) {
+        return "Above market, but resale signal isn't strong enough to firmly recommend passing.";
+      }
+      // diffPct < 0 — below market but HOLD
+      if (cheaperPct != null && cheaperPct >= 15) {
+        return "Strong discount on paper, but the resale data isn't deep enough to lock in the call.";
+      }
+      return "Below market, but comp variance is wide — the discount may not be as real as it looks.";
+    }
+    return "Market pricing is inconsistent across comps. Wait for cleaner signal before committing.";
+  }
+  return "Signal is thin — gather one more comp before committing.";
+}
 
 function resolveVerdictTone(activeResult: any, results: any[] | undefined): VerdictTone {
   const rawVerdict = String(activeResult?.buyVerdict || "").toUpperCase();
@@ -596,6 +655,13 @@ function resolveVerdictTone(activeResult: any, results: any[] | undefined): Verd
       sign: "",
       glow: "rgba(255,255,255,0.04)",
       silent: true,
+      silentReason: deriveSilentReason({
+        lowVision, tooFewComps, upstreamHold, conf, compCount,
+        scanned: Number.isFinite(scanned) ? scanned : null,
+        avg:     Number.isFinite(avg)     ? avg     : null,
+        ebayComps: activeResult?.ebaySoldComps ?? null,
+        cheaperPct: Number.isFinite(cheaperPct) ? cheaperPct : null,
+      }),
     };
   }
 
@@ -737,11 +803,16 @@ function VerdictHero({
           </Text>
         </Reanimated.View>
 
-        {/* Confidence-silence layout — admit uncertainty cleanly */}
+        {/* Confidence-silence layout — admit uncertainty cleanly.
+            Reason text comes from deriveSilentReason so the user sees the
+            ACTUAL gap ("Visual match uncertain — rescan", "Comp data is
+            thin", "Above market but resale signal isn't strong", etc.)
+            instead of the legacy generic "Need more comps to lock the call".
+            That makes HOLD read as a real AI opinion, not a stalled call. */}
         {tone.silent ? (
           <Reanimated.View style={subStyle as any}>
             <Text style={heroStyles.silentSub} allowFontScaling={false}>
-              Need more comps to lock the call
+              {tone.silentReason ?? "Signal is thin — gather one more comp before committing."}
             </Text>
             {Number.isFinite(scanned) ? (
               <Text style={heroStyles.silentPrice} allowFontScaling={false}>

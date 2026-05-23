@@ -169,22 +169,40 @@ export function CardDeck({
         image:    r?.image    || r?.thumbnail,
       }));
 
+    // Junk-title patterns. The server occasionally returns SERP filler
+    // ("Sponsored", "Best Sellers in …", "See more results") plus listings
+    // with hyper-aggressive marketing punctuation ("!!!!!!! HUGE DEAL"). One
+    // junk card destroys trust in the whole deck, so we reject preemptively.
+    const JUNK_TITLE = /^(sponsored|featured|advertisement|click here|see (price|more)|view ad|best sellers? in|results for|shop now)/i;
+    const PUNCT_SPAM = /([!?$*])\1{4,}/; // 5+ in a row of same punctuation
+    const JUNK_STORE = /sponsored|advertis|promoted|^ad\b/i;
+
     const dedupedAlts: CardData[] = [];
     for (const alt of rawAlts) {
       const tk = titleKey(alt.itemName);
       const ik = imageKey(alt.image);
+      const titleStr = String(alt.itemName ?? "").trim();
+      const storeStr = String(alt.store ?? "").trim();
       // Must have both image AND a finite price > 0 — otherwise the card
       // renders as a placeholder square with "$NaN" and reads as junk.
       const priceN = Number(alt.price);
       if (!alt.image) continue;
       if (!Number.isFinite(priceN) || priceN <= 0) continue;
+      // Title sanity — real product titles are at least a few words long.
+      // Anything under 8 chars is almost certainly a placeholder or a
+      // truncated SERP row that won't read as a real listing.
+      if (titleStr.length < 8) continue;
+      if (JUNK_TITLE.test(titleStr)) continue;
+      if (PUNCT_SPAM.test(titleStr)) continue;
+      // Store sanity — obvious ad/sponsor source labels go.
+      if (storeStr && JUNK_STORE.test(storeStr)) continue;
       // Skip if title OR image matches hero / any prior accepted alt.
       if (tk && seenTitles.has(tk)) continue;
       if (ik && seenImages.has(ik)) continue;
       if (tk) seenTitles.add(tk);
       if (ik) seenImages.add(ik);
       dedupedAlts.push(alt);
-      // Soft cap — 6 alts is plenty even before the premium re-sort below
+      // Soft cap — 8 alts is plenty even before the premium re-sort below
       // (display layer slices to whatever fits). Hard cap of 4 happens after
       // sort so the cheapest-and-most-relevant survive.
       if (dedupedAlts.length >= 8) break;
@@ -380,8 +398,17 @@ export function CardDeck({
         {cards.map((card, idx) => {
           const cardPrice = Number.isFinite(Number(card.price)) ? Number(card.price) : null;
           const cardIsLowest = lowestPrice != null && cardPrice != null && cardPrice === lowestPrice;
-          // Native-driver opacity dim on side cards. Active card stays at
-          // 1.0, neighbors fade to 0.74 — readable but clearly secondary.
+          // Native-driver depth choreography for the active card. We
+          // interpolate three independent values off scrollX so the deck
+          // reads as a stack of collectible cards, not a scrollview:
+          //   - opacity: side cards dim to 0.58 (clearer hierarchy than the
+          //     prior 0.74; the eye now LOCKS on the centered card)
+          //   - scale:   sides shrink to 0.93 (8% delta is the sweet spot —
+          //     visible depth without over-zoom rasterization)
+          //   - translateY: active card lifts 8px (gives a literal "this is
+          //     the hero" silhouette, like a card pulled from a deck)
+          // All three run on the UI thread (useNativeDriver via the parent
+          // RNAnimated.event) — zero JS-bridge cost during scroll.
           const inputRange = [
             (idx - 1) * SNAP,
             idx * SNAP,
@@ -389,7 +416,17 @@ export function CardDeck({
           ];
           const cardOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.74, 1.0, 0.74],
+            outputRange: [0.58, 1.0, 0.58],
+            extrapolate: "clamp",
+          });
+          const cardScale = scrollX.interpolate({
+            inputRange,
+            outputRange: [0.93, 1.0, 0.93],
+            extrapolate: "clamp",
+          });
+          const cardLift = scrollX.interpolate({
+            inputRange,
+            outputRange: [0, -8, 0],
             extrapolate: "clamp",
           });
           return (
@@ -399,6 +436,10 @@ export function CardDeck({
                 width: CARD.width,
                 marginRight: idx === cards.length - 1 ? 0 : GAP,
                 opacity: cardOpacity,
+                transform: [
+                  { scale: cardScale },
+                  { translateY: cardLift },
+                ],
               }}
               renderToHardwareTextureAndroid={IS_ANDROID}
               shouldRasterizeIOS={!IS_ANDROID}

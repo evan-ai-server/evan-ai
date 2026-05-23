@@ -33,6 +33,8 @@ import Reanimated, {
   withSpring,
   withTiming,
   withRepeat,
+  withDelay,
+  Easing,
   interpolate,
   interpolateColor,
   Extrapolation,
@@ -377,6 +379,147 @@ function VolatileAssetBadge({ signal }: { signal: VelocitySignal }) {
   );
 }
 
+// ─── Premium polish primitives ───────────────────────────────────────────────
+// These three components add the "luxury AI scanner" feel on top of the hero
+// card. None require new server fields — they animate or derive from data
+// the card already receives.
+
+// AmbientGlow — soft pulsing colored aura behind the hero card. Sits between
+// the card background and the image scrim so it reads as light bleeding
+// through the panel, not as a noisy overlay. Color follows verdict tone
+// (BUY=green halo, PASS=amber halo, HOLD=neutral). Runs forever on the UI
+// thread via Reanimated's worklet loop — zero JS-bridge cost.
+type GlowTone = "buy" | "hold" | "pass";
+function AmbientGlow({ tone }: { tone: GlowTone }) {
+  const pulse = useSharedValue(0.45);
+  useEffect(() => {
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(0.85, { duration: 2400, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0.40, { duration: 2400, easing: Easing.inOut(Easing.sin) }),
+      ),
+      -1,
+      false,
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const animStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
+  const color =
+    tone === "buy"  ? "rgba(80,255,160,0.18)" :
+    tone === "pass" ? "rgba(255,120,100,0.15)" :
+                      "rgba(255,255,255,0.06)";
+  return (
+    <Reanimated.View
+      pointerEvents="none"
+      style={[styles.ambientGlow, { backgroundColor: color }, animStyle as any]}
+      renderToHardwareTextureAndroid={IS_ANDROID}
+      shouldRasterizeIOS={!IS_ANDROID}
+    />
+  );
+}
+
+// BadgeShimmer — one-time diagonal highlight sweep across the badge on mount.
+// Used on positive-status labels (LOWEST, TOP FLIP, HIDDEN GEM, BEST DEAL,
+// RARE LOW, UNCOMMON) so the eye instantly catches "this is the winning
+// card" the moment the deck lands. Runs once, then the View remains
+// off-screen translateX so it can't catch taps or paint cost.
+const SHIMMER_LABELS = new Set([
+  "LOWEST", "TOP FLIP", "HIDDEN GEM", "BEST DEAL",
+  "RARE LOW", "UNCOMMON",
+]);
+function BadgeShimmer() {
+  const x = useSharedValue(-100);
+  useEffect(() => {
+    x.value = -100;
+    x.value = withDelay(420, withTiming(180, { duration: 1100, easing: Easing.out(Easing.cubic) }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Cast transform — TS narrows each tuple entry by discriminated union,
+  // and mixing translateX + skewX in one array trips the type guard even
+  // though it's a perfectly valid RN transform at runtime.
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: x.value }, { skewX: "-22deg" }] as any,
+  }));
+  return (
+    <Reanimated.View
+      pointerEvents="none"
+      style={[styles.shimmer, animStyle as any]}
+    />
+  );
+}
+
+// ─── Hero insight derivation ─────────────────────────────────────────────────
+// All four helpers below read the SAME data the card already gets — no new
+// server fields. They turn quiet numbers into the emotional signals the
+// user actually reads ("Strong market data · 12 comps", "Selling fast",
+// "RARE LOW"). Returns null when the underlying signal is too thin to
+// claim anything, so the UI stays quiet instead of guessing.
+
+function deriveConfidence(data: CardData): string | null {
+  const c = Number(data.ebaySoldComps?.count ?? 0);
+  const conf = Number(data.visionConfidence ?? 0);
+  if (c >= 12) return "Strong market data";
+  if (c >= 6)  return `Active market · ${c} comps`;
+  if (c >= 3)  return `Verified · ${c} comps`;
+  if (c >= 1)  return `Limited history · ${c} comp${c === 1 ? "" : "s"}`;
+  if (conf >= 0.85) return "Visual match verified";
+  if (conf >= 0.55) return `Visual match ${Math.round(conf * 100)}%`;
+  return null;
+}
+
+type PulseTone = "hot" | "active" | "rare" | "neutral";
+function derivePulse(data: CardData): { text: string; tone: PulseTone } | null {
+  const tier = data.ebaySoldComps?.velocityTier;
+  const days = data.ebaySoldComps?.avgDaysToSell;
+  if (tier === "hot")    return { text: days ? `Selling fast · ~${days}d to sell` : "Selling fast", tone: "hot" };
+  if (tier === "active") return { text: "Active resale demand", tone: "active" };
+  if (tier === "rare")   return { text: "Rare find · limited inventory", tone: "rare" };
+  const advice = data.trendIntel?.buyAdvice;
+  if (advice && typeof advice === "string") return { text: advice, tone: "neutral" };
+  return null;
+}
+
+type RarityTone = "rare" | "uncommon" | "peak";
+function deriveRarity(data: CardData): { text: string; tone: RarityTone } | null {
+  const pct = Number(data.cheaperPct ?? 0);
+  const price = Number(data.price ?? NaN);
+  const histLow = Number(data.historicalLow ?? NaN);
+  const histHigh = Number(data.historicalHigh ?? NaN);
+  if (pct >= 40) return { text: "RARE LOW", tone: "rare" };
+  if (Number.isFinite(price) && Number.isFinite(histLow) && price <= histLow * 1.05) {
+    return { text: "NEAR LOW", tone: "rare" };
+  }
+  if (pct >= 22) return { text: "UNCOMMON", tone: "uncommon" };
+  if (Number.isFinite(price) && Number.isFinite(histHigh) && price >= histHigh * 0.93) {
+    return { text: "AT PEAK", tone: "peak" };
+  }
+  return null;
+}
+
+function deriveWhy(data: CardData, isLowest: boolean): string[] {
+  // Prefer server-derived reasons when present — they're already tailored
+  // to the user's exact scan.
+  if (Array.isArray(data.rankWhy) && data.rankWhy.length) {
+    return data.rankWhy.filter((s) => typeof s === "string" && s.trim()).slice(0, 3);
+  }
+  if (Array.isArray(data.scanWhy) && data.scanWhy.length) {
+    return data.scanWhy.filter((s) => typeof s === "string" && s.trim()).slice(0, 3);
+  }
+  // Fallback: synthesize 2–3 bullets from signals already on the card.
+  const out: string[] = [];
+  if (isLowest) out.push("Lowest verified price in comps");
+  if ((data.visionConfidence ?? 0) >= 0.7) out.push("Matches the item we scanned");
+  const store = data.store || data.source;
+  if (store) {
+    const TRUSTED = /amazon|ebay|target|walmart|best.?buy|costco|kohls|home.?depot/i;
+    if (TRUSTED.test(String(store))) out.push(`Trusted seller · ${store}`);
+    else out.push(`Listed on ${store}`);
+  }
+  const c = Number(data.ebaySoldComps?.count ?? 0);
+  if (c >= 3 && out.length < 3) out.push(`${c} recent sold comps`);
+  return out.slice(0, 3);
+}
+
 // ─── Card label helper ────────────────────────────────────────────────────────
 // Market Spectrum labels use scannedPrice as the anchor (what user is evaluating).
 // Hero labels additionally respond to isLowest (VALUE FLOOR) and flip verdict.
@@ -668,8 +811,29 @@ export function ResultCard({
   const confHigh = Number.isFinite(Number(data.historicalHigh)) ? Number(data.historicalHigh) : null;
   const hasConfRange = isHero && confLow != null && confHigh != null && confHigh > confLow;
 
+  // ── Hero polish derivations (premium insight strip) ────────────────────────
+  // Computed once at render and only consulted on the hero card. Each value
+  // gracefully returns null when its underlying signal is thin, so the UI
+  // doesn't fake confidence it doesn't have.
+  const glowTone: GlowTone = (() => {
+    if (!isHero) return "hold";
+    const v = String(data.buyVerdict || "").toUpperCase();
+    if (v === "BUY" || hasSaving) return "buy";
+    if (v === "PASS") return "pass";
+    return "hold";
+  })();
+  const confidenceText = isHero ? deriveConfidence(data) : null;
+  const pulse          = isHero ? derivePulse(data) : null;
+  const rarity         = isHero ? deriveRarity(data) : null;
+  const whyChips       = isHero ? deriveWhy(data, isLowest) : [];
+
   return (
     <View ref={cardRef} collapsable={false} style={[styles.card, isHero ? SH.cardActive : SH.card]}>
+      {/* Ambient glow — pulses under the image section on hero cards, gives
+          the deck the "luxury AI scanner" breathing aura the user asked
+          for. pointerEvents="none" so it never intercepts taps. */}
+      {isHero ? <AmbientGlow tone={glowTone} /> : null}
+
       {/* ── IMAGE SECTION (60%) ───────────────────────────────── */}
       <View style={styles.imageSection}>
         {imageUri ? (
@@ -712,7 +876,12 @@ export function ResultCard({
         <View style={styles.imageScrim2} pointerEvents="none" />
         <View style={styles.imageScrim3} pointerEvents="none" />
 
-        {/* Card label badge (top-left) */}
+        {/* Card label badge (top-left). Premium-status labels (LOWEST,
+            HIDDEN GEM, TOP FLIP, BEST DEAL, RARE LOW, UNCOMMON) get a
+            one-time shimmer sweep on mount — the eye locks onto "this is
+            the winning card" the moment the deck lands. Non-premium labels
+            (MATCH, ANCHOR, PREMIUM) stay quiet. The shimmer overlay is
+            clipped by `overflow: hidden` on the badge so it never bleeds. */}
         {label ? (
           <View style={[
             styles.labelBadge,
@@ -726,6 +895,7 @@ export function ResultCard({
             >
               {label.text}
             </Text>
+            {SHIMMER_LABELS.has(label.text) ? <BadgeShimmer /> : null}
           </View>
         ) : null}
 
@@ -774,6 +944,37 @@ export function ResultCard({
               </View>
             ) : null}
 
+            {/* Rarity chip — only fires when the deal is genuinely unusual
+                (40%+ off, near historical low, or — inverted — at peak).
+                Sits inline with savings so the "this is rare" signal lands
+                in the same eye-stop as the price itself, not buried below. */}
+            {rarity ? (
+              <View style={[
+                styles.rarityChip,
+                rarity.tone === "rare"     && styles.rarityChipRare,
+                rarity.tone === "uncommon" && styles.rarityChipUncommon,
+                rarity.tone === "peak"     && styles.rarityChipPeak,
+              ]}>
+                <Ionicons
+                  name={rarity.tone === "peak" ? "trending-up" : "star"}
+                  size={10}
+                  color={
+                    rarity.tone === "peak"     ? "rgba(255,180,100,0.95)" :
+                    rarity.tone === "uncommon" ? "rgba(180,255,200,0.85)" :
+                                                 "rgba(180,255,200,1)"
+                  }
+                />
+                <Text style={[
+                  styles.rarityChipText,
+                  rarity.tone === "rare"     && { color: "rgba(180,255,200,1)" },
+                  rarity.tone === "uncommon" && { color: "rgba(180,255,200,0.85)" },
+                  rarity.tone === "peak"     && { color: "rgba(255,180,100,0.95)" },
+                ]} allowFontScaling={false} numberOfLines={1}>
+                  {rarity.text}
+                </Text>
+              </View>
+            ) : null}
+
             {delta != null && !isHero ? (
               <View style={[
                 styles.deltaPill,
@@ -814,6 +1015,86 @@ export function ResultCard({
               </>
             ) : null}
           </View>
+
+          {/* Premium insight strip — one tight line with confidence on the
+              left and a tinted market-pulse line on the right. Replaces
+              what used to be three separate hero-only intel blocks with a
+              single high-signal sentence. Confidence reads "Strong market
+              data" / "Active market · N comps"; pulse reads "Selling fast",
+              "Active resale demand", etc. Either half drops out cleanly
+              when its underlying signal isn't strong enough to claim. */}
+          {isHero && (confidenceText || pulse) ? (
+            <View style={styles.insightStrip}>
+              {confidenceText ? (
+                <View style={styles.insightCell}>
+                  <View style={styles.insightDot} />
+                  <Text
+                    style={styles.insightText}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                  >
+                    {confidenceText}
+                  </Text>
+                </View>
+              ) : null}
+              {confidenceText && pulse ? <View style={styles.insightSep} /> : null}
+              {pulse ? (
+                <View style={styles.insightCell}>
+                  <Ionicons
+                    name={
+                      pulse.tone === "hot"    ? "flame" :
+                      pulse.tone === "active" ? "trending-up" :
+                      pulse.tone === "rare"   ? "diamond-outline" :
+                                                "pulse"
+                    }
+                    size={10}
+                    color={
+                      pulse.tone === "hot"    ? "rgba(255,140,100,0.95)" :
+                      pulse.tone === "active" ? "rgba(120,255,170,0.92)" :
+                      pulse.tone === "rare"   ? "rgba(200,200,255,0.90)" :
+                                                "rgba(255,255,255,0.72)"
+                    }
+                  />
+                  <Text
+                    style={[
+                      styles.insightText,
+                      pulse.tone === "hot"    && { color: "rgba(255,160,120,0.95)" },
+                      pulse.tone === "active" && { color: "rgba(140,255,180,0.92)" },
+                      pulse.tone === "rare"   && { color: "rgba(210,210,255,0.92)" },
+                    ]}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                  >
+                    {pulse.text}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/* Why-this-listing — 2–3 micro-bullets that justify the pick
+              psychologically. Pulled from server-provided rankWhy/scanWhy
+              when present, otherwise synthesized from lowest/match/seller/
+              comp count. Hero only — alt cards use the delta pill instead. */}
+          {isHero && whyChips.length > 0 ? (
+            <View style={styles.whyBlock}>
+              <Text style={styles.whyHeader} allowFontScaling={false}>
+                PICKED BECAUSE
+              </Text>
+              {whyChips.map((w, i) => (
+                <View key={i} style={styles.whyRow}>
+                  <View style={styles.whyBullet} />
+                  <Text
+                    style={styles.whyText}
+                    allowFontScaling={false}
+                    numberOfLines={2}
+                  >
+                    {w}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
 
           {/* Hero-only: price history sparkline (Feature 2) */}
           {isHero ? (
@@ -1250,6 +1531,8 @@ const styles = StyleSheet.create({
   },
 
   // ── Card label badge ──────────────────────────────────────────────────────
+  // overflow:hidden clips the BadgeShimmer overlay so the diagonal sweep
+  // stays inside the badge rectangle instead of bleeding across the image.
   labelBadge: {
     position: "absolute",
     top: 12,
@@ -1258,6 +1541,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 4,
+    overflow: "hidden",
   },
   labelBadgeHeavy: {
     borderWidth: 1.5,
@@ -1278,4 +1562,143 @@ const styles = StyleSheet.create({
     ...TY.displayLg,
   },
 
+  // ── Ambient glow (hero only) ──────────────────────────────────────────────
+  // Soft tinted aura that pulses behind the image section. Sits at the very
+  // top of the card so the glow reads as light "bleeding through" the image
+  // from above. Z-stacked below everything (it's the first child of the
+  // card View). Wide + tall so the radial-feeling edge is soft, not boxy.
+  ambientGlow: {
+    position: "absolute",
+    top: -40,
+    left: -20,
+    right: -20,
+    height: IMAGE_H + 80,
+    borderRadius: 200,
+  },
+
+  // ── Badge shimmer (premium labels only) ──────────────────────────────────
+  // Thin diagonal highlight that sweeps across LOWEST / TOP FLIP / HIDDEN
+  // GEM / BEST DEAL / RARE LOW / UNCOMMON once on mount. Width is wider
+  // than the badge so the leading + trailing edges fade in/out cleanly via
+  // skewX rather than a hard cut.
+  shimmer: {
+    position: "absolute",
+    top: -8,
+    bottom: -8,
+    width: 26,
+    left: 0,
+    backgroundColor: "rgba(255,255,255,0.42)",
+  },
+
+  // ── Rarity chip (in price row, hero only) ────────────────────────────────
+  // Tiny chip rendered alongside the savings pill. Three tones — rare /
+  // uncommon / peak — keep the price row legible while signalling deal
+  // intelligence without another row of chrome.
+  rarityChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: R.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(8,18,12,0.72)",
+    borderColor: "rgba(180,255,200,0.38)",
+  },
+  rarityChipRare: {
+    backgroundColor: "rgba(8,22,14,0.86)",
+    borderColor: "rgba(180,255,200,0.55)",
+  },
+  rarityChipUncommon: {
+    backgroundColor: "rgba(8,18,12,0.66)",
+    borderColor: "rgba(180,255,200,0.30)",
+  },
+  rarityChipPeak: {
+    backgroundColor: "rgba(28,18,8,0.74)",
+    borderColor: "rgba(255,180,100,0.40)",
+  },
+  rarityChipText: {
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    color: "rgba(180,255,200,0.95)",
+  },
+
+  // ── Insight strip (confidence · pulse) ────────────────────────────────────
+  // One-line summary directly under the meta row. Two cells, each optional,
+  // separated by a vertical hairline. Dot+text on the left for confidence,
+  // tinted icon+text on the right for market pulse. The horizontal layout
+  // keeps vertical density low so the hero panel doesn't bloat.
+  insightStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SP.sm,
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  insightCell: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    flexShrink: 1,
+  },
+  insightDot: {
+    width: 5,
+    height: 5,
+    borderRadius: R.pill,
+    backgroundColor: "rgba(180,255,200,0.85)",
+  },
+  insightSep: {
+    width: StyleSheet.hairlineWidth,
+    height: 11,
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  insightText: {
+    ...TY.cap,
+    fontSize: 11,
+    color: C.text2,
+    fontWeight: "600",
+    letterSpacing: 0.2,
+    flexShrink: 1,
+  },
+
+  // ── Why this listing (hero only) ──────────────────────────────────────────
+  // 2–3 micro-bullets that justify the pick. Header is a tiny uppercase
+  // eyebrow ("PICKED BECAUSE"), bullets are thin dots aligned vertically.
+  // Kept compact so this whole block adds <60px of card height.
+  whyBlock: {
+    marginTop: SP.sm,
+    paddingTop: SP.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.08)",
+  },
+  whyHeader: {
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.4,
+    color: C.text4,
+    marginBottom: 4,
+  },
+  whyRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 3,
+  },
+  whyBullet: {
+    width: 3,
+    height: 3,
+    borderRadius: R.pill,
+    backgroundColor: "rgba(180,255,200,0.75)",
+    marginTop: 6,
+    flexShrink: 0,
+  },
+  whyText: {
+    ...TY.label,
+    fontSize: 11,
+    lineHeight: 15,
+    color: C.text2,
+    fontWeight: "500",
+    flex: 1,
+  },
 });
