@@ -1340,27 +1340,38 @@ const styles = StyleSheet.create({
   },
 
   // ── Price row ─────────────────────────────────────────────────────────────
+  // Wrap is ON: when price + savings + rarity overflow the card's inner
+  // width (the field "★ RARE LOW" → "★ RARE LO" clip), the rarity pill
+  // drops to the next line cleanly instead of being chopped at the right
+  // edge. Vertical row-gap matches horizontal gap so wrapped pills land
+  // on the same grid as the inline ones.
   priceRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: SP.sm,
-    flexWrap: "nowrap",
+    gap: 6,
+    rowGap: 6,
+    flexWrap: "wrap",
   },
   price: {
     ...TY.price,
     color: C.text,
     flexShrink: 0,
   },
+  // Pills: tightened horizontal padding (7→6) + min height so the chip
+  // silhouette stays consistent whether wrapped or inline. flexShrink lets
+  // them give up a sliver before forcing a wrap, so very narrow cards
+  // still keep two pills on one row before bumping the third down.
   savingsPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
     paddingVertical: 3,
     borderRadius: R.pill,
     backgroundColor: "rgba(0,210,120,0.08)",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(0,210,120,0.16)",
+    flexShrink: 1,
   },
   savingsText: {
     ...TY.label,
@@ -1373,10 +1384,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
     paddingVertical: 2.5,
     borderRadius: R.pill,
     borderWidth: StyleSheet.hairlineWidth,
+    flexShrink: 1,
   },
   deltaText: {
     ...TY.label,
@@ -1565,6 +1577,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     backgroundColor: "rgba(8,18,12,0.62)",
     borderColor: "rgba(180,255,200,0.28)",
+    flexShrink: 1,
   },
   rarityChipRare: {
     backgroundColor: "rgba(8,22,14,0.74)",

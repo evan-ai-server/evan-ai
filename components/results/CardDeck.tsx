@@ -505,11 +505,14 @@ export function CardDeck({
 const styles = StyleSheet.create({
   deckOuter: {
     alignItems: "center",
-    // Negative top margin pulls the deck up under the verdict by ~10px.
-    // Combined with the compressed HOLD bubble + tighter identity row,
-    // the active card lands centered with breathing room instead of
-    // bottom-clipped by the dock.
-    marginTop: -SP.sm,
+    // No negative margin — the previous -SP.sm lift made the card's top
+    // edge crash into the COST/MARKET strip on HOLD scans (visible in the
+    // field screenshots as the card image overlapping the verdict's
+    // bottom row). Zero margin keeps the deck cleanly below the verdict
+    // with breathing room. Card visibility above the dock is handled by
+    // the trimmed hero card body + dock spacer math, not by pulling the
+    // deck up into the verdict.
+    marginTop: 0,
   },
 
   counterRow: {

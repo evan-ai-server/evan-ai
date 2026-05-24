@@ -642,10 +642,17 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
             </Pressable>
           </View>
 
-          {/* Messages */}
+          {/* Messages — height clamped tighter when the keyboard is up so
+              the drawer (header + list + input) fits comfortably between
+              the safe-area top and the keyboard top on every iPhone. With
+              the keyboard down we restore the roomier list cap so a long
+              primer + first reply doesn't need to scroll. */}
           <ScrollView
             ref={scrollRef}
-            style={styles.messageList}
+            style={[
+              styles.messageList,
+              { maxHeight: kbVisible ? 240 : 360 },
+            ]}
             contentContainerStyle={styles.messageContent}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}

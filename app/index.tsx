@@ -12799,6 +12799,13 @@ onBarcodeScanned={(d) => {
     <View style={styles.previewOverlay}>
       <Image source={{ uri: photo.uri }} style={styles.previewImage} />
 
+      {/* Bottom scrim — soft dark fade so the input/buttons read cleanly
+          regardless of what's in the photo. Pure black at the bottom,
+          transparent at the top. Sits BEHIND the controls but ABOVE the
+          image. No blur, no rasterization cost. */}
+      <View pointerEvents="none" style={styles.previewBottomScrim1} />
+      <View pointerEvents="none" style={styles.previewBottomScrim2} />
+
       <RNAnimated.View
         style={{
           position: "absolute",
@@ -12809,46 +12816,52 @@ onBarcodeScanned={(d) => {
           transform: [{ translateY: previewPanelY }],
         }}
       >
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.priceLabel}>Original price</Text>
-            <TextInput
-              value={scanPriceInput}
-              onChangeText={setScanPriceInput}
-              placeholder="$0.00"
-              placeholderTextColor="rgba(255,255,255,0.35)"
-              keyboardType="numeric"
-              style={styles.priceInput}
-              returnKeyType="done"
-              onSubmitEditing={() => Keyboard.dismiss()}
-            />
+        {/* Glass card around the controls — the photo behind is no longer
+            visible through the controls, so every label/input/button reads
+            with full contrast instead of washing out against busy product
+            imagery. */}
+        <View style={styles.previewControlCard}>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.priceLabel}>Original price</Text>
+              <TextInput
+                value={scanPriceInput}
+                onChangeText={setScanPriceInput}
+                placeholder="$0.00"
+                placeholderTextColor="rgba(255,255,255,0.40)"
+                keyboardType="numeric"
+                style={styles.priceInput}
+                returnKeyType="done"
+                onSubmitEditing={() => Keyboard.dismiss()}
+              />
+            </View>
           </View>
+
+          {/* Optional item name / brand hint — expandable chip */}
+          <ItemHintInput
+            value={itemNameInput}
+            onChange={setItemNameInput}
+            resetKey={photo?.uri ?? null}
+          />
+
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+            <Pressable onPress={reset} style={[styles.modalSecondary, { flex: 1 }]}>
+              <Text style={styles.modalSecondaryText}>Retake</Text>
+            </Pressable>
+
+            <Pressable
+              onPress={handleUsePhoto}
+              disabled={!canUsePhoto}
+              style={[styles.modalPrimary, { flex: 1, marginBottom: 0, opacity: canUsePhoto ? 1 : 0.45 }]}
+            >
+              <Text style={styles.modalPrimaryText}>Use photo →</Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.previewHint}>
+            Enter both prices · name helps AI find it faster
+          </Text>
         </View>
-
-        {/* Optional item name / brand hint — expandable chip */}
-        <ItemHintInput
-          value={itemNameInput}
-          onChange={setItemNameInput}
-          resetKey={photo?.uri ?? null}
-        />
-
-        <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-          <Pressable onPress={reset} style={[styles.modalSecondary, { flex: 1 }]}>
-            <Text style={styles.modalSecondaryText}>Retake</Text>
-          </Pressable>
-
-          <Pressable
-            onPress={handleUsePhoto}
-            disabled={!canUsePhoto}
-            style={[styles.modalPrimary, { flex: 1, marginBottom: 0, opacity: canUsePhoto ? 1 : 0.45 }]}
-          >
-            <Text style={styles.modalPrimaryText}>Use photo →</Text>
-          </Pressable>
-        </View>
-
-        <Text style={styles.previewHint}>
-          Enter both prices · name helps AI find it faster
-        </Text>
       </RNAnimated.View>
     </View>
   ) : null}
@@ -20477,6 +20490,39 @@ snapButton: {
 },
   previewOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: TOK.C.bg },
   previewImage: { width: "100%", height: "100%", resizeMode: "cover" },
+  // Two-band bottom scrim. The upper band is a soft transparent-to-dark
+  // gradient surrogate (mid-alpha fill); the lower band is a near-opaque
+  // base behind the actual controls. Combined they replace what would
+  // otherwise be a busy photo bleeding through the input labels and
+  // buttons — readability is now anchored to a known dark backdrop.
+  previewBottomScrim1: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 360,
+    backgroundColor: "rgba(0,0,0,0.42)",
+  },
+  previewBottomScrim2: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 220,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  // Floating glass control card. Sits directly behind the price input,
+  // name chip, and Retake/Use buttons so every label reads with full
+  // contrast against a known fill instead of fighting product photo
+  // luminance. Hairline border keeps the premium edge without the heavy
+  // outlined-modal look.
+  previewControlCard: {
+    backgroundColor: "rgba(10,10,10,0.78)",
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.10)",
+    padding: 14,
+  },
   previewBtnsRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -20512,29 +20558,29 @@ snapButton: {
   },
   mutedStrong: { color: "rgba(255,255,255,0.75)", fontWeight: "800" },
   priceLabel: {
-    color: "rgba(255,255,255,0.55)",
-    fontWeight: "700",
+    color: "rgba(255,255,255,0.78)",
+    fontWeight: "800",
     marginBottom: 6,
     fontSize: 11,
-    letterSpacing: 1.0,
+    letterSpacing: 1.2,
     textTransform: "uppercase",
   },
   priceInput: {
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.22)",
-    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.18)",
+    borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 14,
     color: "white",
-    backgroundColor: "rgba(255,255,255,0.07)",
+    backgroundColor: "rgba(255,255,255,0.10)",
     fontSize: 17,
     fontWeight: "700",
     letterSpacing: 0.2,
   },
   previewHint: {
-    color: "rgba(255,255,255,0.35)",
+    color: "rgba(255,255,255,0.55)",
     marginTop: 10,
-    fontWeight: "500",
+    fontWeight: "600",
     fontSize: 11,
     textAlign: "center",
     letterSpacing: 0.3,
