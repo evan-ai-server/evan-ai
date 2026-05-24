@@ -223,7 +223,8 @@ export function CardDeck({
     // leads with the cheapest credible matches. Equal-price ties break by
     // image presence (alread guaranteed), then by title length (shorter
     // = cleaner SEO title, usually a real listing not a placeholder).
-    const alts = dedupedAlts.sort((a, b) => {
+    // Sort: premium anchors tail, then ascending price, then shorter title.
+    const sorted = dedupedAlts.sort((a, b) => {
       const pa = Number(a.price ?? Infinity);
       const pb = Number(b.price ?? Infinity);
       const aIsPrem = pa > anchorThreshold;
@@ -233,6 +234,19 @@ export function CardDeck({
       const la = String(a.itemName ?? "").length;
       const lb = String(b.itemName ?? "").length;
       return la - lb;
+    });
+    // Store diversity: cap same-source results at 2 so a single retailer
+    // (e.g. 4 near-identical Amazon listings) can't flood the visible deck.
+    // Anchors sorted to tail absorb any per-store cap hits first so the
+    // cheapest distinct results lead the deck.
+    const storeCount: Record<string, number> = {};
+    const storeKey = (s: any): string =>
+      norm(String(s || "other")).split(" ")[0] || "other";
+    const alts = sorted.filter(a => {
+      const sk = storeKey(a.store);
+      if ((storeCount[sk] || 0) >= 2) return false;
+      storeCount[sk] = (storeCount[sk] || 0) + 1;
+      return true;
     }).slice(0, 4);
 
     console.log("CARD_DECK_BUILD", {
@@ -522,7 +536,7 @@ const styles = StyleSheet.create({
     // and zero margin still read as "jammed" against the verdict's
     // bottom edge. SP.md lands the card with visible whitespace above
     // it without pushing the bottom under the dock.
-    marginTop: SP.md,
+    marginTop: SP.xs,
   },
 
   counterRow: {

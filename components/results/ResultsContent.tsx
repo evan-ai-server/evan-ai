@@ -914,7 +914,7 @@ const heroStyles = StyleSheet.create({
   outer: {
     paddingHorizontal: SP.lg,
     paddingTop: SP.sm,
-    paddingBottom: SP.xs,
+    paddingBottom: 0,
   },
   // BUY/PASS verdict capsule. Extra paddingTop (xxl + sm) gives the
   // verdict word (PASS / BUY) ~8px more headroom inside the capsule so
@@ -1027,8 +1027,8 @@ const heroStyles = StyleSheet.create({
   strip: {
     flexDirection: "row",
     gap: SP.xxl,
-    marginTop: SP.lg,
-    paddingTop: SP.md,
+    marginTop: SP.sm,
+    paddingTop: SP.xs,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,0.05)",
     alignSelf: "stretch",
