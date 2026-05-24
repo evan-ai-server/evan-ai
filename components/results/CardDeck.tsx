@@ -39,7 +39,8 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from "react-native";
-import * as Haptics from "expo-haptics";
+// Haptics import removed — snap-on-swipe is silent now (carousel
+// movement is passive, not a confirmation moment).
 import { C, SP, R, CARD, SCREEN, EASE_PANTHERE } from "../design/DS";
 import { ResultCard, CardData } from "./ResultCard";
 
@@ -66,7 +67,11 @@ interface CardDeckProps {
   isNet?: boolean;
 }
 
-const snapHaptic = () => { try { Haptics.selectionAsync(); } catch {} };
+// Snap haptic removed — the deck used to buzz on every momentum-scroll
+// end. Carousel swiping is passive browsing, not a confirmation event,
+// so the buzz read as arcade noise. Silent now; the visual snap +
+// scale animation already telegraphs "we landed on a new card."
+const snapHaptic = () => {};
 
 // ─── Main CardDeck ────────────────────────────────────────────────────────────
 export function CardDeck({
@@ -372,14 +377,10 @@ export function CardDeck({
         </View>
       ) : null}
 
-      {/* ── External resale-terminal halo ───────────────────────────
-          Soft green ellipse pinned to viewport center, sits BEHIND the
-          card scroll row. Since snapped cards always land at viewport
-          center, this halo is the "floating premium object" glow the
-          internal AmbientGlow can't deliver (the card has overflow:hidden
-          so its own glow is clipped by the rounded rect). Pointer-events
-          disabled so it never blocks card taps. */}
-      <View pointerEvents="none" style={styles.deckHalo} />
+      {/* External deck halo removed — was a soft emerald ellipse behind
+          the active card. It read as a "visible green blob" rather than
+          ambient depth. The active card's own shadow + the scale/lift
+          choreography carry the focal-point cue without any color wash. */}
 
       {/* ── Card row ──────────────────────────────────────────────── */}
       <RNAnimated.ScrollView
@@ -422,24 +423,20 @@ export function CardDeck({
             idx * SNAP,
             (idx + 1) * SNAP,
           ];
-          // Side-card opacity bumped 0.42 → 0.62. With the prior 0.42 the
-          // peeked alternates read as "barely there" — users reported the
-          // deck feeling like a single-card renderer when in fact 2+ cards
-          // were rendered the whole time. 0.62 keeps clear visual hierarchy
-          // (active card still the obvious focal point at 1.0) while making
-          // the "there's more to swipe" cue land at first glance.
+          // Side-card visibility tuned to the "subtle peek, not dominate"
+          // spec: opacity 0.40 (in the 0.35-0.45 band), scale 0.89 (in
+          // the 0.88-0.90 band). Active card at exactly 1.0 — no zoom
+          // bump so the centered card sits at its natural size and the
+          // peek alternates read as "lower-tier siblings" rather than
+          // competing focal points.
           const cardOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.62, 1.0, 0.62],
+            outputRange: [0.40, 1.0, 0.40],
             extrapolate: "clamp",
           });
-          // Active card gets a subtle 1.02 zoom — feels "in focus" / "lens
-          // pulled forward" without overlapping the adjacent peek. Side
-          // cards shrink to 0.92 (gentler than the prior 0.89 so the peek
-          // silhouette is more obviously a real card, not a thumbnail).
           const cardScale = scrollX.interpolate({
             inputRange,
-            outputRange: [0.92, 1.02, 0.92],
+            outputRange: [0.89, 1.0, 0.89],
             extrapolate: "clamp",
           });
           const cardLift = scrollX.interpolate({
@@ -549,23 +546,6 @@ const styles = StyleSheet.create({
     width: SCREEN.width,
     height: CARD.height + 44,
     overflow: "visible",
-  },
-
-  // ── Resale-terminal halo ──────────────────────────────────────────────────
-  // Soft green wash positioned absolutely behind the card row, centered in
-  // the viewport (where the snapped card always lands). Absolute children
-  // ignore alignSelf in RN, so the centering uses explicit left math against
-  // SCREEN.width. Wide + tall with heavy borderRadius so the edge falloff
-  // feels radial. Alpha is intentionally low (~0.10) — the eye reads it as
-  // "the air around this card is warmer," not as a colored panel.
-  deckHalo: {
-    position: "absolute",
-    top: 36,
-    left: (SCREEN.width - CARD.width * 1.18) / 2,
-    width: CARD.width * 1.18,
-    height: CARD.height * 0.92,
-    borderRadius: 240,
-    backgroundColor: "rgba(80,220,150,0.10)",
   },
 
   dotsRow: {

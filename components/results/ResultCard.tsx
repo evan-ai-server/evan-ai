@@ -830,10 +830,10 @@ export function ResultCard({
 
   return (
     <View ref={cardRef} collapsable={false} style={[styles.card, isHero ? SH.cardActive : SH.card]}>
-      {/* Ambient glow — pulses under the image section on hero cards, gives
-          the deck the "luxury AI scanner" breathing aura the user asked
-          for. pointerEvents="none" so it never intercepts taps. */}
-      {isHero ? <AmbientGlow tone={glowTone} /> : null}
+      {/* Ambient glow removed — the prior pulsing emerald aura read as a
+          "visible effect behind the card" rather than premium ambient.
+          The card now relies on its own shadow + the cardActive lift for
+          depth. No green wash. */}
 
       {/* ── IMAGE SECTION (60%) ───────────────────────────────── */}
       <View style={styles.imageSection}>

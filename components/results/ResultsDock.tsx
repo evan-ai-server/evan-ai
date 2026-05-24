@@ -349,17 +349,16 @@ const styles = StyleSheet.create({
     shadowRadius: 36,
     elevation: 16,
   },
-  // Main fill. Color is a very-slightly-emerald-tinted near-black
-  // (R8 G12 B10) instead of pure (4,4,4). The shift is below the eye's
-  // threshold for "this is green" but reads as "the glass has warmth"
-  // — premium dark surface, not a flat black slab.
+  // Main fill — neutral near-black. Any emerald undertone was reading
+  // as a green tint to the user; reverted to pure dark for a clean
+  // premium glass look. Depth comes from the blur + top fade + shadow.
   dockOverlay: {
     position: "absolute",
     top: 32,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(8,12,10,0.50)",
+    backgroundColor: "rgba(4,4,4,0.50)",
   },
   // Bottom vignette — a single short dark band at the device edge.
   // Pure black at low alpha, no green. Softens the optical edge where
