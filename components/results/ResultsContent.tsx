@@ -736,6 +736,11 @@ function VerdictHero({
       contextLine = "MATCHES MARKET";
     }
   }
+  // PASS + below-market reads as contradictory ("39% UNDER MARKET" sounds
+  // like a win). Replace with neutral copy that doesn't imply a good deal.
+  if (tone.word === "PASS" && contextLine.includes("UNDER MARKET")) {
+    contextLine = "NOT ENOUGH EDGE";
+  }
 
   // Sold range across comps for the strip
   const compPrices = (results || [])
