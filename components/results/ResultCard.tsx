@@ -790,10 +790,23 @@ export function ResultCard({
 
   const conf = Number(data.visionConfidence ?? 0);
 
-  // Savings (hero only)
+  // Savings (hero only).
+  // Verdict gate: the green "% less" / "save $X" pill is a WIN signal —
+  // it must NEVER fire on HOLD / PASS even when the server surfaces a
+  // positive savedAmount (the listing might be below market while the
+  // verdict still says don't buy due to weak resale / low confidence).
+  // Showing a green savings celebration under a HOLD verdict is the
+  // contradiction the polish pass calls out. On non-win verdicts the
+  // pill is suppressed entirely; the dollar price still shows, the
+  // confRange shows, and the cardLabel above carries the cautionary tag.
   const saved     = Number.isFinite(Number(data.savedAmount)) ? Number(data.savedAmount) : null;
   const savedPct  = Number.isFinite(Number(data.cheaperPct))  ? Number(data.cheaperPct) : null;
-  const hasSaving = isHero && saved != null && saved > 0;
+  const verdictStr = String(data.buyVerdict || "").toUpperCase();
+  const isWinVerdict = verdictStr === "BUY"
+    || verdictStr.includes("GREAT")
+    || verdictStr.includes("FLIP")
+    || verdictStr.includes("GOOD");
+  const hasSaving = isHero && isWinVerdict && saved != null && saved > 0;
 
   // Delta vs hero (alt cards)
   const delta = (!isHero && heroPrice != null && price != null) ? price - heroPrice : null;
@@ -825,7 +838,15 @@ export function ResultCard({
   })();
   const confidenceText = isHero ? deriveConfidence(data) : null;
   const pulse          = isHero ? derivePulse(data) : null;
-  const rarity         = isHero ? deriveRarity(data) : null;
+  // Rarity chip (RARE LOW / NEAR LOW / UNCOMMON) is a celebration —
+  // suppress on HOLD/PASS so the green-tinted "this is a steal" chip
+  // doesn't sit under a HOLD verdict (psychological contradiction).
+  // AT PEAK (the cautionary rarity tone) still surfaces on any verdict
+  // since "you're paying at the historical ceiling" is useful regardless.
+  const rawRarity      = isHero ? deriveRarity(data) : null;
+  const rarity         = rawRarity && (isWinVerdict || rawRarity.tone === "peak")
+    ? rawRarity
+    : null;
   const whyChips       = isHero ? deriveWhy(data, isLowest) : [];
 
   return (
@@ -1147,10 +1168,24 @@ export function ResultCard({
                   console.log("CARD_LINK_OPEN_ERROR", { role: "hero", error: e?.message || String(e) });
                 }
               }}
-              style={styles.heroBuyBar}
+              style={[
+                styles.heroBuyBar,
+                !isWinVerdict && styles.heroBuyBarNeutral,
+              ]}
             >
-              <Ionicons name="cart-outline" size={13} color="rgba(120,255,170,0.85)" />
-              <Text style={styles.heroBuyText}>Buy Now  →</Text>
+              <Ionicons
+                name="cart-outline"
+                size={13}
+                color={isWinVerdict ? "rgba(120,255,170,0.85)" : "rgba(255,255,255,0.55)"}
+              />
+              <Text
+                style={[
+                  styles.heroBuyText,
+                  !isWinVerdict && styles.heroBuyTextNeutral,
+                ]}
+              >
+                {isWinVerdict ? "Buy Now  →" : "View listing  →"}
+              </Text>
             </TouchableOpacity>
           ) : null}
 
@@ -1470,6 +1505,11 @@ const styles = StyleSheet.create({
   },
 
   // ── Hero buy CTA ──────────────────────────────────────────────────────────
+  // Green wins-only. Neutral variants below kick in on HOLD/PASS so the
+  // CTA reads as "view listing" rather than "this is a great deal — go
+  // buy it." Verbiage and color both swap; layout/typography stay
+  // identical so the row alignment with the rest of the card body is
+  // preserved across verdict states.
   heroBuyBar: {
     marginTop: 6,
     flexDirection: "row",
@@ -1480,11 +1520,17 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(0,210,120,0.10)",
   },
+  heroBuyBarNeutral: {
+    borderTopColor: "rgba(255,255,255,0.06)",
+  },
   heroBuyText: {
     fontSize: 11,
     color: "rgba(120,255,170,0.80)",
     fontWeight: "700",
     letterSpacing: 0.5,
+  },
+  heroBuyTextNeutral: {
+    color: "rgba(255,255,255,0.55)",
   },
 
   // ── Sell mode trigger ────────────────────────────────────────────────────

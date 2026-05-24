@@ -423,20 +423,20 @@ export function CardDeck({
             idx * SNAP,
             (idx + 1) * SNAP,
           ];
-          // Side-card visibility tuned to the "subtle peek, not dominate"
-          // spec: opacity 0.40 (in the 0.35-0.45 band), scale 0.89 (in
-          // the 0.88-0.90 band). Active card at exactly 1.0 — no zoom
-          // bump so the centered card sits at its natural size and the
-          // peek alternates read as "lower-tier siblings" rather than
-          // competing focal points.
+          // Side-card visibility further dampened. opacity 0.34 (lower
+          // edge of the 0.32-0.36 band) and scale 0.88 keep the peeked
+          // alternates as peripheral hints — visible enough to advertise
+          // "more here, swipe to compare," dim enough that the eye never
+          // splits focus between active and side cards. Active stays at
+          // exactly 1.0 / 1.0 for the cleanest natural-size focal point.
           const cardOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.40, 1.0, 0.40],
+            outputRange: [0.34, 1.0, 0.34],
             extrapolate: "clamp",
           });
           const cardScale = scrollX.interpolate({
             inputRange,
-            outputRange: [0.89, 1.0, 0.89],
+            outputRange: [0.88, 1.0, 0.88],
             extrapolate: "clamp",
           });
           const cardLift = scrollX.interpolate({

@@ -932,13 +932,18 @@ const heroStyles = StyleSheet.create({
     alignItems: "center",
     overflow: "hidden",
   },
-  // Silent / HOLD card variant — Bloomberg-calm. Width narrowed via
-  // self margins (set on outer in the component), padding compressed
-  // further so the bubble reads as a quiet annotation rather than an
-  // alert panel. Background even more transparent, border softer.
+  // Silent / HOLD card variant — Bloomberg-calm. paddingTop bumped (lg
+  // → lg+sm) so the HOLD word sits visually lower inside the capsule —
+  // the prior layout had it pinned to the top edge and the center of
+  // the card felt empty. paddingBottom matches so the silhouette stays
+  // balanced; the reason text + price + COST/MARKET strip now occupy
+  // the middle of the card instead of the upper third. Width narrowed
+  // via self margins (set on outer in the component); background and
+  // border kept ultra-soft so the bubble still reads as quiet annotation,
+  // not an alert panel.
   cardSilent: {
-    paddingTop: SP.lg,
-    paddingBottom: SP.md,
+    paddingTop: SP.lg + SP.sm,
+    paddingBottom: SP.md + 2,
     paddingHorizontal: SP.lg,
     borderRadius: R.lg,
     backgroundColor: "rgba(255,255,255,0.012)",
@@ -995,10 +1000,14 @@ const heroStyles = StyleSheet.create({
     color: C.text3,
     textAlign: "center",
   },
-  // Confidence-silence variants — tighter still. Reason sits closer to
-  // the verdict word; price reads as quiet annotation, not headline.
+  // Confidence-silence variants. silentSub.marginTop bumped (sm → md)
+  // so the reason line breathes below the HOLD word instead of crowding
+  // it — the prior tight spacing made the verdict capsule's upper half
+  // feel cramped while the lower half felt empty. silentPrice marginTop
+  // up (2 → 6) for the same balance reason: the dollar reads as a quiet
+  // annotation with real breathing room above it.
   silentSub: {
-    marginTop: SP.sm,
+    marginTop: SP.md,
     fontSize: 12,
     fontWeight: "500",
     color: "rgba(255,255,255,0.44)",
@@ -1008,7 +1017,7 @@ const heroStyles = StyleSheet.create({
     paddingHorizontal: SP.xs,
   },
   silentPrice: {
-    marginTop: 2,
+    marginTop: 6,
     fontSize: 17,
     fontWeight: "700",
     color: "rgba(255,255,255,0.58)",

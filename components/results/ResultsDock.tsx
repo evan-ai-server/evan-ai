@@ -114,7 +114,16 @@ export function ResultsDock({
   const price       = Number.isFinite(Number(card?.price)) ? Number(card.price) : null;
   const _paid        = Number.isFinite(Number(activeResult?.scannedPrice)) ? Number(activeResult.scannedPrice) : null;
   const saved       = Number.isFinite(Number(activeResult?.savedAmount)) ? Number(activeResult.savedAmount) : null;
-  const hasSaved    = saved != null && saved > 0;
+  // Verdict gate. "Save $X · Y% below market" is a WIN message — only
+  // show it when the verdict actually endorses buying. On HOLD / PASS
+  // the server may still surface a positive savedAmount (the listing IS
+  // below market) but the overall recommendation is don't-buy, so the
+  // win-celebration copy creates a psychological contradiction. We fall
+  // back to the neutral "Best price found · N listings checked" row in
+  // those cases so the intel strip stays honest.
+  const verdict     = String(activeResult?.buyVerdict || "").toUpperCase();
+  const isWinVerdict = verdict === "BUY" || verdict.includes("GREAT") || verdict.includes("FLIP") || verdict.includes("GOOD");
+  const hasSaved    = isWinVerdict && saved != null && saved > 0;
   const cheaperPct  = Number.isFinite(Number(activeResult?.cheaperPct)) ? Number(activeResult.cheaperPct) : null;
   const totalMatches = activeResult?.totalMatches ?? 0;
   const store       = card?.store || card?.source || null;

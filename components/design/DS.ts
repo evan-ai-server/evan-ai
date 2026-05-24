@@ -193,16 +193,18 @@ export const MO = {
 
 // ─── CARD DIMENSIONS ─────────────────────────────────────────────────────────
 // PEEK = CARD_SIDE_MARGIN - CARD_GAP, i.e. the strip of the neighbouring
-// card visible on each side of the active card. Refinement pass widened the
-// peek from 30 → 40 px and shaved the active card ~7% so the deck reads as
-// an obvious stack on first glance, no tutorial copy required. The side
-// CardDeck native-driver fade now does the rest of the work.
-const CARD_SIDE_MARGIN = 54;   // horizontal margin for active card (each side)
+// card visible on each side of the active card. Side cards were still
+// reading as competing focus targets at the prior 54px margin / 40px peek;
+// bumping the margin to 70px shaves the active card ~6% on a 393pt screen
+// and shoves the neighbor cards farther offscreen so they read as
+// peripheral hints rather than peers. Hero card height shaved ~5%
+// (0.52 → 0.495) so the body grid has more breathing room before the dock.
+const CARD_SIDE_MARGIN = 70;   // horizontal margin for active card (each side)
 const CARD_GAP = 14;           // gap between cards
 
 export const CARD = {
   width:     W - CARD_SIDE_MARGIN * 2,      // active card width
-  height:    Math.min(H * 0.52, 480),       // cap at 480 for large phones
+  height:    Math.min(H * 0.495, 460),      // cap at 460 (was 480) for large phones
   slotWidth: W - CARD_SIDE_MARGIN * 2 + CARD_GAP,  // spacing between card centers
   leftInset: CARD_SIDE_MARGIN,              // left position of active card
   peek:      CARD_SIDE_MARGIN - CARD_GAP,  // how much neighbor card peeks
