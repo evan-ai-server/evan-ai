@@ -12799,12 +12799,12 @@ onBarcodeScanned={(d) => {
     <View style={styles.previewOverlay}>
       <Image source={{ uri: photo.uri }} style={styles.previewImage} />
 
-      {/* Bottom scrim — soft dark fade so the input/buttons read cleanly
-          regardless of what's in the photo. Pure black at the bottom,
-          transparent at the top. Sits BEHIND the controls but ABOVE the
-          image. No blur, no rasterization cost. */}
-      <View pointerEvents="none" style={styles.previewBottomScrim1} />
-      <View pointerEvents="none" style={styles.previewBottomScrim2} />
+      {/* Subtle bottom fade — sits behind the floating control card and
+          softens the transition from photo to controls. Single short band
+          (not the giant black slab from the prior pass that swallowed
+          the bottom half of the screen). The control card carries its
+          own contrast; the fade just smooths the optical edge. */}
+      <View pointerEvents="none" style={styles.previewBottomFade} />
 
       <RNAnimated.View
         style={{
@@ -12816,35 +12816,37 @@ onBarcodeScanned={(d) => {
           transform: [{ translateY: previewPanelY }],
         }}
       >
-        {/* Glass card around the controls — the photo behind is no longer
-            visible through the controls, so every label/input/button reads
-            with full contrast instead of washing out against busy product
-            imagery. */}
+        {/* Floating glass control card — sits independently over the photo
+            (photo remains visible above and around it). Card's own opaque
+            backing gives full readability for labels and buttons without
+            needing a screen-wide scrim. */}
         <View style={styles.previewControlCard}>
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.priceLabel}>Original price</Text>
-              <TextInput
-                value={scanPriceInput}
-                onChangeText={setScanPriceInput}
-                placeholder="$0.00"
-                placeholderTextColor="rgba(255,255,255,0.40)"
-                keyboardType="numeric"
-                style={styles.priceInput}
-                returnKeyType="done"
-                onSubmitEditing={() => Keyboard.dismiss()}
-              />
-            </View>
+          <View>
+            <Text style={styles.priceLabel}>Original price</Text>
+            <TextInput
+              value={scanPriceInput}
+              onChangeText={setScanPriceInput}
+              placeholder="$0.00"
+              placeholderTextColor="rgba(255,255,255,0.40)"
+              keyboardType="numeric"
+              style={styles.priceInput}
+              returnKeyType="done"
+              onSubmitEditing={() => Keyboard.dismiss()}
+            />
           </View>
 
-          {/* Optional item name / brand hint — expandable chip */}
-          <ItemHintInput
-            value={itemNameInput}
-            onChange={setItemNameInput}
-            resetKey={photo?.uri ?? null}
-          />
+          {/* Optional item name / brand hint — expandable chip. Centered
+              between price input and action row so the vertical grid
+              reads cleanly. */}
+          <View style={styles.previewHintChipWrap}>
+            <ItemHintInput
+              value={itemNameInput}
+              onChange={setItemNameInput}
+              resetKey={photo?.uri ?? null}
+            />
+          </View>
 
-          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+          <View style={styles.previewActionRow}>
             <Pressable onPress={reset} style={[styles.modalSecondary, { flex: 1 }]}>
               <Text style={styles.modalSecondaryText}>Retake</Text>
             </Pressable>
@@ -20490,38 +20492,43 @@ snapButton: {
 },
   previewOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: TOK.C.bg },
   previewImage: { width: "100%", height: "100%", resizeMode: "cover" },
-  // Two-band bottom scrim. The upper band is a soft transparent-to-dark
-  // gradient surrogate (mid-alpha fill); the lower band is a near-opaque
-  // base behind the actual controls. Combined they replace what would
-  // otherwise be a busy photo bleeding through the input labels and
-  // buttons — readability is now anchored to a known dark backdrop.
-  previewBottomScrim1: {
+  // Subtle bottom fade. Single short band, low alpha — replaces the
+  // prior two-band scrim that rendered as a solid black slab over the
+  // bottom half of the screen and hid the photo. The control card
+  // carries its own readability backing; this fade just smooths the
+  // edge between live photo and floating controls.
+  previewBottomFade: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    height: 360,
-    backgroundColor: "rgba(0,0,0,0.42)",
+    height: 160,
+    backgroundColor: "rgba(0,0,0,0.28)",
   },
-  previewBottomScrim2: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 220,
-    backgroundColor: "rgba(0,0,0,0.55)",
-  },
-  // Floating glass control card. Sits directly behind the price input,
-  // name chip, and Retake/Use buttons so every label reads with full
-  // contrast against a known fill instead of fighting product photo
-  // luminance. Hairline border keeps the premium edge without the heavy
-  // outlined-modal look.
+  // Floating glass control card. Anchors readability for the price input,
+  // name chip, and Retake/Use buttons without obscuring the photo above
+  // the card. Hairline border keeps the premium edge; padding sets the
+  // single vertical grid that every child aligns to.
   previewControlCard: {
-    backgroundColor: "rgba(10,10,10,0.78)",
+    backgroundColor: "rgba(10,10,10,0.82)",
     borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.10)",
-    padding: 14,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 12,
+  },
+  // Vertical breathing room around the item-name chip so it lands
+  // visually centered between the price input above and the action
+  // row below — the prior layout had it flush against the input.
+  previewHintChipWrap: {
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  previewActionRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
   },
   previewBtnsRow: {
     flexDirection: "row",

@@ -139,14 +139,12 @@ export function CardDeck({
         return m ? m[1] : raw.split("?")[0];
       } catch { return raw; }
     };
-    const titleKey = (t: any): string => {
-      const n = norm(t);
-      if (!n) return "";
-      // Collapse near-identical titles: "Retro Oval Cat Eye Sunglasses for
-      // Women — Black" and "Retro Oval Cat Eye Sunglasses for Women, Black"
-      // should hash to the same key. Use the first 6 significant words.
-      return n.split(" ").filter(Boolean).slice(0, 6).join(" ");
-    };
+    // Exact-title key. The prior 6-word prefix collapsed legitimately
+    // different variants ("…Black Plastic Frame Orange Lens" vs
+    // "…Tortoise Frame Orange Lens") into one card and starved the deck
+    // of swipeable alternatives. Full normalized title dedups true
+    // duplicates only — different products survive.
+    const titleKey = (t: any): string => norm(t);
 
     const seenTitles = new Set<string>();
     const seenImages = new Set<string>();
@@ -157,10 +155,11 @@ export function CardDeck({
 
     const anchorThreshold = _scannedPrice != null ? _scannedPrice * 2.5 : Infinity;
 
-    // Over-pull from positions 1..12 so dedup can drop liberally and we
-    // still land ≥4 alts when the corpus has them.
+    // Pull from positions 1..16 — wider window since the looser dedup
+    // accepts more candidates, so we want enough headroom to find 4 alts
+    // even when the top-of-list has a couple of true duplicates.
     const rawAlts: CardData[] = (results || [])
-      .slice(1, 13)
+      .slice(1, 17)
       .map((r: any) => ({
         itemName: r?.itemName || r?.title,
         store:    r?.source   || r?.store,
@@ -177,35 +176,38 @@ export function CardDeck({
     const PUNCT_SPAM = /([!?$*])\1{4,}/; // 5+ in a row of same punctuation
     const JUNK_STORE = /sponsored|advertis|promoted|^ad\b/i;
 
+    // Display-layer rejection counters — surfaced via CARD_DECK_BUILD so
+    // we can confirm in logs whether we're starving the deck or the
+    // server isn't returning enough valid alternatives.
+    const rejectedReasons: Record<string, number> = {};
+    const reject = (k: string) => { rejectedReasons[k] = (rejectedReasons[k] || 0) + 1; };
+
     const dedupedAlts: CardData[] = [];
     for (const alt of rawAlts) {
       const tk = titleKey(alt.itemName);
       const ik = imageKey(alt.image);
       const titleStr = String(alt.itemName ?? "").trim();
       const storeStr = String(alt.store ?? "").trim();
-      // Must have both image AND a finite price > 0 — otherwise the card
-      // renders as a placeholder square with "$NaN" and reads as junk.
       const priceN = Number(alt.price);
-      if (!alt.image) continue;
-      if (!Number.isFinite(priceN) || priceN <= 0) continue;
-      // Title sanity — real product titles are at least a few words long.
-      // Anything under 8 chars is almost certainly a placeholder or a
-      // truncated SERP row that won't read as a real listing.
-      if (titleStr.length < 8) continue;
-      if (JUNK_TITLE.test(titleStr)) continue;
-      if (PUNCT_SPAM.test(titleStr)) continue;
-      // Store sanity — obvious ad/sponsor source labels go.
-      if (storeStr && JUNK_STORE.test(storeStr)) continue;
-      // Skip if title OR image matches hero / any prior accepted alt.
-      if (tk && seenTitles.has(tk)) continue;
-      if (ik && seenImages.has(ik)) continue;
+      // Hard junk gates only — must render as a real product card.
+      if (!alt.image)                              { reject("no_image");    continue; }
+      if (!Number.isFinite(priceN) || priceN <= 0) { reject("bad_price");   continue; }
+      // Title-length cutoff loosened from 8→5 so short legit titles like
+      // "Ray-Ban RB3025" aren't filtered out. Anything truly empty fails
+      // the norm() length check elsewhere.
+      if (titleStr.length < 5)                     { reject("title_short"); continue; }
+      if (JUNK_TITLE.test(titleStr))               { reject("title_junk");  continue; }
+      if (PUNCT_SPAM.test(titleStr))               { reject("punct_spam");  continue; }
+      if (storeStr && JUNK_STORE.test(storeStr))   { reject("store_junk");  continue; }
+      // EXACT-match dedup. Either an exact title match or an exact image
+      // identity match drops the row — true clones go, near-variants stay.
+      if (tk && seenTitles.has(tk))                { reject("dup_title");   continue; }
+      if (ik && seenImages.has(ik))                { reject("dup_image");   continue; }
       if (tk) seenTitles.add(tk);
       if (ik) seenImages.add(ik);
       dedupedAlts.push(alt);
-      // Soft cap — 8 alts is plenty even before the premium re-sort below
-      // (display layer slices to whatever fits). Hard cap of 4 happens after
-      // sort so the cheapest-and-most-relevant survive.
-      if (dedupedAlts.length >= 8) break;
+      // Soft cap — keep 10 candidates for the re-rank step below.
+      if (dedupedAlts.length >= 10) break;
     }
 
     // Re-rank: premium-anchor listings (price > 2.5× scannedPrice) go to
@@ -227,7 +229,10 @@ export function CardDeck({
 
     console.log("CARD_DECK_BUILD", {
       rawCount: (results || []).length,
+      validCount: dedupedAlts.length,
       pickedAlts: alts.length,
+      totalCards: 1 + alts.length,
+      rejectedReasons,
       hadHeroImage: !!heroCard.image,
     });
 
@@ -505,14 +510,13 @@ export function CardDeck({
 const styles = StyleSheet.create({
   deckOuter: {
     alignItems: "center",
-    // No negative margin — the previous -SP.sm lift made the card's top
-    // edge crash into the COST/MARKET strip on HOLD scans (visible in the
-    // field screenshots as the card image overlapping the verdict's
-    // bottom row). Zero margin keeps the deck cleanly below the verdict
-    // with breathing room. Card visibility above the dock is handled by
-    // the trimmed hero card body + dock spacer math, not by pulling the
-    // deck up into the verdict.
-    marginTop: 0,
+    // Positive top margin gives the active card real breathing room
+    // below the verdict — the prior -SP.sm lift crashed the card image
+    // into the COST/MARKET strip on HOLD/PASS scans (field screenshots),
+    // and zero margin still read as "jammed" against the verdict's
+    // bottom edge. SP.md lands the card with visible whitespace above
+    // it without pushing the bottom under the dock.
+    marginTop: SP.md,
   },
 
   counterRow: {

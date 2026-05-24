@@ -381,12 +381,19 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.05)",
   },
 
-  // Intelligence strip
+  // Intelligence strip — sits at the top of the dock's content grid.
+  // marginTop adds breathing space between the soft top fade and the
+  // first piece of text so the savings line doesn't feel pinned to the
+  // dock's edge. paddingLeft 2 nudges the dot to optical-align with the
+  // primary-row buttons' left edge (dot is a 6px circle, so a tiny
+  // shoulder gives the text after it the right balanced offset).
   intelStrip: {
     flexDirection: "row",
     alignItems: "center",
+    marginTop: SP.xs,
     marginBottom: SP.md,
     gap: SP.xs,
+    paddingLeft: 2,
   },
   intelDot: {
     width: 6,
