@@ -942,7 +942,7 @@ const heroStyles = StyleSheet.create({
   // border kept ultra-soft so the bubble still reads as quiet annotation,
   // not an alert panel.
   cardSilent: {
-    paddingTop: SP.lg + SP.sm,
+    paddingTop: SP.xl + SP.sm,
     paddingBottom: SP.md + 2,
     paddingHorizontal: SP.lg,
     borderRadius: R.lg,

@@ -166,11 +166,14 @@ export function CardDeck({
     const rawAlts: CardData[] = (results || [])
       .slice(1, 17)
       .map((r: any) => ({
-        itemName: r?.itemName || r?.title,
-        store:    r?.source   || r?.store,
-        price:    r?.price    ?? r?.totalPrice,
-        buyLink:  r?.buyLink  || r?.url,
-        image:    r?.image    || r?.thumbnail,
+        itemName:   r?.itemName || r?.title,
+        store:      r?.source   || r?.store,
+        price:      r?.price    ?? r?.totalPrice,
+        buyLink:    r?.buyLink  || r?.url,
+        image:      r?.image    || r?.thumbnail,
+        // Inherit the scan verdict so ResultCard can gate label badge intensity
+        // (LOWEST/CHEAPER/HIDDEN GEM dim on HOLD/PASS, same as rarity chips).
+        buyVerdict: activeResult?.buyVerdict ?? null,
       }));
 
     // Junk-title patterns. The server occasionally returns SERP filler
@@ -431,7 +434,7 @@ export function CardDeck({
           // exactly 1.0 / 1.0 for the cleanest natural-size focal point.
           const cardOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.34, 1.0, 0.34],
+            outputRange: [0.29, 1.0, 0.29],
             extrapolate: "clamp",
           });
           const cardScale = scrollX.interpolate({

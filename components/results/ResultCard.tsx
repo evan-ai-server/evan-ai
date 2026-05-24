@@ -814,6 +814,11 @@ export function ResultCard({
     ? Number(scannedPrice ?? data.scannedPrice)
     : null;
   const label = cardLabel(isHero, price, heroPrice ?? null, _scannedPrice, isLowest, data.buyVerdict ?? undefined);
+  // On HOLD/PASS, positive (green) badges stay visible but dimmed — they
+  // shouldn't celebrate a deal the verdict doesn't endorse. Neutral badges
+  // (MATCH, ANCHOR, PREMIUM) are already muted and stay as-is.
+  const POSITIVE_LABELS = new Set(["LOWEST", "TOP FLIP", "HIDDEN GEM", "BEST DEAL", "CHEAPER"]);
+  const labelDimmed = !isWinVerdict && label != null && POSITIVE_LABELS.has(label.text);
 
   // Tweak 1: Signal Velocity — compute once at render
   const velocitySignal = (isHero && data.priceChartPoints?.length)
@@ -918,6 +923,7 @@ export function ResultCard({
             styles.labelBadge,
             { backgroundColor: label.bg, borderColor: label.border },
             label.heavy ? styles.labelBadgeHeavy : null,
+            labelDimmed ? { opacity: 0.52 } : null,
           ]}>
             <Text
               allowFontScaling={false}
