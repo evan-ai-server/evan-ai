@@ -148,15 +148,12 @@ export function ResultsDock({
           opaque dock fill starts. Reads as a soft ambient light catching
           the "real" top edge of the controls instead of an outlined panel. */}
       <View style={styles.dockTopHighlight} pointerEvents="none" />
-      {/* Bottom-edge dissolve — three stacked low-alpha bands at the very
-          bottom that step the dock's opacity DOWN as it meets the safe
-          area / home indicator. The atmospheric bloom rendered behind the
-          dock shows through these bands at progressively higher alphas,
-          so the dock no longer "ends" at a hard horizontal line — it
-          melts into the emerald ambient below. */}
-      <View style={styles.dockFadeBottom1} pointerEvents="none" />
-      <View style={styles.dockFadeBottom2} pointerEvents="none" />
-      <View style={styles.dockFadeBottom3} pointerEvents="none" />
+      {/* Subtle bottom vignette — single short dark band that softens the
+          dock's optical edge into the home-indicator zone. No green, no
+          ambient effect; just a quiet darkness that makes the dock feel
+          like it has weight at the bottom instead of ending at a hard
+          horizontal line. */}
+      <View style={styles.dockVignetteBottom} pointerEvents="none" />
 
       {/* Intelligence strip */}
       {(hasSaved || price != null) ? (
@@ -321,16 +318,20 @@ function ActionChip({
 }
 
 const styles = StyleSheet.create({
-  // Floating-controls dock. The dock now reads as "controls emerging from
-  // darkness" via three composed pieces:
+  // Floating-controls dock. Premium silhouette built from:
   //   1. SH.dock ambient shadow (carries the float)
   //   2. dockFadeTop1/2/3 gradient ladder — three stacked low-alpha bands
   //      so the top edge dissolves into the screen instead of slamming
   //      in as a rectangle
-  //   3. R.xxl top-corner radius — the silhouette is rounded, not slab
-  // No visible top border (the prior hairline read as outlined panel).
-  // paddingTop bumped to absorb the 32px fade ladder so the intel strip
-  // doesn't render inside the fade region.
+  //   3. 40px top-corner radius (larger than R.xxl=32) so the dock reads
+  //      as a soft floating tray rather than a tab-bar slab
+  //   4. dockVignetteBottom — single subtle dark band at the device edge
+  //      that vignettes the dock's bottom into the home-indicator zone
+  //   5. dockOverlay carries a tiny desaturated emerald undertone (rgba
+  //      8,12,10) instead of pure black — almost imperceptible, but the
+  //      dock glass feels "warmer / alive" rather than slate black
+  // Softer custom shadow (taller, lower opacity) overrides SH.dock so the
+  // dock floats more atmospherically without a visible halo.
   dockWrap: {
     position: "absolute",
     left: 0,
@@ -338,23 +339,40 @@ const styles = StyleSheet.create({
     bottom: 0,
     paddingTop: SP.lg + SP.lg, // 32px → clears the fade ladder
     paddingHorizontal: SP.lg,
-    borderTopLeftRadius: R.xxl,
-    borderTopRightRadius: R.xxl,
+    borderTopLeftRadius: 40,
+    borderTopRightRadius: 40,
     overflow: "hidden",
     ...SH.dock,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.20,
+    shadowRadius: 36,
+    elevation: 16,
   },
-  // Main opaque fill — starts BELOW the fade ladder so the top 32px stay
-  // soft, and now also STOPS 30px above the bottom so the atmospheric
-  // bloom rendered behind the dock can bleed up into the safe-area /
-  // home-indicator zone. Without this gap the dock used to end at a
-  // hard horizontal line right where the dock met the device edge.
+  // Main fill. Color is a very-slightly-emerald-tinted near-black
+  // (R8 G12 B10) instead of pure (4,4,4). The shift is below the eye's
+  // threshold for "this is green" but reads as "the glass has warmth"
+  // — premium dark surface, not a flat black slab.
   dockOverlay: {
     position: "absolute",
     top: 32,
     left: 0,
     right: 0,
-    bottom: 30,
-    backgroundColor: "rgba(4,4,4,0.50)",
+    bottom: 0,
+    backgroundColor: "rgba(8,12,10,0.50)",
+  },
+  // Bottom vignette — a single short dark band at the device edge.
+  // Pure black at low alpha, no green. Softens the optical edge where
+  // the dock meets the home-indicator zone so the bottom of the dock
+  // doesn't read as a hard cut. Stays well inside the safe-area padding
+  // so it never crosses the action grid.
+  dockVignetteBottom: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 18,
+    backgroundColor: "rgba(0,0,0,0.18)",
   },
   // 3-step fade ladder. Each band is ~11px tall with stepped alpha so the
   // composition reads as a smooth gradient on iOS without LinearGradient.
@@ -390,37 +408,6 @@ const styles = StyleSheet.create({
     right: 0,
     height: 1,
     backgroundColor: "rgba(255,255,255,0.05)",
-  },
-  // Bottom dissolve ladder — three soft dark bands stacked at the bottom
-  // of the dock that re-rise toward the opaque fill (which now stops 30px
-  // above the device edge). Each band is darker than the one below it so
-  // the opacity gradient feels continuous: opaque action grid →
-  // semi-transparent transition → atmospheric bloom showing through.
-  // The bottom-most band stays nearly transparent so the bloom carries
-  // the visual all the way to the device edge.
-  dockFadeBottom1: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 10,
-    backgroundColor: "rgba(4,4,4,0.0)",
-  },
-  dockFadeBottom2: {
-    position: "absolute",
-    bottom: 10,
-    left: 0,
-    right: 0,
-    height: 10,
-    backgroundColor: "rgba(4,4,4,0.10)",
-  },
-  dockFadeBottom3: {
-    position: "absolute",
-    bottom: 20,
-    left: 0,
-    right: 0,
-    height: 10,
-    backgroundColor: "rgba(4,4,4,0.28)",
   },
 
   // Intelligence strip — sits at the top of the dock's content grid.

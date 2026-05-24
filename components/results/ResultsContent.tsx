@@ -32,7 +32,6 @@ import { LoadingScreen, LoadingStage } from "../scan/LoadingScreen";
 import { CardDeck } from "./CardDeck";
 import { ResultsDock } from "./ResultsDock";
 import { AskAIDrawer, ScanContext } from "./AskAIDrawer";
-import { AtmosphericBottom } from "./AtmosphericBottom";
 import { AutoListingDrawer } from "./AutoListingDrawer";
 import { OfflineBanner } from "./OfflineBanner";
 import { C, SP, R, TY, fmtMoney, EASE_PANTHERE, SINGULARITY } from "../design/DS";
@@ -444,16 +443,6 @@ export const ResultsContent = React.memo(function ResultsContent({
 
           {/* ── Dock spacer (so scroll content isn't hidden under dock) */}
           {activeResult && !uiError ? <View style={{ height: DOCK_SAFE_HEIGHT }} /> : null}
-
-          {/* ── Atmospheric layer (absolute, behind dock) ──────────────
-              Emerald bloom + drifting dust motes that extend up from
-              below the device edge. Sits BEHIND the dock — mounted before
-              the ResultsDock in the JSX so paint order keeps the dock on
-              top. Pointer-events disabled at every nested view so it
-              never blocks the dock or card taps. The dock no longer
-              reads as "panel ends here, then black" — its bottom edge
-              dissolves into the ambient glow. */}
-          {activeResult && !uiError ? <AtmosphericBottom /> : null}
 
           {/* ── Glass action dock (absolute) */}
           {activeResult && !uiError ? (
