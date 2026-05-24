@@ -422,18 +422,24 @@ export function CardDeck({
             idx * SNAP,
             (idx + 1) * SNAP,
           ];
+          // Side-card opacity bumped 0.42 → 0.62. With the prior 0.42 the
+          // peeked alternates read as "barely there" — users reported the
+          // deck feeling like a single-card renderer when in fact 2+ cards
+          // were rendered the whole time. 0.62 keeps clear visual hierarchy
+          // (active card still the obvious focal point at 1.0) while making
+          // the "there's more to swipe" cue land at first glance.
           const cardOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.42, 1.0, 0.42],
+            outputRange: [0.62, 1.0, 0.62],
             extrapolate: "clamp",
           });
           // Active card gets a subtle 1.02 zoom — feels "in focus" / "lens
           // pulled forward" without overlapping the adjacent peek. Side
-          // cards shrink slightly more (0.89) so the central card lands
-          // as the unambiguous focal point, not a peer in a row.
+          // cards shrink to 0.92 (gentler than the prior 0.89 so the peek
+          // silhouette is more obviously a real card, not a thumbnail).
           const cardScale = scrollX.interpolate({
             inputRange,
-            outputRange: [0.89, 1.02, 0.89],
+            outputRange: [0.92, 1.02, 0.92],
             extrapolate: "clamp",
           });
           const cardLift = scrollX.interpolate({

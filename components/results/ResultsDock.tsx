@@ -148,6 +148,15 @@ export function ResultsDock({
           opaque dock fill starts. Reads as a soft ambient light catching
           the "real" top edge of the controls instead of an outlined panel. */}
       <View style={styles.dockTopHighlight} pointerEvents="none" />
+      {/* Bottom-edge dissolve — three stacked low-alpha bands at the very
+          bottom that step the dock's opacity DOWN as it meets the safe
+          area / home indicator. The atmospheric bloom rendered behind the
+          dock shows through these bands at progressively higher alphas,
+          so the dock no longer "ends" at a hard horizontal line — it
+          melts into the emerald ambient below. */}
+      <View style={styles.dockFadeBottom1} pointerEvents="none" />
+      <View style={styles.dockFadeBottom2} pointerEvents="none" />
+      <View style={styles.dockFadeBottom3} pointerEvents="none" />
 
       {/* Intelligence strip */}
       {(hasSaved || price != null) ? (
@@ -335,14 +344,16 @@ const styles = StyleSheet.create({
     ...SH.dock,
   },
   // Main opaque fill — starts BELOW the fade ladder so the top 32px stay
-  // soft. Alpha kept at 0.50 from the previous pass (further reduction
-  // would let too much screen content show through the action grid).
+  // soft, and now also STOPS 30px above the bottom so the atmospheric
+  // bloom rendered behind the dock can bleed up into the safe-area /
+  // home-indicator zone. Without this gap the dock used to end at a
+  // hard horizontal line right where the dock met the device edge.
   dockOverlay: {
     position: "absolute",
     top: 32,
     left: 0,
     right: 0,
-    bottom: 0,
+    bottom: 30,
     backgroundColor: "rgba(4,4,4,0.50)",
   },
   // 3-step fade ladder. Each band is ~11px tall with stepped alpha so the
@@ -379,6 +390,37 @@ const styles = StyleSheet.create({
     right: 0,
     height: 1,
     backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  // Bottom dissolve ladder — three soft dark bands stacked at the bottom
+  // of the dock that re-rise toward the opaque fill (which now stops 30px
+  // above the device edge). Each band is darker than the one below it so
+  // the opacity gradient feels continuous: opaque action grid →
+  // semi-transparent transition → atmospheric bloom showing through.
+  // The bottom-most band stays nearly transparent so the bloom carries
+  // the visual all the way to the device edge.
+  dockFadeBottom1: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 10,
+    backgroundColor: "rgba(4,4,4,0.0)",
+  },
+  dockFadeBottom2: {
+    position: "absolute",
+    bottom: 10,
+    left: 0,
+    right: 0,
+    height: 10,
+    backgroundColor: "rgba(4,4,4,0.10)",
+  },
+  dockFadeBottom3: {
+    position: "absolute",
+    bottom: 20,
+    left: 0,
+    right: 0,
+    height: 10,
+    backgroundColor: "rgba(4,4,4,0.28)",
   },
 
   // Intelligence strip — sits at the top of the dock's content grid.

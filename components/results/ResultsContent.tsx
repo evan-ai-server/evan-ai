@@ -32,6 +32,7 @@ import { LoadingScreen, LoadingStage } from "../scan/LoadingScreen";
 import { CardDeck } from "./CardDeck";
 import { ResultsDock } from "./ResultsDock";
 import { AskAIDrawer, ScanContext } from "./AskAIDrawer";
+import { AtmosphericBottom } from "./AtmosphericBottom";
 import { AutoListingDrawer } from "./AutoListingDrawer";
 import { OfflineBanner } from "./OfflineBanner";
 import { C, SP, R, TY, fmtMoney, EASE_PANTHERE, SINGULARITY } from "../design/DS";
@@ -443,6 +444,16 @@ export const ResultsContent = React.memo(function ResultsContent({
 
           {/* ── Dock spacer (so scroll content isn't hidden under dock) */}
           {activeResult && !uiError ? <View style={{ height: DOCK_SAFE_HEIGHT }} /> : null}
+
+          {/* ── Atmospheric layer (absolute, behind dock) ──────────────
+              Emerald bloom + drifting dust motes that extend up from
+              below the device edge. Sits BEHIND the dock — mounted before
+              the ResultsDock in the JSX so paint order keeps the dock on
+              top. Pointer-events disabled at every nested view so it
+              never blocks the dock or card taps. The dock no longer
+              reads as "panel ends here, then black" — its bottom edge
+              dissolves into the ambient glow. */}
+          {activeResult && !uiError ? <AtmosphericBottom /> : null}
 
           {/* ── Glass action dock (absolute) */}
           {activeResult && !uiError ? (
@@ -916,14 +927,19 @@ const heroStyles = StyleSheet.create({
     paddingTop: SP.sm,
     paddingBottom: SP.xs,
   },
+  // BUY/PASS verdict capsule. Extra paddingTop (xxl + sm) gives the
+  // verdict word (PASS / BUY) ~8px more headroom inside the capsule so
+  // the word reads as anchored, not jammed against the top edge. Border
+  // alpha softened so the capsule outline is "felt" rather than seen —
+  // the inner glow does the depth work, not the stroke.
   card: {
     paddingHorizontal: SP.xl,
-    paddingTop: SP.xxl,
+    paddingTop: SP.xxl + SP.sm,
     paddingBottom: SP.xl,
     borderRadius: R.xl,
     backgroundColor: "rgba(255,255,255,0.022)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.055)",
+    borderColor: "rgba(255,255,255,0.040)",
     alignItems: "center",
     overflow: "hidden",
   },
@@ -939,14 +955,19 @@ const heroStyles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.012)",
     borderColor: "rgba(255,255,255,0.035)",
   },
+  // Inner glow — wider + taller + softer than before so the verdict word
+  // sits inside a diffuse halo instead of a tight oval. The larger
+  // borderRadius keeps the falloff radial; centering math compensates for
+  // the bigger size. Reads as "the capsule is illuminated from within"
+  // rather than "there's a colored shape behind the word."
   glow: {
     position: "absolute",
-    top: SP.md,
+    top: SP.lg,
     left: "50%",
-    marginLeft: -140,
-    width: 280,
-    height: 96,
-    borderRadius: 140,
+    marginLeft: -170,
+    width: 340,
+    height: 120,
+    borderRadius: 170,
   },
   verdict: {
     fontSize: 36,
@@ -1018,11 +1039,15 @@ const heroStyles = StyleSheet.create({
   stripCell: {
     alignItems: "center",
   },
+  // COST / MARKET labels — dimmed one tier so the numbers below carry
+  // the eye instead of the all-caps labels. The text4 color (32%) read
+  // as too bright against the verdict capsule's near-black fill; 22%
+  // lands the labels at "felt context," letting the dollar values win.
   stripLabel: {
     fontSize: 9,
     fontWeight: "900",
     letterSpacing: 1.6,
-    color: C.text4,
+    color: "rgba(255,255,255,0.22)",
     marginBottom: 4,
   },
   stripValue: {
