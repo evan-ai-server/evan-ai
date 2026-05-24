@@ -30,7 +30,9 @@ import Animated, {
   withTiming,
   Easing,
 } from "react-native-reanimated";
-import * as Haptics from "expo-haptics";
+// Haptics removed from this drawer — chat is a repeated-tap surface, so
+// buzzing on every send turned into arcade noise. Visual feedback on the
+// send button + the assistant bubble carries the confirmation.
 import { C, SP, R, TY, fmtMoney, EASE_PANTHERE } from "../design/DS";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -403,7 +405,9 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
-    try { Haptics.selectionAsync(); } catch {}
+    // No haptic on send. Chat is a repeated-tap surface — a buzz per
+    // message reads as arcade noise. The send button's opacity press
+    // feedback + the assistant bubble appearing is sufficient confirmation.
 
     const userMsg: Message = { role: "user", content: trimmed };
     const nextMessages     = [...messages, userMsg];

@@ -172,6 +172,7 @@ import Reanimated, {
 import { Accelerometer } from "expo-sensors";
 import * as WebBrowser from "expo-web-browser";
 import * as Haptics from "expo-haptics";
+import { triggerHaptic } from "../components/design/haptics";
 import * as Notifications from "expo-notifications";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as FileSystem from "expo-file-system/legacy";
@@ -333,17 +334,27 @@ const PRO_MONTHLY_PRICE = 7.77;
 const PRO_YEARLY_PRICE = 22.22;
 
 // -------------------------
-// ✅ HAPTICS (SAFE OPTIONAL)
+// ✅ HAPTICS (route through centralized helper)
 // -------------------------
-const hapticSelect = () => { try { Haptics.selectionAsync(); } catch {} };
-const _hapticShutter = () => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {} };
-const hapticSoftSnap = () => {
-  try { Haptics.selectionAsync(); } catch {}
-  setTimeout(() => {
-    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-  }, 12);
-};
-const hapticTick = () => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {} };
+// Legacy in-file helpers retained for callsite compatibility but now
+// route through the central `triggerHaptic` which carries the 110ms
+// cooldown — no more stacked selection buzzes during rapid state
+// transitions. Most are NO-OPS now because their original use was
+// "buzz on every selection / tick / soft snap," which the polish pass
+// flags as arcade noise:
+//   - hapticSelect  → SILENT. Selection changes are passive; visual
+//                     feedback (highlight, scroll snap, color swap)
+//                     already telegraphs the change.
+//   - hapticSoftSnap → SILENT. Same reasoning.
+//   - hapticTick    → SILENT. Tick events are passive feedback.
+//   - _hapticShutter → "capture" via central helper (camera capture is
+//                     a real confirmation moment).
+// Use `triggerHaptic("...")` directly at call sites that actually need a
+// buzz — verdict-strong, save, error, etc.
+const hapticSelect    = () => {};
+const _hapticShutter  = () => triggerHaptic("capture");
+const hapticSoftSnap  = () => {};
+const hapticTick      = () => {};
 // -------------------------
 // ✅ LOGOS (remote PNG so no missing asset crashes)
 // -------------------------
@@ -4407,10 +4418,11 @@ const handleVaultSave = async (entry: { id: string; tempUri: string; name: strin
 
 const handleOrbPress = () => {
   heartbeatPhaseRef.current = "fast";
-  // Founder's triple-tap signature
-  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-  setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}), 100);
-  setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}), 200);
+  // Single satisfying pulse — the prior triple-tap chain (Success +
+  // Heavy + Heavy in 200ms) was the exact "stacked haptics rapidly"
+  // pattern the polish pass flags as arcade noise. One verdict-strong
+  // pulse routed through the central cooldown is plenty.
+  triggerHaptic("verdict-strong");
   setTimeout(() => { heartbeatPhaseRef.current = "slow"; }, 2000);
 };
 
@@ -13409,7 +13421,7 @@ style={[
 {activeResult && !loadingResults ? (
   <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 18, paddingVertical: 8 }}>
     <Pressable
-      onPress={() => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {} setNegotiationOpen(true); }}
+      onPress={() => setNegotiationOpen(true)}
       style={({ pressed }) => [{
         flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7,
         backgroundColor: "rgba(0,200,120,0.10)", borderRadius: 14, paddingVertical: 12,
@@ -13420,7 +13432,7 @@ style={[
       <Text style={{ color: "rgba(0,220,120,0.9)", fontWeight: "800", fontSize: 13 }}>Negotiate</Text>
     </Pressable>
     <Pressable
-      onPress={() => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {} setShareCardOpen(true); }}
+      onPress={() => setShareCardOpen(true)}
       style={({ pressed }) => [{
         flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7,
         backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 14, paddingVertical: 12,

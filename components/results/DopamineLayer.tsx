@@ -28,7 +28,7 @@ import Reanimated, {
   runOnJS,
   Easing,
 } from "react-native-reanimated";
-import * as Haptics from "expo-haptics";
+import { triggerHaptic } from "../design/haptics";
 import type { HotDeal, HotDealTier } from "../../services/dealEngine";
 import { useEvanBrain, selectScanId } from "../../hooks/useEvanBrain";
 
@@ -40,21 +40,18 @@ interface DopamineLayerProps {
   isScrolling?: boolean;
 }
 
-// ── Haptic sequences ──────────────────────────────────────────────────────────
+// ── Haptic helpers ──────────────────────────────────────────────────────────
+// Routed through the central triggerHaptic helper so the firing has the
+// shared cooldown. Both functions emit ONE pulse — the prior viral/hot
+// sequences chained 2+ haptics back-to-back, which the user flagged as
+// arcade spam. A single satisfying pulse > a stack of weak ones.
 
 function hapticViral() {
-  try {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    setTimeout(() => {
-      try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-    }, 150);
-  } catch {}
+  triggerHaptic("verdict-strong");
 }
 
 function hapticHot() {
-  try {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-  } catch {}
+  triggerHaptic("save");
 }
 
 // ── Render acknowledgment helper ──────────────────────────────────────────────
