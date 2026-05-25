@@ -115,6 +115,17 @@ export function DecisionSheet({
     }
   }
 
+  // ── Record realized outcome (fire-and-forget) ─────────────────────────────
+
+  function postOutcomeRecord(fields: Record<string, any>) {
+    if (!scanId) return;
+    fetch(`${apiBase}/api/outcomes/${encodeURIComponent(scanId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, ...fields }),
+    }).catch(() => {});
+  }
+
   // ── PASS / UNDECIDED ──────────────────────────────────────────────────────
 
   const handlePassOrUndecided = useCallback(async (decision: "PASS" | "UNDECIDED") => {
@@ -141,6 +152,7 @@ export function DecisionSheet({
     setLoading(true);
     setError(null);
     await postDecision("BUY"); // non-blocking — proceed even if it fails
+    postOutcomeRecord({ bought: true, listed: false, sold: false });
     // Revenue: capture buy intent signal
     try {
       EventTracker.track("decision_buy", {
@@ -195,6 +207,7 @@ export function DecisionSheet({
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error ?? `Server error ${res.status}`);
       }
+      postOutcomeRecord({ bought: true, actualBuyPrice: pp, listed: false, sold: false });
       onComplete?.("BUY");
       reset();
       onClose();
