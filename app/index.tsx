@@ -8876,6 +8876,7 @@ try {
       seasonalFlip: marketData?.seasonalFlip || null,
       authenticityIntel: marketData?.authenticityIntel || null,
       buyOrPass: marketData?.buyOrPass || null,
+      scanId: marketData?.scanId ?? null,
     });
   }
 } finally {
@@ -9504,6 +9505,8 @@ scanWhy: [
     if (["likely_fake", "suspicious", "counterfeit"].includes(v)) return false;
     return null;
   })(),
+  // Server-generated scan ID — used by outcome tracking (DecisionSheet, OutcomeEditorSheet)
+  scanId: (marketMeta as any)?.scanId ?? null,
 };
 
 // ── Deal Engine: orchestrator-driven pipeline ────────────────────────────────

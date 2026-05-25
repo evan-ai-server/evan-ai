@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C, SP, R, TY, SH, fmtMoney, EASE_PANTHERE, SINGULARITY } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
 import { DecisionSheet } from "./DecisionSheet";
+import { OutcomeEditorSheet } from "./OutcomeEditorSheet";
 
 const IS_ANDROID = Platform.OS === "android";
 const panthere = Easing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
@@ -72,7 +73,8 @@ export function ResultsDock({
   isTracked,
 }: ResultsDockProps) {
   const insets = useSafeAreaInsets();
-  const [decisionOpen, setDecisionOpen] = useState(false);
+  const [decisionOpen, setDecisionOpen]           = useState(false);
+  const [outcomeEditorOpen, setOutcomeEditorOpen] = useState(false);
 
   // Fade-only entrance. The prior translateY 80→0 spring made the dock
   // appear to "rise" while the dark background underneath shifted with it —
@@ -253,9 +255,11 @@ export function ResultsDock({
         {onLowball ? (
           <ActionChip icon="chatbubbles-outline" label="Lowball" onPress={onLowball} />
         ) : null}
-        {onProfitCalc ? (
-          <ActionChip icon="calculator-outline" label="Profit" onPress={onProfitCalc} />
-        ) : null}
+        <ActionChip
+          icon="trending-up-outline"
+          label="Profit"
+          onPress={() => setOutcomeEditorOpen(true)}
+        />
         {onDetails ? (
           <ActionChip icon="information-circle-outline" label="Details" onPress={onDetails} />
         ) : null}
@@ -269,6 +273,16 @@ export function ResultsDock({
         itemName={activeResult?.itemName ?? null}
         apiBase={apiBase}
         onClose={() => setDecisionOpen(false)}
+      />
+
+      {/* Outcome lifecycle editor: listed → sold → fees/shipping/platform */}
+      <OutcomeEditorSheet
+        visible={outcomeEditorOpen}
+        scanId={activeResult?.scanId ?? null}
+        userId={userId ?? null}
+        itemName={activeResult?.itemName ?? null}
+        apiBase={apiBase}
+        onClose={() => setOutcomeEditorOpen(false)}
       />
     </RNAnimated.View>
   );
