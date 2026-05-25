@@ -152,7 +152,9 @@ export function DecisionSheet({
     setLoading(true);
     setError(null);
     await postDecision("BUY"); // non-blocking — proceed even if it fails
-    postOutcomeRecord({ bought: true, listed: false, sold: false });
+    // Only set bought; omit listed/sold so a re-open of this sheet after a
+    // later sale doesn't downgrade lifecycle flags via the server-side merge.
+    postOutcomeRecord({ bought: true });
     // Revenue: capture buy intent signal
     try {
       EventTracker.track("decision_buy", {
@@ -207,7 +209,9 @@ export function DecisionSheet({
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error ?? `Server error ${res.status}`);
       }
-      postOutcomeRecord({ bought: true, actualBuyPrice: pp, listed: false, sold: false });
+      // Only set bought + buy price; omit listed/sold so a re-open of this
+      // sheet after a later sale doesn't downgrade lifecycle flags.
+      postOutcomeRecord({ bought: true, actualBuyPrice: pp });
       onComplete?.("BUY");
       reset();
       onClose();
