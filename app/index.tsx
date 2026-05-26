@@ -8236,15 +8236,32 @@ const successHapticTimer = setTimeout(() => {
   setSpatialVerdict(null);  // Clear previous verdict
   setSpatialLaser(true);    // Neon laser ON during scan pipeline
 
-  // Pre-warm: background precompute cache fetch for itemHint/last query
-  // Fires immediately — never awaited, never blocks the scan pipeline
+  // Pre-warm: background precompute cache fetch for itemHint only.
+  // _lastVisionQueryRef.current is always the PREVIOUS scan's query at this point in
+  // the flow — using it as a fallback fires a stale precompute (e.g. sunglasses query
+  // during a new airplane scan). Only fire when itemHint gives us a current-scan query.
   const _preWarmQuery = (itemHint && itemHint.trim().length >= 3)
     ? itemHint.trim()
-    : (_lastVisionQueryRef.current || null);
-  if (_preWarmQuery) {
-    fetch(`${resolvedApiBase}/precompute/query?q=${encodeURIComponent(_preWarmQuery)}`, {
-      signal: AbortSignal.timeout(4000),
-    }).catch(() => {});
+    : null; // never fall back to previous scan's _lastVisionQueryRef
+  if (_preWarmQuery && sessionId === scanSessionIdRef.current) {
+    console.log("PRECOMPUTE_QUERY_POLICY", {
+      sessionId,
+      activeSessionId: scanSessionIdRef.current,
+      query: _preWarmQuery,
+      accepted: true,
+      reason: "itemHint_current_scan",
+    });
+    fetch(
+      `${resolvedApiBase}/precompute/query?q=${encodeURIComponent(_preWarmQuery)}&scanId=${encodeURIComponent(String(sessionId))}`,
+      { signal: AbortSignal.timeout(4000) }
+    ).catch(() => {});
+  } else if (!_preWarmQuery && _lastVisionQueryRef.current) {
+    console.log("STALE_PRECOMPUTE_IGNORED", {
+      sessionId,
+      activeSessionId: scanSessionIdRef.current,
+      staleQuery: _lastVisionQueryRef.current,
+      reason: "no_itemHint_would_use_previous_scan_query",
+    });
   }
 
   // Immediately kill camera state and switch to results — no flicker back to camera/watchlist.
