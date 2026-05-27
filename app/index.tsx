@@ -7086,6 +7086,7 @@ const searchMarketStream = async (
               onProvisional(data);
             } else if (eventName === "complete") {
               finalData = data;
+              try { console.log("FRONTEND_RESULT_ITEMS_RECEIVED", { event: "complete", count: (data?.items||[]).length, top5: (data?.items||[]).slice(0,5).map((i: any)=>({title:i?.title,price:i?.price,source:i?.source})) }); } catch {}
               onComplete(data);
               if (params.query && data?.items?.length) writePriceCache(params.query, data);
               setOfflineCachedAt(null);
@@ -9206,6 +9207,8 @@ const rankedPool = [
   });
 
 const top3 = rankedPool.slice(0, 3);
+
+try { console.log("FRONTEND_RESULT_STATE_AFTER_MERGE", { rankedPoolCount: rankedPool.length, top3Count: top3.length, top5: top3.slice(0,5).map((i: any)=>({title:i?.title,price:i?.price,source:i?.source})) }); } catch {}
 
 console.log("TOP3 DECISION →", {
   scannedPrice,
