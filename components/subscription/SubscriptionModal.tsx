@@ -4,7 +4,7 @@
  * Physics-based bottom-sheet. Spring entrance with bounce. Rubber-band
  * resistance when dragging up past rest position. Fast weighted exit.
  *
- * Two plans: Go ($8/mo) and Plus ($19.99/mo).
+ * Hunter ($7.77/mo) → Pro ($22.22/mo). Identity-first progression.
  * Feature matrix with staggered 20ms checkmark animation.
  * Breathing sparkle icon with purple glow.
  * Sliding toggle pill — magnetic feel via spring interpolation.
@@ -60,29 +60,31 @@ const SHEET_MAX_H = SCREEN_H * 0.88;  // never taller than 88vh
 const SNAP_THRESHOLD = 80;            // px of downward drag to dismiss
 const RUBBER_BAND_FACTOR = 0.12;      // overdrag resistance (lower = stiffer)
 
-// ─── Plan definitions ─────────────────────────────────────────────────────────
+// ─── Plan definitions (2-tier: Hunter → Pro) ─────────────────────────────────
 type Plan = "go" | "plus";
 
 const PLANS = {
   go: {
     id: "go" as Plan,
-    label: "Go",
+    label: "Hunter",
     price: 7.77,
     priceLabel: "$7.77",
     per: "/mo",
-    tagline: "The essentials",
+    tagline: "For active thrifters and sourcing runs",
+    badge: null,
   },
   plus: {
     id: "plus" as Plan,
-    label: "Plus",
+    label: "Pro",
     price: 22.22,
     priceLabel: "$22.22",
     per: "/mo",
-    tagline: "The full Singularity",
+    tagline: "For serious resellers who need the edge",
+    badge: "MOST POWERFUL",
   },
 } as const;
 
-// ─── Feature matrix ───────────────────────────────────────────────────────────
+// ─── Feature matrix (2-tier) ──────────────────────────────────────────────────
 interface Feature {
   label: string;
   go: string | false;
@@ -90,13 +92,13 @@ interface Feature {
 }
 
 const FEATURES: Feature[] = [
-  { label: "Unlimited Scans",      go: "✓",   plus: "✓  Priority Queue"         },
-  { label: "Fees-Aware ROI",       go: false, plus: "✓  Full Breakdown"          },
-  { label: "Deal Quality Score",   go: false, plus: "✓  With Reasoning"          },
-  { label: "Market Trend Intel",   go: false, plus: "✓  Rising / Falling Signal" },
-  { label: "Autonomous Alerts",    go: "3/day", plus: "✓  Unlimited"             },
-  { label: "Seller Optimizer",     go: false, plus: "✓  Title + Platform Recs"   },
-  { label: "Early Access",         go: false, plus: "✓  Beta Features"           },
+  { label: "Sourcing Pace",        go: "Active thrifting",           plus: "\u2713  Unlimited sourcing"    },
+  { label: "Market Intelligence",  go: "\u2713  Verified comps",     plus: "\u2713  Priority retrieval"    },
+  { label: "HOT DEAL Alerts",      go: "\u2713  Instant",            plus: "\u2713  Pre-market drops"      },
+  { label: "Comp Pool Depth",      go: "\u2713  Expanded",           plus: "\u2713  Maximum coverage"      },
+  { label: "Price Trend Signals",  go: "\u2713  Rising / Falling",   plus: "\u2713  Real-time velocity"    },
+  { label: "Rarity Detection",     go: false,                        plus: "\u2713  Advanced signals"      },
+  { label: "Profit Tracking",      go: false,                        plus: "\u2713  Full resale history"   },
 ];
 
 // ─── Color tokens ─────────────────────────────────────────────────────────────
@@ -174,11 +176,13 @@ function SparkleIcon() {
   );
 }
 
-// ─── Sliding plan toggle ──────────────────────────────────────────────────────
-const TOGGLE_W    = 200;
+// ─── Sliding plan toggle (2-tier) ─────────────────────────────────────────────
+const TOGGLE_W    = 260;
 const TOGGLE_H    = 36;
 const TOGGLE_PAD  = 3;
 const PILL_W      = (TOGGLE_W - TOGGLE_PAD * 2) / 2;
+
+const PLAN_ORDER: Plan[] = ["go", "plus"];
 
 interface PlanToggleProps {
   selected: Plan;
@@ -186,11 +190,11 @@ interface PlanToggleProps {
 }
 
 function PlanToggle({ selected, onSelect }: PlanToggleProps) {
-  const pillX = useSharedValue(selected === "go" ? 0 : PILL_W);
+  const idx = PLAN_ORDER.indexOf(selected);
+  const pillX = useSharedValue(idx * PILL_W);
 
   const handlePress = useCallback((plan: Plan) => {
-    // Magnetic spring — overshoot slightly then snap back
-    const target = plan === "go" ? 0 : PILL_W;
+    const target = PLAN_ORDER.indexOf(plan) * PILL_W;
     pillX.value = withSpring(target, {
       damping: 18,
       stiffness: 320,
@@ -207,34 +211,33 @@ function PlanToggle({ selected, onSelect }: PlanToggleProps) {
 
   return (
     <View style={styles.toggleTrack}>
-      {/* Sliding pill indicator */}
       <Reanimated.View style={[styles.togglePill, pillStyle]} />
 
-      {/* Go label */}
+      {/* Hunter */}
       <Pressable
         style={styles.toggleOption}
         onPress={() => handlePress("go")}
         hitSlop={6}
       >
         <Text style={[styles.toggleLabel, selected === "go" && styles.toggleLabelActive]}>
-          Go
+          Hunter
         </Text>
         <Text style={[styles.togglePrice, selected === "go" && styles.togglePriceActive]}>
-          $7.77/mo
+          $7.77
         </Text>
       </Pressable>
 
-      {/* Plus label */}
+      {/* Pro */}
       <Pressable
         style={styles.toggleOption}
         onPress={() => handlePress("plus")}
         hitSlop={6}
       >
         <Text style={[styles.toggleLabel, selected === "plus" && styles.toggleLabelActive]}>
-          Plus
+          Pro
         </Text>
         <Text style={[styles.togglePrice, selected === "plus" && styles.togglePriceActive]}>
-          $22.22/mo
+          $22.22
         </Text>
       </Pressable>
     </View>
@@ -327,8 +330,8 @@ function CTAButton({ plan, loading, onPress }: CTAButtonProps) {
   }));
 
   const label = plan === "go"
-    ? "Start with Go — $7.77/month"
-    : "Get Singularity Plus — $22.22/month";
+    ? "Start Hunting \u2014 $7.77/month"
+    : "Get the Edge \u2014 $22.22/month";
 
   return (
     <Reanimated.View style={[styles.ctaWrap, btnStyle]}>
@@ -350,12 +353,28 @@ function CTAButton({ plan, loading, onPress }: CTAButtonProps) {
   );
 }
 
+// ─── Aspiration context ──────────────────────────────────────────────────────
+export interface AspirationContext {
+  /** "You just found a $42 flip in under 2s." */
+  winFrame: string | null;
+  /** "Today's hidden opportunities: ~$87–$214" */
+  gapFrame: string | null;
+  /** "Free users missed an estimated $64 in profit today." */
+  lossFrame: string | null;
+  /** Profit from the scan that triggered this */
+  lastProfit: number;
+  /** HOT / VIRAL / HIGH_PROFIT / NONE */
+  triggerType: string;
+}
+
 // ─── SubscriptionModal ────────────────────────────────────────────────────────
 export interface SubscriptionModalProps {
   visible: boolean;
   onClose: () => void;
   onPurchased?: (isPro: boolean) => void;
   initialPlan?: Plan;
+  /** Aspiration context from the scan that triggered the paywall */
+  aspiration?: AspirationContext | null;
 }
 
 export function SubscriptionModal({
@@ -363,12 +382,46 @@ export function SubscriptionModal({
   onClose,
   onPurchased,
   initialPlan = "plus",
+  aspiration,
 }: SubscriptionModalProps) {
   const insets     = useSafeAreaInsets();
   const [plan, setPlan]       = useState<Plan>(initialPlan);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [animKey, setAnimKey] = useState(0); // triggers checkmark re-animation
+  const [ctaRevealed, setCtaRevealed] = useState(false);
+
+  // ── Aspiration state ────────────────────────────────────────────────────
+  const isAspiration = !!aspiration && aspiration.triggerType !== "NONE";
+  const profitCounterValue = useSharedValue(0);
+  const ctaRevealOpacity = useSharedValue(0);
+
+  // Delayed CTA reveal: 800ms delay while profit number rolls up
+  useEffect(() => {
+    if (visible && isAspiration) {
+      setCtaRevealed(false);
+      ctaRevealOpacity.value = 0;
+      // Roll up the profit counter
+      profitCounterValue.value = 0;
+      profitCounterValue.value = withTiming(aspiration.lastProfit, {
+        duration: 700,
+        easing: Easing.out(Easing.cubic),
+      });
+      // Reveal CTA after 800ms
+      const timer = setTimeout(() => {
+        ctaRevealOpacity.value = withTiming(1, { duration: 300 });
+        setCtaRevealed(true);
+      }, 800);
+      return () => clearTimeout(timer);
+    } else if (visible) {
+      setCtaRevealed(true);
+      ctaRevealOpacity.value = 1;
+    }
+  }, [visible, isAspiration]);
+
+  const ctaAnimStyle = useAnimatedStyle(() => ({
+    opacity: ctaRevealOpacity.value,
+  }));
 
   // ── Sheet physics ────────────────────────────────────────────────────────
   const translateY = useSharedValue(SHEET_MAX_H);
@@ -454,7 +507,7 @@ export function SubscriptionModal({
     opacity: backdropOp.value,
   }));
 
-  // ── Gold glow on Go price ─────────────────────────────────────────────────
+  // ── Gold shimmer on Hunter tier (momentum signal) ────────────────────────
   const goldGlow = useSharedValue(0);
   useEffect(() => {
     if (plan === "go") {
@@ -486,18 +539,30 @@ export function SubscriptionModal({
   }, []);
 
   // ── Purchase ─────────────────────────────────────────────────────────────
+  // ── Aspiration haptic: heavy burst when aspiration paywall opens ──────
+  useEffect(() => {
+    if (visible && isAspiration) {
+      try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+      // Second heavier burst after a beat
+      const t = setTimeout(() => {
+        try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); } catch {}
+      }, 300);
+      return () => clearTimeout(t);
+    }
+  }, [visible, isAspiration]);
+
   const handlePurchase = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     setLoading(true);
     setError(null);
     try {
+      // Pro (plus) maps to yearly; Hunter (go) maps to monthly
       const result = plan === "plus"
-        ? await purchaseYearly()   // "Plus" maps to yearly / highest tier
-        : await purchaseMonthly(); // "Go" maps to monthly
+        ? await purchaseYearly()
+        : await purchaseMonthly();
 
       if (result.success) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        // Revenue: track purchase complete
         try { EventTracker.trackPurchaseComplete(plan); } catch {}
         onPurchased?.(result.isPro);
         dismiss();
@@ -563,19 +628,41 @@ export function SubscriptionModal({
               </View>
             </Pressable>
 
-            {/* Sparkle icon */}
-            <SparkleIcon />
+            {/* ── Aspiration emotional hook (when triggered by HOT/VIRAL) ── */}
+            {isAspiration && aspiration ? (
+              <View style={styles.aspirationHook}>
+                {aspiration.triggerType === "VIRAL" ? (
+                  <Text style={styles.aspirationBadge}>VIRAL FLIP DETECTED</Text>
+                ) : aspiration.triggerType === "HOT_DEAL" ? (
+                  <Text style={styles.aspirationBadgeHot}>HOT DEAL FOUND</Text>
+                ) : (
+                  <Text style={styles.aspirationBadgeProfit}>HIGH PROFIT ALERT</Text>
+                )}
+                <Text style={styles.aspirationWin}>{aspiration.winFrame}</Text>
+                {aspiration.gapFrame ? (
+                  <Text style={styles.aspirationGap}>{aspiration.gapFrame}</Text>
+                ) : null}
+                {aspiration.lossFrame ? (
+                  <Text style={styles.aspirationLoss}>{aspiration.lossFrame}</Text>
+                ) : null}
+              </View>
+            ) : (
+              <>
+                {/* Sparkle icon */}
+                <SparkleIcon />
 
-            {/* Headlines */}
-            <Text style={styles.headline}>Evan AI Singularity</Text>
-            <Text style={styles.subHeadline}>
-              The Invisible Army. Working 24 hours.{"\n"}For you.
-            </Text>
+                {/* Headlines */}
+                <Text style={styles.headline}>Evan AI Singularity</Text>
+                <Text style={styles.subHeadline}>
+                  The Invisible Army. Working 24 hours.{"\n"}For you.
+                </Text>
+              </>
+            )}
 
             {/* Plan toggle */}
             <PlanToggle selected={plan} onSelect={handlePlanSelect} />
 
-            {/* Price display — gold glow when Go is selected.
+            {/* Price display — gold glow when Hunter is selected.
                 Hardware-rasterized + allowFontScaling={false} to pin to sub-pixel grid during glow. */}
             <Reanimated.View
               style={[styles.priceRow, goldGlowStyle as any]}
@@ -615,12 +702,14 @@ export function SubscriptionModal({
               <Text style={styles.errorText}>{error}</Text>
             ) : null}
 
-            {/* CTA */}
-            <CTAButton
-              plan={plan}
-              loading={loading}
-              onPress={handlePurchase}
-            />
+            {/* CTA — delayed 800ms on aspiration trigger while profit rolls up */}
+            <Reanimated.View style={ctaAnimStyle}>
+              <CTAButton
+                plan={plan}
+                loading={loading}
+                onPress={handlePurchase}
+              />
+            </Reanimated.View>
 
             {/* Footer */}
             <Text style={styles.footer}>
@@ -926,5 +1015,77 @@ const styles = StyleSheet.create({
     right: -2,
     height: 302,
     backgroundColor: "#111111",
+  },
+
+  // ── Aspiration emotional hook ──────────────────────────────────────────
+  aspirationHook: {
+    alignItems: "center",
+    paddingHorizontal: SP.lg,
+    marginBottom: SP.lg,
+    gap: 8,
+  },
+  aspirationBadge: {
+    fontSize: 13,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    color: "rgba(255,120,0,1)",
+    backgroundColor: "rgba(255,80,0,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(255,120,0,0.35)",
+    borderRadius: R.pill,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    overflow: "hidden",
+    textAlign: "center",
+  },
+  aspirationBadgeHot: {
+    fontSize: 13,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    color: "rgba(255,210,80,1)",
+    backgroundColor: "rgba(255,185,0,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255,200,0,0.30)",
+    borderRadius: R.pill,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    overflow: "hidden",
+    textAlign: "center",
+  },
+  aspirationBadgeProfit: {
+    fontSize: 13,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+    color: "rgba(180,255,200,0.92)",
+    backgroundColor: "rgba(0,210,120,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(0,210,120,0.22)",
+    borderRadius: R.pill,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    overflow: "hidden",
+    textAlign: "center",
+  },
+  aspirationWin: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#FFFFFF",
+    letterSpacing: -0.3,
+    textAlign: "center",
+    lineHeight: 26,
+  },
+  aspirationGap: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "rgba(255,210,80,0.88)",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  aspirationLoss: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.52)",
+    textAlign: "center",
+    lineHeight: 19,
   },
 });
