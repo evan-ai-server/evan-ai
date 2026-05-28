@@ -614,9 +614,9 @@ const onPress = () => {
           </View>
         </View>
         <Ionicons
-          name="open-outline"
+          name={trustedUrl ? "open-outline" : "bar-chart-outline"}
           size={18}
-          color="rgba(255,255,255,0.85)"
+          color={trustedUrl ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.3)"}
         />
       </View>
     </Pressable>
@@ -734,16 +734,26 @@ function normalizeMarketResponse(payload: any) {
   const items = rawItems
     .filter(Boolean)
     .map((it: any, index: number) => {
-      const rawUrl =
-        it?.directUrl ||   // server-resolved direct merchant URL (preferred)
-        it?.url ||
-        it?.buyLink ||
-        it?.link ||
-        it?.itemWebUrl ||
-        it?.merchant_link ||
-        it?.offer_page_url ||
-        it?.product_url ||
-        null;
+      // Respect clickable:false from the backend — don't fall back to buyLink/url
+      // when the server has explicitly said this item has no direct merchant URL.
+      // This prevents Google Shopping URLs that survive in buyLink from being
+      // promoted to directUrl via the rawUrl fallback chain.
+      const _serverClickable = it?.clickable !== false;
+      const rawUrl = _serverClickable
+        ? (it?.directUrl ||
+           it?.url ||
+           it?.buyLink ||
+           it?.link ||
+           it?.itemWebUrl ||
+           it?.merchant_link ||
+           it?.offer_page_url ||
+           it?.product_url ||
+           null)
+        : null;
+
+      // For clickable items only trust URLs from known-good domains
+      const trustedRawUrl = rawUrl && isTrustedUrl(rawUrl) ? rawUrl : null;
+      const resolvedUrl   = trustedRawUrl || (rawUrl && _serverClickable ? rawUrl : null);
 
       const totalCandidate =
         Number.isFinite(Number(it?.totalPrice))
@@ -763,19 +773,20 @@ function normalizeMarketResponse(payload: any) {
 
       return {
         ...it,
-        id: it?.id || `${index}_${rawUrl || it?.title || "item"}`,
+        id: it?.id || `${index}_${resolvedUrl || it?.title || "item"}`,
         title: it?.title || it?.itemName || "Listing",
         itemName: it?.title || it?.itemName || "Listing",
         price: priceCandidate,
         totalPrice: totalCandidate ?? priceCandidate,
         store: it?.source || it?.store || "Marketplace",
         source: it?.source || it?.store || "Marketplace",
-        url: rawUrl,
-        buyLink: rawUrl,
-        directUrl: it?.directUrl || rawUrl,
+        url:      resolvedUrl,
+        buyLink:  resolvedUrl,
+        directUrl: resolvedUrl,
+        clickable: _serverClickable && !!resolvedUrl,
         urlQuality: it?.urlQuality || it?.urlSource || null,
         image: it?.image || it?.thumbnail || it?.thumbnail_url || null,
-        trusted: !!(rawUrl && isTrustedUrl(rawUrl)),
+        trusted: !!(resolvedUrl && isTrustedUrl(resolvedUrl)),
       };
     })
     .filter(
@@ -15548,8 +15559,10 @@ ${shareLink}`
                 </View>
                 <Pressable
                   onPress={() => {
-                    if (!activeResult?.buyLink) return;
-safeOpenUrl(activeResult.buyLink, activeResult.itemName || "Listing" );
+                    const _openUrl = activeResult?.directUrl || activeResult?.buyLink;
+                    if (!_openUrl || activeResult?.clickable === false) return;
+                    if (!isTrustedUrl(_openUrl)) return;
+safeOpenUrl(_openUrl, activeResult.itemName || "Listing" );
                   }}
                   style={[styles.modalPrimary, { marginTop: 14 }]}
                 >
@@ -15953,10 +15966,16 @@ const store =
               key={`${it?.url || idx}`}
               onPress={() => {
                 const u = it?.directUrl || it?.url;
-                if (u) {
-                  try { console.log("FRONTEND_OPEN_LISTING_URL", { title: String(it?.title || "").slice(0, 80), source: it?.source || null, chosenUrl: u, directUrl: it?.directUrl || null, urlQuality: it?.urlQuality || null }); } catch {}
-                  safeOpenUrl(u, it?.title || "Listing");
+                if (it?.clickable === false || !u) {
+                  try { console.log("FRONTEND_LISTING_NOT_CLICKABLE", { title: String(it?.title || "").slice(0, 80), source: it?.source || null, urlQuality: it?.urlQuality || null }); } catch {}
+                  return;
                 }
+                if (!isTrustedUrl(u)) {
+                  try { console.log("FRONTEND_LISTING_NOT_CLICKABLE", { title: String(it?.title || "").slice(0, 80), source: it?.source || null, urlQuality: it?.urlQuality || null, reason: "untrusted_url" }); } catch {}
+                  return;
+                }
+                try { console.log("FRONTEND_OPEN_LISTING_URL", { title: String(it?.title || "").slice(0, 80), source: it?.source || null, chosenUrl: u, directUrl: it?.directUrl || null, urlQuality: it?.urlQuality || null, clickable: it?.clickable }); } catch {}
+                safeOpenUrl(u, it?.title || "Listing");
               }}
               style={({ pressed }) => [
                 styles.listingRow,
@@ -15969,12 +15988,13 @@ const store =
                 </Text>
                 <Text style={styles.listingMeta}>
                   {money(toNumber(it?.price))} · {store}
+                  {it?.clickable === false ? " · Pricing ref." : ""}
                 </Text>
               </View>
               <Ionicons
-                name="open-outline"
+                name={it?.clickable === false ? "bar-chart-outline" : "open-outline"}
                 size={18}
-                color="rgba(255,255,255,0.85)"
+                color={it?.clickable === false ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.85)"}
               />
             </Pressable>
           );
