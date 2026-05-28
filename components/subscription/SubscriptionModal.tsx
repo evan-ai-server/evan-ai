@@ -381,7 +381,7 @@ export function SubscriptionModal({
   visible,
   onClose,
   onPurchased,
-  initialPlan = "plus",
+  initialPlan = "go",
   aspiration,
 }: SubscriptionModalProps) {
   const insets     = useSafeAreaInsets();
@@ -990,10 +990,10 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
   },
   ctaText: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: "800",
     color: SUB.ctaText,
-    letterSpacing: -0.1,
+    letterSpacing: 0.1,
   },
 
   // Footer

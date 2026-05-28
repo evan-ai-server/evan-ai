@@ -15996,7 +15996,7 @@ const store =
     }
     orchestrator.dismissPaywall();
   }}
-  initialPlan="plus"
+  initialPlan="go"
   aspiration={brainAspirationCtx}
 />
 
