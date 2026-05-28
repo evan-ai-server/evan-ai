@@ -553,7 +553,7 @@ const _buildShareCardText = (card) => {
 const _renderSmallResultCard = (item, idx) => {
   if (!item) return null;
 const title = item.title || item.itemName || "Listing";
-const rawUrl = item.url || item.buyLink || item.link || null;
+const rawUrl = item.directUrl || item.url || item.buyLink || item.link || null;
 const trustedUrl = rawUrl && isTrustedUrl(rawUrl) ? rawUrl : null;
 const img = item.image || item.thumbnail || null;
 const price =
@@ -566,7 +566,10 @@ const rating =
     : null;
 
 const onPress = () => {
-  if (trustedUrl) safeOpenUrl(trustedUrl, title);
+  if (trustedUrl) {
+    try { console.log("FRONTEND_OPEN_LISTING_URL", { title: String(title).slice(0, 80), source: item?.source || null, chosenUrl: trustedUrl, directUrl: item?.directUrl || null, urlQuality: item?.urlQuality || null }); } catch {}
+    safeOpenUrl(trustedUrl, title);
+  }
 };
 
  return (
@@ -732,6 +735,7 @@ function normalizeMarketResponse(payload: any) {
     .filter(Boolean)
     .map((it: any, index: number) => {
       const rawUrl =
+        it?.directUrl ||   // server-resolved direct merchant URL (preferred)
         it?.url ||
         it?.buyLink ||
         it?.link ||
@@ -768,6 +772,8 @@ function normalizeMarketResponse(payload: any) {
         source: it?.source || it?.store || "Marketplace",
         url: rawUrl,
         buyLink: rawUrl,
+        directUrl: it?.directUrl || rawUrl,
+        urlQuality: it?.urlQuality || it?.urlSource || null,
         image: it?.image || it?.thumbnail || it?.thumbnail_url || null,
         trusted: !!(rawUrl && isTrustedUrl(rawUrl)),
       };
@@ -15946,8 +15952,11 @@ const store =
             <Pressable
               key={`${it?.url || idx}`}
               onPress={() => {
-                const u = it?.url;
-                if (u) safeOpenUrl(u, it?.title || "Listing");
+                const u = it?.directUrl || it?.url;
+                if (u) {
+                  try { console.log("FRONTEND_OPEN_LISTING_URL", { title: String(it?.title || "").slice(0, 80), source: it?.source || null, chosenUrl: u, directUrl: it?.directUrl || null, urlQuality: it?.urlQuality || null }); } catch {}
+                  safeOpenUrl(u, it?.title || "Listing");
+                }
               }}
               style={({ pressed }) => [
                 styles.listingRow,
