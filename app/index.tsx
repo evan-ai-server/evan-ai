@@ -553,8 +553,6 @@ const _buildShareCardText = (card) => {
 const _renderSmallResultCard = (item, idx) => {
   if (!item) return null;
 const title = item.title || item.itemName || "Listing";
-const rawUrl = item.directUrl || item.url || item.buyLink || item.link || null;
-const trustedUrl = rawUrl && isTrustedUrl(rawUrl) ? rawUrl : null;
 const img = item.image || item.thumbnail || null;
 const price =
   typeof item.price === "number"
@@ -564,12 +562,11 @@ const rating =
   typeof item.rating === "number" && Number.isFinite(item.rating)
     ? item.rating
     : null;
+// Only show as openable when item is clickable and has a non-blocked directUrl
+const _itemClickable = item.clickable !== false && !!item.directUrl && !_isListingBlockedUrl(item.directUrl);
 
 const onPress = () => {
-  if (trustedUrl) {
-    try { console.log("FRONTEND_OPEN_LISTING_URL", { title: String(title).slice(0, 80), source: item?.source || null, chosenUrl: trustedUrl, directUrl: item?.directUrl || null, urlQuality: item?.urlQuality || null }); } catch {}
-    safeOpenUrl(trustedUrl, title);
-  }
+  safeOpenListingUrl(item, title);
 };
 
  return (
@@ -590,7 +587,7 @@ const onPress = () => {
 <Ionicons
   name="open-outline"
   size={18}
-  color={trustedUrl ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.24)"}
+  color={_itemClickable ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.24)"}
 />
   </View>
 )}
@@ -614,9 +611,9 @@ const onPress = () => {
           </View>
         </View>
         <Ionicons
-          name={trustedUrl ? "open-outline" : "bar-chart-outline"}
+          name={_itemClickable ? "open-outline" : "bar-chart-outline"}
           size={18}
-          color={trustedUrl ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.3)"}
+          color={_itemClickable ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.3)"}
         />
       </View>
     </Pressable>
@@ -720,6 +717,55 @@ const open = async () => {
 // user with an extra tap. If the URL fails outright we still surface a
 // silent toast via setSavedToast (parent owns it) — no system alerts.
   await open();
+}
+
+// Hard guard for listing-specific opens. Never opens Google/SerpAPI/ad/search URLs.
+// Takes either a full item object (preferred) or a raw url string.
+const _LISTING_BLOCKED_HOSTS = [
+  "google.com", "googleadservices.com", "googlesyndication.com",
+  "doubleclick.net", "serpapi.com", "googleleadservices.com",
+];
+const _LISTING_BLOCKED_PATHS = ["/search", "/shopping", "/product/url", "/aclk", "/sch"];
+function _isListingBlockedUrl(url: string | null | undefined): boolean {
+  if (!url) return true;
+  try {
+    const u = new URL(String(url));
+    const host = u.hostname.toLowerCase();
+    if (_LISTING_BLOCKED_HOSTS.some(h => host === h || host.endsWith(`.${h}`))) return true;
+    if (_LISTING_BLOCKED_PATHS.some(p => u.pathname.startsWith(p))) return true;
+    return false;
+  } catch { return true; }
+}
+
+async function safeOpenListingUrl(itemOrUrl: any, title?: string): Promise<void> {
+  // Accept either an item object or a raw URL string
+  const isItemObj = itemOrUrl && typeof itemOrUrl === "object";
+  const item   = isItemObj ? itemOrUrl : null;
+  const rawUrl = isItemObj
+    ? (item.directUrl || null)
+    : (typeof itemOrUrl === "string" ? itemOrUrl : null);
+  const label  = title || (isItemObj ? (item.title || item.itemName || "Listing") : "Listing");
+  const clickable = isItemObj ? item.clickable : undefined;
+
+  // Block if item explicitly not clickable
+  if (clickable === false) {
+    try { console.log("FRONTEND_LISTING_NOT_CLICKABLE", { title: String(label).slice(0, 80), source: item?.source || null, urlQuality: item?.urlQuality || null, directUrl: rawUrl, reason: "clickable_false" }); } catch {}
+    return;
+  }
+
+  if (!rawUrl) {
+    try { console.log("FRONTEND_LISTING_NOT_CLICKABLE", { title: String(label).slice(0, 80), source: item?.source || null, reason: "no_direct_url" }); } catch {}
+    return;
+  }
+
+  // Block Google/SerpAPI/search wrapper URLs
+  if (_isListingBlockedUrl(rawUrl)) {
+    try { console.log("FRONTEND_BLOCKED_LISTING_URL", { title: String(label).slice(0, 80), source: item?.source || null, attemptedUrl: rawUrl, directUrl: item?.directUrl || null, urlQuality: item?.urlQuality || null, clickable, reason: "blocked_host_or_path" }); } catch {}
+    return;
+  }
+
+  try { console.log("FRONTEND_OPEN_LISTING_URL", { title: String(label).slice(0, 80), source: item?.source || null, chosenUrl: rawUrl, directUrl: item?.directUrl || null, urlQuality: item?.urlQuality || null }); } catch {}
+  await safeOpenUrl(rawUrl, label);
 }
 
 function normalizeMarketResponse(payload: any) {
@@ -13281,7 +13327,7 @@ style={[
   onCancel={cancelActiveScan}
   onRetry={retrySameScan}
   onNewScan={startNewScan}
-  onOpenListing={safeOpenUrl}
+  onOpenListing={safeOpenListingUrl}
   onTrack={toggleWatchlist}
   onCopy={async () => {
     if (!activeResult) return;

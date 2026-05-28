@@ -80,7 +80,7 @@ interface ResultsContentProps {
   onCancel: () => void;
   onRetry: () => void;
   onNewScan: () => void;
-  onOpenListing: (url: string, title: string) => void;
+  onOpenListing: (itemOrUrl: any, title?: string) => void;
   onTrack: (result: any) => void;
   onCopy: () => void;
   onScanAgain?: () => void;
@@ -306,12 +306,19 @@ export const ResultsContent = React.memo(function ResultsContent({
   }, [activeResult, results]);
 
   const currentCard = allCards[deckIndex] ?? activeResult;
-  const currentUrl  = currentCard?.buyLink || currentCard?.url || null;
+  // Prefer directUrl (backend-vetted) over buyLink/url fallbacks.
+  // Do not open when clickable:false — pass the full card so safeOpenListingUrl
+  // can enforce the clickable guard and log correctly.
+  const currentUrl  = currentCard?.directUrl || currentCard?.buyLink || currentCard?.url || null;
   const currentName = currentCard?.itemName || currentCard?.title || "Listing";
 
   const handleOpenListing = useCallback(() => {
-    if (currentUrl) onOpenListing(currentUrl, currentName);
-  }, [currentUrl, currentName, onOpenListing]);
+    if (currentCard) {
+      onOpenListing(currentCard, currentName);
+    } else if (currentUrl) {
+      onOpenListing(currentUrl, currentName);
+    }
+  }, [currentCard, currentUrl, currentName, onOpenListing]);
 
   return (
     <View style={styles.rootWrap}>

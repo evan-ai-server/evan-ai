@@ -58,7 +58,7 @@ interface CardDeckProps {
   results: any[];
   /** Watchlist query keys for heart state */
   watchlistQueries?: string[];
-  onPressCard?: (url: string | null, title: string) => void;
+  onPressCard?: (itemOrUrl: any, title: string) => void;
   onZoomImage?: (uri: string) => void;
   onSnapToIndex?: (index: number) => void;
   onToggleWatchlist?: (card: CardData) => void;
@@ -348,9 +348,14 @@ export function CardDeck({
       return;
     }
     try {
-      const url = (card as any).directUrl || card.buyLink || (card as any).url || null;
+      // Pass the full card object so safeOpenListingUrl can enforce clickable guard.
+      // Fall back to url string only if card lacks directUrl and is not explicitly non-clickable.
       const title = card.itemName || (card as any).title || "Listing";
-      if (url) onPressCard?.(url, title);
+      if ((card as any).clickable === false) {
+        console.log("FRONTEND_LISTING_NOT_CLICKABLE", { title: String(title).slice(0, 80), reason: "card_clickable_false" });
+        return;
+      }
+      onPressCard?.(card as any, title);
     } catch (err: any) {
       console.log("CARD_SWIPE_SAFE_BLOCKED", { reason: "press_error", error: err?.message || String(err) });
     }
