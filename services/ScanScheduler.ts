@@ -1,26 +1,32 @@
 /**
- * Evan AI — ScanScheduler (Backpressure + Throughput Control)
+ * Evan AI — ScanScheduler 2.0 (Priority + Preemption + Backpressure)
+ *
+ * OPUS 4.8 upgrade: reactive FIFO → proactive priority queue.
  *
  * Prevents system overload under extreme scan input rates.
- * Queues scan requests, enforces concurrency limits, and applies
- * backpressure policies to protect the pipeline.
+ * Queues scan requests with priority ordering, enforces concurrency limits,
+ * applies backpressure policies, and supports preemption.
  *
  * Architecture:
- *   - FIFO queue with configurable concurrency limit (default: 1)
+ *   - Priority queue: CRITICAL > HIGH > LOW (FIFO within same level)
  *   - Newest-wins drop strategy under debounce window
+ *   - Age-boost starvation prevention (LOW→HIGH at 5s, HIGH→CRITICAL at 10s)
+ *   - Preemption: CRITICAL arriving while LOW processing → cancel LOW
  *   - Overload detection: input rate > processing rate
- *   - Structured metrics: queue length, wait time, drop count
+ *   - Structured metrics: queue length, wait time, drop count, priority breakdown
  *   - Dispatcher pattern: scheduler calls orchestrator, not vice versa
  *
  * Guarantees:
  *   - No uncontrolled concurrent scan execution
  *   - Rapid duplicate scans debounced (default: 100ms window)
+ *   - No starvation: age-boost ensures every scan eventually runs
  *   - Queue overflow detected and reported via ScanObserver
- *   - O(1) enqueue, O(1) dequeue, O(1) metric reads
+ *   - O(n) enqueue (n ≤ 3 typical), O(1) dequeue, O(1) metric reads
  */
 
 import { ScanObserver } from "./ScanObserver";
 import type { DealInput } from "../services/dealEngine";
+import type { ScanPriority } from "./IntentEngine";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +37,8 @@ export interface QueuedScan {
   input: DealInput;
   /** Timestamp when enqueued */
   enqueuedAt: number;
+  /** OPUS 4.8: scheduling priority (default: HIGH for backward compat) */
+  priority: ScanPriority;
 }
 
 export interface SchedulerMetrics {
@@ -46,6 +54,12 @@ export interface SchedulerMetrics {
   totalDispatched: number;
   /** Rolling average wait time (ms) */
   avgWaitTimeMs: number;
+  /** OPUS 4.8: lifetime preemption count */
+  totalPreemptions: number;
+  /** OPUS 4.8: lifetime age-boost count */
+  totalAgeBoosts: number;
+  /** OPUS 4.8: priority of currently processing scan (null if idle) */
+  activePriority: ScanPriority | null;
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -54,6 +68,17 @@ const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_DEBOUNCE_MS = 100;
 const MAX_WAIT_TIME_SAMPLES = 50;
 const OVERLOAD_THRESHOLD_MULTIPLIER = 3;
+
+/** Priority rank: lower number = higher priority */
+const PRIORITY_RANK: Record<ScanPriority, number> = {
+  CRITICAL: 0,
+  HIGH: 1,
+  LOW: 2,
+};
+
+/** Age-boost thresholds (starvation prevention) */
+const AGE_BOOST_LOW_TO_HIGH_MS = 5_000;
+const AGE_BOOST_HIGH_TO_CRITICAL_MS = 10_000;
 
 let _ticketSeq = 0;
 function generateTicketId(): string {
@@ -70,10 +95,14 @@ class _ScanScheduler {
   private _debounceMs = DEFAULT_DEBOUNCE_MS;
   private _lastEnqueueTime = 0;
   private _dispatcher: ((input: DealInput) => void) | null = null;
+  private _preemptCallback: (() => void) | null = null;
+  private _activePriority: ScanPriority | null = null;
   private _waitTimes: number[] = [];
   private _totalEnqueued = 0;
   private _totalDropped = 0;
   private _totalDispatched = 0;
+  private _totalPreemptions = 0;
+  private _totalAgeBoosts = 0;
 
   // ── Configuration ─────────────────────────────────────────────────────
 
@@ -83,6 +112,15 @@ class _ScanScheduler {
    */
   setDispatcher(fn: (input: DealInput) => void): void {
     this._dispatcher = fn;
+  }
+
+  /**
+   * OPUS 4.8: Set the preemption callback.
+   * Called when a CRITICAL scan arrives and should preempt a LOW-priority scan.
+   * Typically wired to orchestrator.cancelSequence.
+   */
+  setPreemptCallback(fn: () => void): void {
+    this._preemptCallback = fn;
   }
 
   /** Set maximum concurrent scans (default: 1) */
@@ -100,12 +138,17 @@ class _ScanScheduler {
   /**
    * Enqueue a scan for processing.
    *
+   * OPUS 4.8 upgrades:
+   *   - Priority-ordered insertion (CRITICAL > HIGH > LOW)
+   *   - Preemption: CRITICAL arriving while LOW processing → cancel LOW
+   *   - Age-boost checked on every processNext (starvation prevention)
+   *
    * If the previous enqueue was within the debounce window,
    * the OLDER queued scan is dropped (newest-wins strategy).
    *
    * Returns a ticket ID for tracking/cancellation.
    */
-  enqueue(input: DealInput): string {
+  enqueue(input: DealInput, priority: ScanPriority = "HIGH"): string {
     const now = Date.now();
     this._totalEnqueued++;
 
@@ -118,6 +161,7 @@ class _ScanScheduler {
       this._totalDropped++;
       ScanObserver.emit("info", "lifecycle", "SCAN_DROPPED", null, "idle", {
         droppedTicketId: dropped.ticketId,
+        droppedPriority: dropped.priority,
         reason: "debounce_newest_wins",
         waitMs: now - dropped.enqueuedAt,
       });
@@ -127,14 +171,19 @@ class _ScanScheduler {
       ticketId: generateTicketId(),
       input,
       enqueuedAt: now,
+      priority,
     };
-    this._queue.push(ticket);
+
+    // Priority-ordered insertion: insert at end of same-priority block
+    this._insertSorted(ticket);
     this._lastEnqueueTime = now;
 
-    ScanObserver.emit("info", "lifecycle", "SCAN_ENQUEUED", null, "idle", {
+    ScanObserver.emit("info", "priority", "SCAN_ENQUEUED", null, "idle", {
       ticketId: ticket.ticketId,
+      priority,
       queueLength: this._queue.length,
       isProcessing: this._isProcessing,
+      activePriority: this._activePriority,
     });
 
     // Detect overload
@@ -146,7 +195,29 @@ class _ScanScheduler {
       });
     }
 
-    this._processNext();
+    // ── Preemption check ──────────────────────────────────────────────
+    // If a CRITICAL scan arrives and we're processing a LOW scan,
+    // preempt the LOW scan so CRITICAL runs next.
+    if (
+      this._isProcessing &&
+      priority === "CRITICAL" &&
+      this._activePriority === "LOW" &&
+      this._preemptCallback
+    ) {
+      this._totalPreemptions++;
+      ScanObserver.emit("warn", "priority", "SCAN_PREEMPTED", null, "idle", {
+        preemptedPriority: this._activePriority,
+        incomingPriority: priority,
+        ticketId: ticket.ticketId,
+        totalPreemptions: this._totalPreemptions,
+      });
+      // Preempt: cancel the active LOW scan.
+      // The callback triggers cancelSequence → scanFinished → _processNext.
+      this._preemptCallback();
+    } else {
+      this._processNext();
+    }
+
     return ticket.ticketId;
   }
 
@@ -187,6 +258,7 @@ class _ScanScheduler {
    */
   scanFinished(): void {
     this._isProcessing = false;
+    this._activePriority = null;
     ScanObserver.emit("info", "lifecycle", "SCAN_SLOT_RELEASED", null, "idle", {
       queueLength: this._queue.length,
     });
@@ -195,13 +267,71 @@ class _ScanScheduler {
 
   // ── Internal ──────────────────────────────────────────────────────────
 
+  /**
+   * Insert a scan into the queue in priority order.
+   * Within the same priority level, FIFO is preserved.
+   * O(n) where n is queue length (typically 0–3).
+   */
+  private _insertSorted(scan: QueuedScan): void {
+    const rank = PRIORITY_RANK[scan.priority];
+    let insertIdx = this._queue.length; // default: end of queue
+
+    // Find the first entry with a LOWER priority (higher rank number)
+    for (let i = 0; i < this._queue.length; i++) {
+      if (PRIORITY_RANK[this._queue[i].priority] > rank) {
+        insertIdx = i;
+        break;
+      }
+    }
+
+    this._queue.splice(insertIdx, 0, scan);
+  }
+
+  /**
+   * Age-boost starvation prevention.
+   * Promotes entries that have been waiting too long.
+   * O(n) scan — n ≤ OVERLOAD_THRESHOLD (typically 3).
+   */
+  private _applyAgeBoost(): void {
+    const now = Date.now();
+    let boosted = false;
+
+    for (const scan of this._queue) {
+      const ageMs = now - scan.enqueuedAt;
+      if (scan.priority === "LOW" && ageMs > AGE_BOOST_LOW_TO_HIGH_MS) {
+        scan.priority = "HIGH";
+        boosted = true;
+        this._totalAgeBoosts++;
+      } else if (scan.priority === "HIGH" && ageMs > AGE_BOOST_HIGH_TO_CRITICAL_MS) {
+        scan.priority = "CRITICAL";
+        boosted = true;
+        this._totalAgeBoosts++;
+      }
+    }
+
+    if (boosted) {
+      // Re-sort after boosting (stable sort preserves FIFO within priority)
+      this._queue.sort(
+        (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
+      );
+      ScanObserver.emit("info", "priority", "AGE_BOOST_APPLIED", null, "idle", {
+        queueLength: this._queue.length,
+        totalAgeBoosts: this._totalAgeBoosts,
+      });
+    }
+  }
+
   private _processNext(): void {
     if (this._isProcessing) return;
     if (this._queue.length === 0) return;
     if (!this._dispatcher) return;
 
+    // Apply age-boost before dispatch (starvation prevention)
+    this._applyAgeBoost();
+
     this._isProcessing = true;
     const next = this._queue.shift()!;
+    this._activePriority = next.priority;
 
     // Track wait time
     const waitTime = Date.now() - next.enqueuedAt;
@@ -212,8 +342,9 @@ class _ScanScheduler {
 
     this._totalDispatched++;
 
-    ScanObserver.emit("info", "lifecycle", "SCAN_DISPATCHED", null, "idle", {
+    ScanObserver.emit("info", "priority", "SCAN_DISPATCHED", null, "idle", {
       ticketId: next.ticketId,
+      priority: next.priority,
       waitMs: waitTime,
       remainingInQueue: this._queue.length,
     });
@@ -241,6 +372,9 @@ class _ScanScheduler {
       totalDropped: this._totalDropped,
       totalDispatched: this._totalDispatched,
       avgWaitTimeMs: avgWait,
+      totalPreemptions: this._totalPreemptions,
+      totalAgeBoosts: this._totalAgeBoosts,
+      activePriority: this._activePriority,
     };
   }
 
@@ -265,15 +399,23 @@ class _ScanScheduler {
     return this._isProcessing;
   }
 
+  /** OPUS 4.8: priority of the currently processing scan */
+  getActivePriority(): ScanPriority | null {
+    return this._activePriority;
+  }
+
   // ── Reset (for testing) ───────────────────────────────────────────────
 
   reset(): void {
     this._queue = [];
     this._isProcessing = false;
+    this._activePriority = null;
     this._waitTimes = [];
     this._totalEnqueued = 0;
     this._totalDropped = 0;
     this._totalDispatched = 0;
+    this._totalPreemptions = 0;
+    this._totalAgeBoosts = 0;
     this._lastEnqueueTime = 0;
   }
 }

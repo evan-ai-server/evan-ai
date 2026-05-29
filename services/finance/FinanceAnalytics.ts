@@ -203,8 +203,13 @@ class _FinanceAnalytics {
     });
   }
 
-  recordPaywallShown(userId: string | null, tier: SubscriptionTier, feature: string): void {
-    this.record("paywall_shown", { userId, tier, feature });
+  recordPaywallShown(
+    userId: string | null,
+    tier: SubscriptionTier,
+    feature: string,
+    payloadVariant?: string,
+  ): void {
+    this.record("paywall_shown", { userId, tier, feature, plan: payloadVariant ?? null });
   }
 
   recordSubscriptionClicked(userId: string | null, tier: SubscriptionTier, plan: string): void {
@@ -238,6 +243,29 @@ class _FinanceAnalytics {
     price: number | null
   ): void {
     this.record("listing_clicked", { userId, tier, itemName, price });
+  }
+
+  /**
+   * Record Hot Deal Layer tier for engagement tracking.
+   * Tracks which tiers drive conversion and re-engagement.
+   */
+  recordHotDealTier(
+    scanId: string,
+    tier: string | null,
+    score: number,
+    isTriggered: boolean
+  ): void {
+    if (!tier) return; // only track GOOD/HOT/LEGENDARY
+    AsyncStorage.getItem("EVAN_HOT_DEAL_V1")
+      .then((raw) => {
+        const entries: any[] = raw ? JSON.parse(raw) : [];
+        entries.unshift({ scanId, tier, score, isTriggered, ts: Date.now() });
+        return AsyncStorage.setItem(
+          "EVAN_HOT_DEAL_V1",
+          JSON.stringify(entries.slice(0, 200))
+        );
+      })
+      .catch(() => {});
   }
 
   /**
