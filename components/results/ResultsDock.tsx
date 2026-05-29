@@ -22,6 +22,24 @@ import { OutcomeEditorSheet } from "./OutcomeEditorSheet";
 const IS_ANDROID = Platform.OS === "android";
 const panthere = Easing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
 
+// Mirrors the block list in app/index.tsx safeOpenListingUrl.
+// Kept local so ResultsDock has no import dependency on index.tsx.
+const _DOCK_BLOCKED_HOSTS = [
+  "google.com", "googleadservices.com", "googlesyndication.com",
+  "doubleclick.net", "serpapi.com", "googleleadservices.com",
+];
+const _DOCK_BLOCKED_PATHS = ["/search", "/shopping", "/product/url", "/aclk", "/sch"];
+function _dockUrlBlocked(url: string | null | undefined): boolean {
+  if (!url) return true;
+  try {
+    const u = new URL(String(url));
+    const host = u.hostname.toLowerCase();
+    if (_DOCK_BLOCKED_HOSTS.some(h => host === h || host.endsWith(`.${h}`))) return true;
+    if (_DOCK_BLOCKED_PATHS.some(p => u.pathname.startsWith(p))) return true;
+    return false;
+  } catch { return true; }
+}
+
 interface ResultsDockProps {
   activeResult: any;
   /** The currently selected card (may differ from activeResult when swiped) */
@@ -129,8 +147,13 @@ export function ResultsDock({
   const cheaperPct  = Number.isFinite(Number(activeResult?.cheaperPct)) ? Number(activeResult.cheaperPct) : null;
   const totalMatches = activeResult?.totalMatches ?? 0;
   const store       = card?.store || card?.source || null;
-  // Gate open button: only show as active when the current card is clickable with a directUrl
-  const cardIsClickable = card?.clickable !== false && !!(card?.directUrl || card?.buyLink || card?.url);
+  // Gate open button: clickable only when backend says so, directUrl exists, and it's not a blocked host.
+  // buyLink/url alone are NOT sufficient — only directUrl (backend-vetted field) qualifies.
+  const cardIsClickable =
+    card?.clickable !== false &&
+    typeof card?.directUrl === "string" &&
+    card.directUrl.length > 0 &&
+    !_dockUrlBlocked(card.directUrl);
 
   return (
     <RNAnimated.View
