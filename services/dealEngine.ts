@@ -590,18 +590,13 @@ export function runDealEngine(input: DealInput): DealResult {
 }
 
 /**
- * Maps a DealVerdict back to the existing buyVerdict string format
- * used throughout the app (for backward compatibility).
+ * Maps a DealVerdict to the canonical three-state buyVerdict string.
+ * BUY / PASS pass through; CHECK collapses to HOLD.
  */
-export function dealVerdictToBuyVerdict(
-  verdict: DealVerdict,
-  buyScore: number
-): string {
-  if (verdict === "BUY") {
-    return buyScore >= 82 ? "GREAT FLIP" : "GOOD BUY";
-  }
-  if (verdict === "PASS") return "RISKY";
-  return "MEH"; // CHECK
+export function dealVerdictToBuyVerdict(verdict: DealVerdict): "BUY" | "HOLD" | "PASS" {
+  if (verdict === "BUY") return "BUY";
+  if (verdict === "PASS") return "PASS";
+  return "HOLD";
 }
 
 // ── Paywall Revenue Engine ──────────────────────────────────────────────────────

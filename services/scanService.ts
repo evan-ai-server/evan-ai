@@ -44,7 +44,7 @@ export interface ScanResult {
   expectedProfit: number | null;
   /** Estimated resale value */
   estimatedResale: number | null;
-  /** AI deal verdict: "GREAT FLIP" | "GOOD DEAL" | "MEH" | "RISKY" | … */
+  /** Three-state verdict: "BUY" | "HOLD" | "PASS" (string typed for legacy entries). */
   buyVerdict: string | null;
   /** Product category inferred from vision query */
   category: string | null;
@@ -200,7 +200,7 @@ export interface DealAlert {
   /** Stable ID for deduplication (query + price bucket) */
   id: string;
   query: string;
-  /** Verdict string from server: "GREAT FLIP" | "GOOD DEAL" | etc. */
+  /** Three-state verdict from server: "BUY" | "HOLD" | "PASS". */
   verdict: string;
   /** Best market price found */
   bestPrice: number;
@@ -326,9 +326,11 @@ export class AutonomousDealHunter {
       const dealScore = Number(payload.dealScore ?? payload.deal?.score ?? 0);
       const bestPrice = Number(payload.bestPrice ?? payload.price ?? 0);
 
-      // Only surface strong deals
+      // Only surface strong deals — BUY verdict or high deal score.
       const isHot =
         dealScore >= this.minDealScore ||
+        verdict === "BUY" ||
+        // Legacy strings still recognised so cached deals don't silently disappear.
         verdict === "GREAT FLIP" ||
         verdict === "STRONG BUY";
 

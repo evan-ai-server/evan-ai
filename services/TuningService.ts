@@ -25,17 +25,28 @@ import {
 
 // Lazy import to avoid circular dependency — brain store imports TuningService types
 let _getBrainSITTAllowed: (() => boolean) | null = null;
+let _logBrainEvent: ((type: string, payload: Record<string, any>) => void) | null = null;
+
 function isSITTAllowed(): boolean {
   if (!_getBrainSITTAllowed) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { useEvanBrain } = require("../hooks/useEvanBrain");
       _getBrainSITTAllowed = () => useEvanBrain.getState().isSITTAllowed();
+      _logBrainEvent = (type, payload) => {
+        try { useEvanBrain.getState().logEvent(type as any, payload); } catch {}
+      };
     } catch {
-      return true; // fail open if store not available yet
+      // Fail CLOSED — if the store can't be loaded, do NOT run SITT.
+      // Running during an active scan could cause state contention.
+      return false;
     }
   }
   return _getBrainSITTAllowed();
+}
+
+function _logSITTEvent(type: string, payload: Record<string, any>): void {
+  _logBrainEvent?.(type, payload);
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -151,13 +162,13 @@ class _TuningService {
 
     this._loaded = true;
 
-    console.log(
-      `[SITT] Loaded thresholds: buyRatio=${this._thresholds.buyRatio.toFixed(2)}, ` +
-      `passRatio=${this._thresholds.passRatio.toFixed(2)}, ` +
-      `minProfit=$${this._thresholds.minProfit.toFixed(0)}, ` +
-      `riskTolerance=${this._thresholds.riskTolerance.toFixed(2)}. ` +
-      `Evolution history: ${this._evolution.length} snapshots.`
-    );
+    _logSITTEvent("SITT_LOADED", {
+      buyRatio: this._thresholds.buyRatio,
+      passRatio: this._thresholds.passRatio,
+      minProfit: this._thresholds.minProfit,
+      riskTolerance: this._thresholds.riskTolerance,
+      evolutionSnapshots: this._evolution.length,
+    });
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -198,7 +209,7 @@ class _TuningService {
     this._evolution.push(snapshot);
     await this._persistEvolution();
 
-    console.log("[THRESHOLD_EVOLUTION] Manual reset to defaults.");
+    _logSITTEvent("SITT_RESET", { reason: "manual" });
   }
 
   // ── Core tuning logic ─────────────────────────────────────────────────────
@@ -212,7 +223,8 @@ class _TuningService {
     // ── Store-level guard: only run when scan pipeline is idle/complete
     // and camera is not active. Enforced by brain store, not local flags.
     if (!isSITTAllowed()) {
-      console.log("[SITT] Tuning deferred — scan pipeline active or camera live.");
+      // Structured logging via brain event — no console.log
+      _logSITTEvent("SITT_DEFERRED", { reason: "pipeline_active", flipCount: currentCount });
       return;
     }
 
@@ -220,7 +232,8 @@ class _TuningService {
     InteractionManager.runAfterInteractions(() => {
       // Re-check — state may have changed during the yield
       if (!isSITTAllowed()) {
-        console.log("[SITT] Tuning cancelled — scan pipeline became active.");
+        // Structured logging via brain event — no console.log
+        _logSITTEvent("SITT_DEFERRED", { reason: "pipeline_became_active", flipCount: currentCount });
         return;
       }
       this._runTuning(perf);
@@ -357,17 +370,18 @@ class _TuningService {
     this._persistEvolution().catch(() => {});
 
     // Log evolution event
-    console.log(
-      `[THRESHOLD_EVOLUTION] Tuning complete (${n} flips, W=${W.toFixed(3)}). ` +
-      `Adjustments: ${adjustmentStr}. ` +
-      `New thresholds: buyRatio=${this._thresholds.buyRatio.toFixed(2)}, ` +
-      `passRatio=${this._thresholds.passRatio.toFixed(2)}, ` +
-      `minProfit=$${this._thresholds.minProfit.toFixed(1)}, ` +
-      `riskTolerance=${this._thresholds.riskTolerance.toFixed(2)}. ` +
-      `Performance: winRate=${(perf.winRate * 100).toFixed(0)}%, ` +
-      `avgROI=${(perf.avgROI * 100).toFixed(0)}%, ` +
-      `avgProfit=$${perf.avgProfit.toFixed(2)}`
-    );
+    // Structured logging via brain event — replaces console.log
+
+    _logSITTEvent("SITT_EXECUTED", {
+      totalFlips: n,
+      confidenceWeight: W,
+      adjustment: adjustmentStr,
+      buyRatio: this._thresholds.buyRatio,
+      passRatio: this._thresholds.passRatio,
+      minProfit: this._thresholds.minProfit,
+      winRate: perf.winRate,
+      avgROI: perf.avgROI,
+    });
 
     return snapshot;
   }
