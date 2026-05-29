@@ -129,6 +129,8 @@ export function ResultsDock({
   const cheaperPct  = Number.isFinite(Number(activeResult?.cheaperPct)) ? Number(activeResult.cheaperPct) : null;
   const totalMatches = activeResult?.totalMatches ?? 0;
   const store       = card?.store || card?.source || null;
+  // Gate open button: only show as active when the current card is clickable with a directUrl
+  const cardIsClickable = card?.clickable !== false && !!(card?.directUrl || card?.buyLink || card?.url);
 
   return (
     <RNAnimated.View
@@ -202,10 +204,17 @@ export function ResultsDock({
           the dock. The full merchant attribution lives in the card's store
           line, not this CTA. */}
       <View style={styles.primaryRow}>
-        <PressableScale onPress={onOpenListing} style={styles.openBtn} scale={0.96} haptic>
-          <Ionicons name="open-outline" size={16} color="#000" />
+        <PressableScale
+          onPress={cardIsClickable ? onOpenListing : undefined}
+          style={[styles.openBtn, !cardIsClickable && { opacity: 0.35 }]}
+          scale={cardIsClickable ? 0.96 : 1}
+          haptic={cardIsClickable}
+        >
+          <Ionicons name={cardIsClickable ? "open-outline" : "bar-chart-outline"} size={16} color="#000" />
           <Text style={styles.openText} allowFontScaling={false} numberOfLines={1}>
-            {store && String(store).length <= 9 ? `View on ${store}` : "View listing"}
+            {cardIsClickable
+              ? (store && String(store).length <= 9 ? `View on ${store}` : "View listing")
+              : "Pricing signal"}
           </Text>
         </PressableScale>
 

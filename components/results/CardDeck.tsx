@@ -116,6 +116,11 @@ export function CardDeck({
       authenticityIntel: activeResult?.authenticityIntel ?? null,
       ebaySoldComps:    activeResult?.ebaySoldComps ?? null,
       localComps:       activeResult?.localComps ?? null,
+      clickable:        activeResult?.clickable ?? null,
+      evidenceQuality:  activeResult?.evidenceQuality ?? null,
+      isVerifiedListing:     activeResult?.isVerifiedListing ?? null,
+      isPricingEvidenceOnly: activeResult?.isPricingEvidenceOnly ?? null,
+      directUrl:        activeResult?.directUrl ?? null,
     };
 
     // ── Aggressive client-side dedup + relevance filter ─────────────────────
@@ -173,7 +178,12 @@ export function CardDeck({
         image:      r?.image    || r?.thumbnail,
         // Inherit the scan verdict so ResultCard can gate label badge intensity
         // (LOWEST/CHEAPER/HIDDEN GEM dim on HOLD/PASS, same as rarity chips).
-        buyVerdict: activeResult?.buyVerdict ?? null,
+        buyVerdict:           activeResult?.buyVerdict ?? null,
+        clickable:            r?.clickable ?? null,
+        evidenceQuality:      r?.evidenceQuality ?? null,
+        isVerifiedListing:    r?.isVerifiedListing ?? null,
+        isPricingEvidenceOnly: r?.isPricingEvidenceOnly ?? null,
+        directUrl:            r?.directUrl ?? null,
       }));
 
     // Junk-title patterns. The server occasionally returns SERP filler

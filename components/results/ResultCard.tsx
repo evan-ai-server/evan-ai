@@ -106,6 +106,12 @@ export interface CardData {
   rankWhy?: string[] | null;
   // Visual DNA — from vision pipeline identity object
   visionIdentity?: any | null;
+  // URL trust fields (from backend sanitizeOutboundListingForClient)
+  clickable?: boolean | null;
+  evidenceQuality?: "verified_listing" | "pricing_signal" | "oracle_estimate" | "legacy_unknown" | null;
+  isVerifiedListing?: boolean | null;
+  isPricingEvidenceOnly?: boolean | null;
+  directUrl?: string | null;
 }
 
 interface ResultCardProps {
@@ -497,6 +503,15 @@ function deriveRarity(data: CardData): { text: string; tone: RarityTone } | null
   return null;
 }
 
+function _lowestPriceLabel(data: CardData): string {
+  const eq = data.evidenceQuality;
+  const clickable = data.clickable;
+  if (eq === "verified_listing" && clickable !== false) return "Lowest verified price";
+  if (eq === "oracle_estimate")                         return "AI pricing estimate";
+  if (eq === "pricing_signal" || clickable === false)   return "Lowest pricing signal";
+  return "Pricing estimate";
+}
+
 function deriveWhy(data: CardData, isLowest: boolean): string[] {
   // Prefer server-derived reasons when present — they're already tailored
   // to the user's exact scan.
@@ -508,7 +523,7 @@ function deriveWhy(data: CardData, isLowest: boolean): string[] {
   }
   // Fallback: synthesize 2–3 bullets from signals already on the card.
   const out: string[] = [];
-  if (isLowest) out.push("Lowest verified price in comps");
+  if (isLowest) out.push(_lowestPriceLabel(data));
   if ((data.visionConfidence ?? 0) >= 0.7) out.push("Matches the item we scanned");
   const store = data.store || data.source;
   if (store) {
