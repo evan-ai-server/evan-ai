@@ -237,7 +237,7 @@ export function ResultsDock({
           <Text style={styles.openText} allowFontScaling={false} numberOfLines={1}>
             {cardIsClickable
               ? (store && String(store).length <= 9 ? `View on ${store}` : "View listing")
-              : "Pricing signal"}
+              : "Market price"}
           </Text>
         </PressableScale>
 

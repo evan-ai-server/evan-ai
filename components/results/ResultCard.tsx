@@ -508,8 +508,8 @@ function _lowestPriceLabel(data: CardData): string {
   const clickable = data.clickable;
   if (eq === "verified_listing" && clickable !== false) return "Lowest verified price";
   if (eq === "oracle_estimate")                         return "AI pricing estimate";
-  if (eq === "pricing_signal" || clickable === false)   return "Lowest pricing signal";
-  return "Pricing estimate";
+  if (eq === "pricing_signal" || clickable === false)   return "Market price";
+  return "Market price";
 }
 
 function deriveWhy(data: CardData, isLowest: boolean): string[] {
