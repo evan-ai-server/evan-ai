@@ -6580,21 +6580,44 @@ const fetchVisionEnrich = async (query, mode = "item", context = "") => {
   }
 };
 
+// Phase 2C.10 — dedupe collector query tokens.
+// The previous build concatenated `maker + model + visionQuery` even when
+// visionQuery already contained maker/model tokens, producing duplicated
+// queries like "geminijets hawaiian airlines boeing 787 9 diecast model
+// hawaiian airlines boeing 787 diecast model airplane". The duplicates
+// confused SerpAPI ranking AND distinguished the cache key from the
+// original query unnecessarily, causing budget leaks on the follow-up
+// /market/search call. Now we tokenize, keep order, and drop repeats.
+const _dedupeQueryTokens = (input: string): string => {
+  const norm = String(input || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s%]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!norm) return "";
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tok of norm.split(" ")) {
+    if (tok.length === 0) continue;
+    if (seen.has(tok)) continue;
+    seen.add(tok);
+    out.push(tok);
+  }
+  return out.join(" ");
+};
+
 const buildCollectorSearchQuery = (visionQuery: string, enrich: any) => {
   const maker = String(enrich?.collector?.maker || "").trim();
   const model = String(enrich?.collector?.model || "").trim();
   const era = String(enrich?.collector?.era || "").trim();
 
   const pieces = [maker, model, visionQuery].filter(Boolean);
-
   if (pieces.length >= 2) {
-    return normalizeTitle(pieces.join(" ")).trim();
+    return _dedupeQueryTokens(normalizeTitle(pieces.join(" ")).trim());
   }
-
   if (maker && era) {
-    return normalizeTitle(`${maker} ${era} ${visionQuery}`).trim();
+    return _dedupeQueryTokens(normalizeTitle(`${maker} ${era} ${visionQuery}`).trim());
   }
-
   return "";
 };
 
