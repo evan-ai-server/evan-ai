@@ -454,18 +454,12 @@ export function CardDeck({
 
   return (
     <RNAnimated.View style={[styles.deckOuter, { opacity: entrance }]}>
-      {/* ── Alternatives counter ──────────────────────────────────── */}
-      {altCount > 0 ? (
-        <View style={styles.counterRow}>
-          <Text
-            style={styles.counterText}
-            allowFontScaling={false}
-            numberOfLines={1}
-          >
-            {`${altCount + 1} LISTINGS`}
-          </Text>
-        </View>
-      ) : null}
+      {/* Pillar 1.6 — removed the "{N} LISTINGS" counter that floated
+          awkwardly above the deck. The evidence strip + Market Depth
+          module already communicate count, and the floating label
+          visually competed with the verdict above and the card below.
+          Counter styles are kept in the stylesheet (unused) so future
+          variants can re-introduce it without re-laying-out the deck. */}
 
       {/* External deck halo removed — was a soft emerald ellipse behind
           the active card. It read as a "visible green blob" rather than
@@ -574,24 +568,50 @@ export function CardDeck({
         })}
       </RNAnimated.ScrollView>
 
-      {/* ── Pagination dots ──────────────────────────────────────── */}
+      {/* ── Pagination dots ──────────────────────────────────────────
+          Pillar 1.6 — pager track is now driven directly by scrollX
+          (native driver, useNativeDriver: true) instead of the React
+          state `snappedIndex`. The previous implementation animated dot
+          width via state, which only updated after onMomentumScrollEnd
+          settled — so swipe → settle → indicator caught up late, which
+          felt cheap. Now each dot interpolates scaleX + opacity off the
+          live scroll offset, so the pager moves WITH the card under the
+          user's finger and lands in lockstep with the snap.
+          - Layout footprint stays constant (each dot owns a 22pt slot)
+          - scaleX 0.20 → 1.0 driven by scrollX → no layout thrash
+          - opacity 0.20 → 0.85 in the same interpolation
+          - Tap-snap (selectedIndex from Market Depth / rail) still works
+            because the controlled-snap useEffect calls scrollTo, which
+            moves scrollX through the same range. One source of truth. */}
       {cardCount > 1 ? (
         <View style={styles.dotsRow}>
           {Array.from({ length: cardCount }).map((_, i) => {
-            const isActive = i === snappedIndex;
+            const inputRange =
+              cardCount === 1
+                ? [0, 1]
+                : [Math.max(0, (i - 1) * SNAP), i * SNAP, (i + 1) * SNAP];
+            const dotScaleX = scrollX.interpolate({
+              inputRange,
+              outputRange: cardCount === 1 ? [1, 1] : [0.20, 1.0, 0.20],
+              extrapolate: "clamp",
+            });
+            const dotOpacity = scrollX.interpolate({
+              inputRange,
+              outputRange: cardCount === 1 ? [0.85, 0.85] : [0.20, 0.85, 0.20],
+              extrapolate: "clamp",
+            });
             return (
-              <View
-                key={i}
-                style={[
-                  styles.dot,
-                  {
-                    width: isActive ? 20 : 5,
-                    backgroundColor: isActive
-                      ? "rgba(255,255,255,0.78)"
-                      : "rgba(255,255,255,0.20)",
-                  },
-                ]}
-              />
+              <View key={i} style={styles.dotSlot}>
+                <RNAnimated.View
+                  style={[
+                    styles.dotBar,
+                    {
+                      opacity: dotOpacity,
+                      transform: [{ scaleX: dotScaleX }],
+                    },
+                  ]}
+                />
+              </View>
             );
           })}
         </View>
@@ -640,10 +660,28 @@ const styles = StyleSheet.create({
   dotsRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: SP.xs,
+    gap: 4,
     marginTop: SP.sm,
     marginBottom: SP.xs,
   },
+  // Pillar 1.6 — each dot owns a fixed 22pt slot so the row layout never
+  // thrashes during scroll. The bar inside the slot scales horizontally
+  // via Animated.scaleX so its visual width grows/shrinks live with
+  // scrollX without triggering a relayout pass.
+  dotSlot: {
+    width: 22,
+    height: 3,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dotBar: {
+    width: 22,
+    height: 3,
+    borderRadius: R.pill,
+    backgroundColor: "rgba(255,255,255,0.85)",
+  },
+  // Legacy dot style — preserved for backward compat. The new slot/bar
+  // pair above replaces it for the live pager.
   dot: {
     height: 2.5,
     borderRadius: R.pill,

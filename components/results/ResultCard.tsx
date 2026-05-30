@@ -53,6 +53,7 @@ import { PremiumIntelPanel } from "./PremiumIntelPanel";
 import { routeListingClick } from "../../services/revenue/TransactionRouter";
 import {
   evidenceLabel as _evidenceLabel,
+  evidenceLabelShort as _evidenceLabelShort,
   cardActionLabel as _cardActionLabel,
   deriveCardBullets as _deriveCardBullets,
   deriveMatchPercent as _deriveMatchPercent,
@@ -1118,7 +1119,10 @@ export function ResultCard({
                       _isOracleEstimate(data as MarketCard) && styles.evidenceChipTextOracle,
                     ]}
                   >
-                    {_evidenceLabel(data as MarketCard)}
+                    {/* Pillar 1.6 — short form ("Signal" / "AI") avoids
+                        the "Market si…" truncation seen on iPhone widths.
+                        Dock + rail still use the full evidenceLabel. */}
+                    {_evidenceLabelShort(data as MarketCard)}
                   </Text>
                 </View>
               </>
@@ -1228,30 +1232,29 @@ export function ResultCard({
               vet. _cardActionLabel returns the canonical copy
               ("View listing" or "Market signal" — unified in Pillar 1.5). */}
           {(() => {
+            if (!isHero) return null;
             const heroClickable =
               data.clickable !== false &&
               typeof data.directUrl === "string" &&
               data.directUrl.length > 0;
+            // Pillar 1.6 — don't render a disabled in-card CTA for
+            // non-clickable cards. The dock's primary CTA already
+            // surfaces the trust state ("Market signal" pill), and a
+            // duplicate disabled pill at the bottom of the card was
+            // getting clipped on iPhone viewports and adding visual
+            // noise without affording any action. Verified clickable
+            // cards still keep the in-card "Buy Now / View listing"
+            // CTA because it's a real action worth surfacing inside
+            // the card itself.
+            if (!heroClickable) return null;
             const ctaLabel = _cardActionLabel(data as MarketCard);
-            const heroDisplayLabel = heroClickable
-              ? (isWinVerdict ? "Buy Now  →" : `${ctaLabel}  →`)
-              : ctaLabel;
-            if (!isHero) return null;
+            const heroDisplayLabel = isWinVerdict
+              ? "Buy Now  →"
+              : `${ctaLabel}  →`;
             return (
               <TouchableOpacity
-                activeOpacity={heroClickable ? 0.72 : 1}
+                activeOpacity={0.72}
                 onPress={() => {
-                  if (!heroClickable) {
-                    try {
-                      console.log("FRONTEND_LISTING_NOT_CLICKABLE", {
-                        title: String(name).slice(0, 80),
-                        source: store || null,
-                        cardRole: "hero",
-                        reason: "pricing_signal_or_blocked",
-                      });
-                    } catch {}
-                    return;
-                  }
                   // routeListingClick is async and could reject if the URL fails
                   // to resolve. Catching here prevents the onPress promise from
                   // floating into an unhandled rejection.
@@ -1275,25 +1278,22 @@ export function ResultCard({
                 }}
                 style={[
                   styles.heroBuyBar,
-                  (!isWinVerdict || !heroClickable) && styles.heroBuyBarNeutral,
-                  !heroClickable && { opacity: 0.55 },
+                  !isWinVerdict && styles.heroBuyBarNeutral,
                 ]}
               >
                 <Ionicons
-                  name={heroClickable ? "cart-outline" : "bar-chart-outline"}
+                  name="cart-outline"
                   size={13}
                   color={
-                    !heroClickable
-                      ? "rgba(255,255,255,0.45)"
-                      : isWinVerdict
-                        ? "rgba(120,255,170,0.85)"
-                        : "rgba(255,255,255,0.55)"
+                    isWinVerdict
+                      ? "rgba(120,255,170,0.85)"
+                      : "rgba(255,255,255,0.55)"
                   }
                 />
                 <Text
                   style={[
                     styles.heroBuyText,
-                    (!isWinVerdict || !heroClickable) && styles.heroBuyTextNeutral,
+                    !isWinVerdict && styles.heroBuyTextNeutral,
                   ]}
                 >
                   {heroDisplayLabel}
@@ -1308,30 +1308,20 @@ export function ResultCard({
               clipping. Re-add here only if a future card height bump
               gives room. */}
 
-          {/* Alt: Tracked listing CTA — same trust gating as the hero CTA.
-              Pricing signals show the disabled "Market signal" label and
-              skip the open path entirely. */}
+          {/* Alt: Tracked listing CTA — same trust gating + Pillar 1.6
+              null-render rule as the hero CTA. Non-clickable alts now
+              render no CTA at all; the dock surfaces the trust state. */}
           {!isHero ? (() => {
             const altClickable =
               data.clickable !== false &&
               typeof data.directUrl === "string" &&
               data.directUrl.length > 0;
+            if (!altClickable) return null;
             const ctaLabel = _cardActionLabel(data as MarketCard);
             return (
               <TouchableOpacity
-                activeOpacity={altClickable ? 0.72 : 1}
+                activeOpacity={0.72}
                 onPress={() => {
-                  if (!altClickable) {
-                    try {
-                      console.log("FRONTEND_LISTING_NOT_CLICKABLE", {
-                        title: String(name).slice(0, 80),
-                        source: store || null,
-                        cardRole: "alt",
-                        reason: "pricing_signal_or_blocked",
-                      });
-                    } catch {}
-                    return;
-                  }
                   try {
                     Promise.resolve(
                       routeListingClick(data.directUrl, {
@@ -1350,13 +1340,10 @@ export function ResultCard({
                     console.log("CARD_LINK_OPEN_ERROR", { role: "alt", error: e?.message || String(e) });
                   }
                 }}
-                style={[
-                  styles.viewListingBar,
-                  !altClickable && { opacity: 0.55 },
-                ]}
+                style={styles.viewListingBar}
               >
                 <Text style={styles.viewListingText}>
-                  {altClickable ? `${ctaLabel}  →` : ctaLabel}
+                  {ctaLabel}{"  →"}
                 </Text>
               </TouchableOpacity>
             );

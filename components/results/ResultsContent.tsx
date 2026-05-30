@@ -1083,63 +1083,62 @@ const compactVerdictStyles = StyleSheet.create({
 // real direct links or only pricing signals.
 // ─────────────────────────────────────────────────────────────────────────────
 function MarketEvidenceStrip({ stats }: { stats: EvidenceStripStat[] }) {
+  // Pillar 1.6 — flow the proof as a single wrapping sentence instead of
+  // a cell-grid. The cell layout was killing the labels at iPhone width
+  // (CHEC…, MATC…, VERIFI…, SIGN…); a single Text node wraps cleanly to
+  // two lines without truncation and reads as proof rather than as a
+  // spreadsheet. Tone styling is preserved per-segment via nested <Text>.
   if (!stats || stats.length === 0) return null;
   return (
     <View style={evidenceStripStyles.outer}>
       <View style={evidenceStripStyles.row}>
-        {stats.map((s, i) => {
-          const isLabelOnly = !s.value || s.value.length === 0;
-          return (
-            <View
-              key={`${s.label}-${i}`}
-              style={[
-                evidenceStripStyles.cell,
-                i < stats.length - 1 && evidenceStripStyles.cellDivider,
-              ]}
-            >
-              {isLabelOnly ? (
-                // Label-only "Signal only" trust pill — replaces the legacy
-                // "0 Signals" numeric cell so the strip never reads as
-                // jargon-with-a-zero. The warn tone makes the eye land on
-                // the trust gap.
-                <Text
-                  allowFontScaling={false}
-                  numberOfLines={1}
-                  style={[
-                    evidenceStripStyles.tagOnly,
-                    s.tone === "good" && evidenceStripStyles.valueGood,
-                    s.tone === "warn" && evidenceStripStyles.tagOnlyWarn,
-                    s.tone === "muted" && evidenceStripStyles.valueMuted,
-                  ]}
-                >
-                  {s.label}
-                </Text>
-              ) : (
-                <>
-                  <Text
-                    allowFontScaling={false}
-                    numberOfLines={1}
-                    style={[
-                      evidenceStripStyles.value,
-                      s.tone === "good" && evidenceStripStyles.valueGood,
-                      s.tone === "warn" && evidenceStripStyles.valueWarn,
-                      s.tone === "muted" && evidenceStripStyles.valueMuted,
-                    ]}
-                  >
-                    {s.value}
+        <Text
+          style={evidenceStripStyles.proofText}
+          allowFontScaling={false}
+          numberOfLines={3}
+          ellipsizeMode="tail"
+        >
+          {stats.map((s, i) => {
+            const isLabelOnly = !s.value || s.value.length === 0;
+            const isLast = i === stats.length - 1;
+            const valueStyle = [
+              evidenceStripStyles.proofValue,
+              s.tone === "warn" && evidenceStripStyles.proofValueWarn,
+              s.tone === "good" && evidenceStripStyles.proofValueGood,
+              s.tone === "muted" && evidenceStripStyles.proofValueMuted,
+            ];
+            const labelStyle = [
+              evidenceStripStyles.proofLabel,
+              s.tone === "warn" && evidenceStripStyles.proofLabelWarn,
+              s.tone === "good" && evidenceStripStyles.proofLabelGood,
+            ];
+            // Non-breaking space between value and label so "13 checked"
+            // never wraps with the value alone at the end of a line.
+            const NB = " ";
+            return (
+              <React.Fragment key={`${s.label}-${i}`}>
+                {isLabelOnly ? (
+                  // Value-less trust pill ("Signal only"). Stays
+                  // TitleCase so it reads as a label, not a fragment.
+                  <Text style={labelStyle}>{s.label}</Text>
+                ) : (
+                  <>
+                    <Text style={valueStyle}>{s.value}</Text>
+                    <Text style={labelStyle}>
+                      {NB}
+                      {s.label.toLowerCase()}
+                    </Text>
+                  </>
+                )}
+                {!isLast ? (
+                  <Text style={evidenceStripStyles.proofSep}>
+                    {"  ·  "}
                   </Text>
-                  <Text
-                    allowFontScaling={false}
-                    numberOfLines={1}
-                    style={evidenceStripStyles.label}
-                  >
-                    {s.label}
-                  </Text>
-                </>
-              )}
-            </View>
-          );
-        })}
+                ) : null}
+              </React.Fragment>
+            );
+          })}
+        </Text>
       </View>
     </View>
   );
@@ -1151,52 +1150,45 @@ const evidenceStripStyles = StyleSheet.create({
     paddingTop: SP.xs,
     paddingBottom: SP.xs,
   },
+  // Pillar 1.6 — strip box keeps the soft fill + hairline border so the
+  // proof line still reads as a contained element, but content is now a
+  // single multi-line Text instead of equal-width cells. paddingX 12,
+  // paddingY 9 leaves enough room for two-line wrap on iPhone widths.
   row: {
-    flexDirection: "row",
     backgroundColor: "rgba(255,255,255,0.025)",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.05)",
     borderRadius: R.md,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
   },
-  cell: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 2,
+  // Continuous proof line. Mixed-weight children inherit lineHeight from
+  // the parent Text so wraps stay tight without per-segment offset.
+  proofText: {
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: C.text2,
+    letterSpacing: 0.05,
   },
-  cellDivider: {
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: "rgba(255,255,255,0.06)",
-  },
-  value: {
-    fontSize: 14,
+  proofValue: {
     fontWeight: "900",
     color: C.text,
-    letterSpacing: -0.2,
+    letterSpacing: -0.1,
   },
-  valueGood: { color: "rgba(180,255,200,0.92)" },
-  valueWarn: { color: "rgba(255,210,140,0.82)" },
-  valueMuted: { color: C.text3 },
-  label: {
-    fontSize: 9,
-    fontWeight: "800",
-    letterSpacing: 1.0,
-    color: "rgba(255,255,255,0.40)",
-    textTransform: "uppercase",
-    marginTop: 2,
+  proofValueGood: { color: "rgba(180,255,200,0.92)" },
+  proofValueWarn: { color: "rgba(255,210,140,0.85)" },
+  proofValueMuted: { color: C.text2 },
+  proofLabel: {
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.50)",
+    letterSpacing: 0.1,
   },
-  // Label-only trust pill (the "Signal only" cell). No numeric value, so
-  // the label itself gets weight + presence to balance the row visually.
-  tagOnly: {
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 1.0,
-    color: "rgba(255,255,255,0.55)",
-    textTransform: "uppercase",
-    textAlign: "center",
+  proofLabelGood: { color: "rgba(180,255,200,0.78)" },
+  proofLabelWarn: { color: "rgba(255,210,140,0.92)" },
+  proofSep: {
+    color: "rgba(255,255,255,0.22)",
+    fontWeight: "700",
   },
-  tagOnlyWarn: { color: "rgba(255,210,140,0.92)" },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

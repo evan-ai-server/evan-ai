@@ -175,6 +175,24 @@ export function evidenceLabel(card: MarketCard | null | undefined): string {
   return "Market signal";
 }
 
+/**
+ * Pillar 1.6 — tight-context evidence label. Returns a single short
+ * word ("Verified" / "Signal" / "AI") for chip surfaces where the full
+ * "Market signal" string truncates (e.g. the card meta-row chip on
+ * iPhone width). Dock CTA, rail subtitle, and Evan's Read keep the
+ * full evidenceLabel since they have room. Same trust gates apply —
+ * "Verified" still requires verified_listing + clickable !== false.
+ */
+export function evidenceLabelShort(
+  card: MarketCard | null | undefined,
+): string {
+  if (!card) return "Signal";
+  if (isVerifiedListing(card)) return "Verified";
+  if (isOracleEstimate(card)) return "AI";
+  if (isPricingSignal(card)) return "Signal";
+  return "Signal";
+}
+
 export function cardActionLabel(
   card: MarketCard | null | undefined,
 ): "View listing" | "Market signal" {
