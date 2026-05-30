@@ -606,23 +606,45 @@ export function CardDeck({
       {cardCount > 1 ? (
         <View style={styles.dotsRow}>
           {Array.from({ length: cardCount }).map((_, i) => {
-            const inputRange =
-              cardCount === 1
-                ? [0, 1]
-                : [Math.max(0, (i - 1) * SNAP), i * SNAP, (i + 1) * SNAP];
+            // Pillar 1.7.1 — strictly-increasing inputRange. The prior
+            // `[Math.max(0, (i-1)*SNAP), i*SNAP, (i+1)*SNAP]` form
+            // collapsed to `[0, 0, SNAP]` for the first dot — duplicate
+            // inputRange values make RNAnimated.interpolate collapse the
+            // zero-width segment, which on index 0 caused the active bar
+            // to vanish entirely (scaleX read as the inactive endpoint).
+            // First and last dots use two-point ranges; the outputRanges
+            // are shortened to the same length so the active endpoint is
+            // unambiguous on the boundaries.
+            const isFirst = i === 0;
+            const isLast = i === cardCount - 1;
+            const inputRange = isFirst
+              ? [0, SNAP]
+              : isLast
+                ? [(i - 1) * SNAP, i * SNAP]
+                : [(i - 1) * SNAP, i * SNAP, (i + 1) * SNAP];
             // Pillar 1.7 — inactive dots dampened (scale 0.15, opacity
             // 0.16) so they read as a quiet capsule track. Active bar
             // brightened (opacity 0.95) so the leading pill is clearly
             // the focus. The differential makes the live tracking feel
             // even more responsive without changing any layout.
+            const scaleOutput = isFirst
+              ? [1.0, 0.15]
+              : isLast
+                ? [0.15, 1.0]
+                : [0.15, 1.0, 0.15];
+            const opacityOutput = isFirst
+              ? [0.95, 0.16]
+              : isLast
+                ? [0.16, 0.95]
+                : [0.16, 0.95, 0.16];
             const dotScaleX = scrollX.interpolate({
               inputRange,
-              outputRange: cardCount === 1 ? [1, 1] : [0.15, 1.0, 0.15],
+              outputRange: scaleOutput,
               extrapolate: "clamp",
             });
             const dotOpacity = scrollX.interpolate({
               inputRange,
-              outputRange: cardCount === 1 ? [0.95, 0.95] : [0.16, 0.95, 0.16],
+              outputRange: opacityOutput,
               extrapolate: "clamp",
             });
             return (
