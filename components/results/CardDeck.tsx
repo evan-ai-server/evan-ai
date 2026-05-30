@@ -526,20 +526,20 @@ export function CardDeck({
             idx * SNAP,
             (idx + 1) * SNAP,
           ];
-          // Pillar 1.8.5 — final atmospheric softening before Pillar 2.
-          // opacity floor 0.20 → 0.14, scale 0.86 → 0.85. Side cards now
-          // read as the suggestion of "more options exist" — quiet
-          // background depth that holds the layout's negative space but
-          // never bids for focus. The user's eye locks on the active
-          // card unambiguously, with no risk of double-reading.
+          // Pillar 1.8.6 — opacity 0.14 → 0.10 and scale 0.85 → 0.82.
+          // Side cards now read as ambient depth rather than legible
+          // content. At 10% opacity the eye registers them as "shapes
+          // exist beside the focal card" without parsing any of their
+          // content — perfect for the "more options here" hint without
+          // any focus competition. Active stays at exactly 1.0/1.0.
           const cardOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.14, 1.0, 0.14],
+            outputRange: [0.10, 1.0, 0.10],
             extrapolate: "clamp",
           });
           const cardScale = scrollX.interpolate({
             inputRange,
-            outputRange: [0.85, 1.0, 0.85],
+            outputRange: [0.82, 1.0, 0.82],
             extrapolate: "clamp",
           });
           const cardLift = scrollX.interpolate({

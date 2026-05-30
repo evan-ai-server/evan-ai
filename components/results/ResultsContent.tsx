@@ -962,21 +962,22 @@ function CompactVerdict({
 }
 
 const compactVerdictStyles = StyleSheet.create({
-  // Pillar 1.8.5 — final compression pass before Pillar 2 visual work.
-  // Card paddings tightened SP.md → SP.sm, gaps between header / dollar
-  // / strip / sentence shaved 2–4px each, lineHeights trimmed, sentence
-  // dropped to 11pt @ 15 lh. The verdict still reads as authoritative
-  // (BUY stamp + headline dollar untouched), but its overall footprint
-  // shrinks ~24%, letting the card and market intel rise on screen.
+  // Pillar 1.8.6 — another ~17% compression on top of 1.8.5. Word 20→18pt,
+  // headline dollar 26→23pt, lineHeights trimmed everywhere, sentence
+  // 11→10.5pt @ 14 lh, strip marginTop/paddingTop dropped, card padding
+  // 8→6. The verdict still leads (BUY stamp + headline are still the
+  // brightest type on screen) but it no longer matches the card in mass —
+  // the eye-flow chain now reads as verdict → card → evidence, not
+  // verdict → evidence → card.
   outer: {
     paddingHorizontal: SP.lg,
-    paddingTop: 4,
+    paddingTop: 3,
     paddingBottom: 0,
   },
   card: {
     paddingHorizontal: 14,
-    paddingTop: SP.sm,
-    paddingBottom: SP.sm,
+    paddingTop: 6,
+    paddingBottom: 6,
     borderRadius: R.lg,
     backgroundColor: "rgba(255,255,255,0.020)",
     borderWidth: StyleSheet.hairlineWidth,
@@ -993,9 +994,9 @@ const compactVerdictStyles = StyleSheet.create({
     left: "50%",
     marginLeft: -140,
     width: 280,
-    height: 60,
+    height: 50,
     borderRadius: 140,
-    opacity: 0.72,
+    opacity: 0.68,
   },
   headerRow: {
     flexDirection: "row",
@@ -1003,50 +1004,50 @@ const compactVerdictStyles = StyleSheet.create({
     gap: SP.sm,
   },
   word: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "900",
-    letterSpacing: 1.9,
-    lineHeight: 23,
+    letterSpacing: 1.8,
+    lineHeight: 21,
   },
   reasonTitle: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: "600",
-    color: "rgba(255,255,255,0.65)",
+    color: "rgba(255,255,255,0.62)",
     letterSpacing: 0.15,
-    lineHeight: 16,
+    lineHeight: 15,
   },
   dollarRow: {
-    marginTop: 3,
+    marginTop: 2,
     flexDirection: "row",
     alignItems: "baseline",
     gap: SP.sm,
   },
   dollar: {
-    fontSize: 26,
+    fontSize: 23,
     fontWeight: "900",
     color: C.text,
-    letterSpacing: -0.7,
-    lineHeight: 29,
+    letterSpacing: -0.6,
+    lineHeight: 26,
   },
   dollarSign: {
-    fontSize: 26,
+    fontSize: 23,
     fontWeight: "900",
-    letterSpacing: -0.7,
+    letterSpacing: -0.6,
   },
   direction: {
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: "900",
     letterSpacing: 1.5,
-    color: "rgba(255,255,255,0.42)",
+    color: "rgba(255,255,255,0.40)",
   },
   strip: {
     flexDirection: "row",
     gap: SP.lg,
-    marginTop: 7,
-    paddingTop: 6,
+    marginTop: 5,
+    paddingTop: 5,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.055)",
+    borderTopColor: "rgba(255,255,255,0.05)",
   },
   stripCell: {
     flexDirection: "row",
@@ -1057,20 +1058,20 @@ const compactVerdictStyles = StyleSheet.create({
     fontSize: 8.5,
     fontWeight: "900",
     letterSpacing: 1.5,
-    color: "rgba(255,255,255,0.24)",
+    color: "rgba(255,255,255,0.22)",
   },
   stripValue: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: "800",
-    color: "rgba(255,255,255,0.74)",
+    color: "rgba(255,255,255,0.72)",
     letterSpacing: -0.2,
   },
   sentence: {
-    marginTop: 6,
-    fontSize: 11,
+    marginTop: 4,
+    fontSize: 10.5,
     fontWeight: "500",
-    color: "rgba(255,255,255,0.55)",
-    lineHeight: 15,
+    color: "rgba(255,255,255,0.52)",
+    lineHeight: 14,
     letterSpacing: 0.1,
   },
 });
@@ -1161,9 +1162,12 @@ const evidenceStripStyles = StyleSheet.create({
     paddingBottom: 6,
   },
   row: {
-    backgroundColor: "rgba(255,255,255,0.018)",
+    // Pillar 1.8.6 — bg 0.018 → 0.014 (~22% less fill), border 0.04 → 0.035.
+    // Strip recedes a little further so the active card is unambiguously
+    // the heaviest element below the verdict.
+    backgroundColor: "rgba(255,255,255,0.014)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.04)",
+    borderColor: "rgba(255,255,255,0.035)",
     borderRadius: R.md,
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -1190,7 +1194,9 @@ const evidenceStripStyles = StyleSheet.create({
   proofLabelGood: { color: "rgba(180,255,200,0.66)" },
   proofLabelWarn: { color: "rgba(255,210,140,0.80)" },
   proofSep: {
-    color: "rgba(255,255,255,0.18)",
+    // Pillar 1.8.6 — separator alpha 0.18 → 0.13 so the inter-segment dots
+    // float as quiet rhythm marks instead of reading as bullet bookends.
+    color: "rgba(255,255,255,0.13)",
     fontWeight: "700",
   },
 });
@@ -1359,8 +1365,12 @@ function BestMarketMatchesRail({
 }
 
 const railStyles = StyleSheet.create({
+  // Pillar 1.8.6 — outer marginTop SP.md (12) → 22 so the "BEST MARKET
+  // MATCHES" header has room to breathe under the pager. Previously the
+  // header sat ~12px below the dots and read as visually attached to
+  // the deck; the new 22px gap makes it land as a discrete section.
   outer: {
-    marginTop: SP.md,
+    marginTop: 22,
     paddingBottom: SP.xs,
   },
   headerRow: {
@@ -1612,14 +1622,12 @@ function MarketDepthBlock({
 }
 
 const depthStyles = StyleSheet.create({
-  // Pillar 1.8 — depth section presents like an intelligence report,
-  // not a data table. Header gets an analytics chevron + heavier label
-  // type, the sentence reads as a confident paragraph (13.5pt @ 19 lh),
-  // chips inflate slightly so they feel like trust stamps rather than
-  // compact bullets. Outer margin opens 16 → 18 so the section anchors
-  // to the page rhythm without crowding the deck above it.
+  // Pillar 1.8.6 — outer marginTop SP.lg (16) → 22 so the depth block
+  // (thin-market replacement for the rail) lands with the same gap
+  // below the pager as the rail does. Keeps section rhythm consistent
+  // whether the user has 3 alternates (depth block) or 4+ (rail).
   outer: {
-    marginTop: SP.lg,
+    marginTop: 22,
     marginHorizontal: 18,
     paddingTop: SP.sm,
     paddingBottom: 4,

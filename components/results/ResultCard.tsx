@@ -168,14 +168,14 @@ interface ResultCardProps {
 }
 
 // ─── Image area height ────────────────────────────────────────────────────────
-// Pillar 1.8.5 — image ratio rebalanced 0.60 → 0.52. The card was
-// reading as a "photo gallery tile" with title + price + meta crammed
-// into the bottom 40%. Reclaiming ~31px for the content panel lets the
-// title, price row, store/condition, evidence chip, and (for hero) the
-// insight strip + why bullets breathe. The image still dominates the
-// upper half — the product is unmistakable — but the card now feels
-// like product intelligence, not a photo with a caption.
-const IMAGE_H = Math.round(CARD.height * 0.52);
+// Pillar 1.8.6 — image ratio dropped 0.52 → 0.46 in tandem with CARD.height
+// shrinking 380 → 350 (see DS.ts). The product photo still anchors the
+// card's upper half and is unmistakably the hero element, but it no
+// longer crowds out the title/price/store/bullets stack. At cap 350 the
+// image is 161px tall (was 197), panel is 189px tall (was 183) — image
+// loses 36px, panel gains 6px, total card loses 30px so Market Depth
+// and Evan's Read both rise the same amount on screen.
+const IMAGE_H = Math.round(CARD.height * 0.46);
 const _PANEL_H  = CARD.height - IMAGE_H;
 
 // ─── Heart shutter animation ──────────────────────────────────────────────────

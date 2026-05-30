@@ -9499,17 +9499,67 @@ const sellThroughDays =
     ? Number(marketPrediction.sellThroughDays)
     : null;
 
+// Pillar 1.8.6 — evidence-driven proof bullets. Replaces the hardcoded
+// "Lowest price across marketplaces / High listing confidence / Seller
+// signals strong" boilerplate that read as marketing copy on every card
+// regardless of scan reality. These now derive from the actual stats
+// for THIS scan so each bullet reflects real ground truth.
+//   1. Market position (vs median, or cheapest-of-N when no median)
+//   2. Spread context (wide spread, anchor risk, or comp count)
+//   3. Vision-match reason (verified, strong, likely, low — tier-keyed)
+// Falls back gracefully when any underlying datum is null. If everything
+// is null we omit rankWhy entirely so deriveWhy() in ResultCard can
+// synthesize from the card's own evidenceQuality / clickable flags.
+const _bullets_rank: string[] = [];
+{
+  const med = Number.isFinite(stats?.medianMarket) ? Number(stats.medianMarket) : null;
+  const low = Number.isFinite(stats?.historicalLow) ? Number(stats.historicalLow) : null;
+  const high = Number.isFinite(stats?.historicalHigh) ? Number(stats.historicalHigh) : null;
+  const compCount = Number(combined?.length) || 0;
+
+  // Bullet 1 — market position
+  if (med != null && Number.isFinite(cheapestPrice)) {
+    const diff = Number(cheapestPrice) - med;
+    const pctOff = Math.abs(diff) / med;
+    if (pctOff < 0.05) {
+      _bullets_rank.push(`Sits at the median (~${money(med)})`);
+    } else if (diff < 0) {
+      _bullets_rank.push(`${money(Math.abs(diff))} under the median`);
+    } else if (compCount >= 3) {
+      _bullets_rank.push(`Above the median across ${compCount} comps`);
+    }
+  } else if (compCount >= 3) {
+    _bullets_rank.push(`Cheapest of ${compCount} listings checked`);
+  }
+
+  // Bullet 2 — spread / liquidity context
+  if (low != null && high != null && low > 0 && high > low * 1.8) {
+    _bullets_rank.push(`Wide spread: ${money(low)} – ${money(high)}`);
+  } else if (Number.isFinite(sellThroughDays) && sellThroughDays! > 0 && sellThroughDays! <= 14) {
+    _bullets_rank.push(`Active resale demand (~${Math.round(sellThroughDays as number)}d sell-through)`);
+  } else if (liquidity === "High" || liquidity === "Very High") {
+    _bullets_rank.push(`${liquidity} liquidity in this category`);
+  } else if (compCount > 0 && _bullets_rank.length === 0) {
+    _bullets_rank.push(`${compCount} comparable listing${compCount === 1 ? "" : "s"}`);
+  }
+
+  // Bullet 3 — vision match tier
+  const conf = Number(visionConfidence) || 0;
+  if (conf >= 0.85) {
+    _bullets_rank.push(`Brand and model verified (${Math.round(conf * 100)}%)`);
+  } else if (conf >= 0.70) {
+    _bullets_rank.push(`Strong visual match (${Math.round(conf * 100)}%)`);
+  } else if (conf >= 0.50) {
+    _bullets_rank.push(`Likely identification (${Math.round(conf * 100)}%)`);
+  } else if (conf > 0) {
+    _bullets_rank.push(`Low-confidence match (${Math.round(conf * 100)}%)`);
+  }
+}
+
 const card = {
-  rankWhy: [
-  "Lowest price across marketplaces",
-  "High listing confidence",
-  "Seller signals strong",
-],
-scanWhy: [
-  "Vision matched brand + model",
-  "Listings aligned with item",
-  "Confidence score validated",
-],
+  // Only attach rankWhy when we actually computed bullets — otherwise
+  // deriveWhy() falls through to evidence-aware synthesis in marketIntel.
+  ...(_bullets_rank.length > 0 ? { rankWhy: _bullets_rank.slice(0, 3) } : {}),
   photoUri,
   itemName: cheapest.title || visionQuery,
   store: cheapest.source || "Marketplace",

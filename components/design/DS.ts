@@ -204,12 +204,12 @@ const CARD_GAP = 14;           // gap between cards
 
 export const CARD = {
   width:     W - CARD_SIDE_MARGIN * 2,      // active card width
-  // Pillar 1.7 — second height shave (0.44 → 0.41, cap 410 → 380) so the
-  // active card stops dominating the screen vertically. Market Depth +
-  // Evan's Read now sit higher and the card reads as one element in a
-  // cockpit rather than a fullscreen hero. Image ratio inside ResultCard
-  // is unchanged (~0.55 of card height) so the photo still feels generous.
-  height:    Math.min(H * 0.41, 380),
+  // Pillar 1.8.6 — third height shave (0.41 → 0.38, cap 380 → 350). On a
+  // 393pt screen the card now lands at 350px, ~8% smaller than 1.8.5,
+  // so Market Depth + Evan's Read both rise ~30px. The image ratio in
+  // ResultCard also drops 0.52 → 0.46 so the photo doesn't fight the
+  // content panel — net reclaim is image -36px, panel +6px, card -30px.
+  height:    Math.min(H * 0.38, 350),
   slotWidth: W - CARD_SIDE_MARGIN * 2 + CARD_GAP,  // spacing between card centers
   leftInset: CARD_SIDE_MARGIN,              // left position of active card
   peek:      CARD_SIDE_MARGIN - CARD_GAP,  // how much neighbor card peeks
