@@ -6348,12 +6348,22 @@ const _fetchEbayResults = async (query, signal) => {
 
 // ✅ SerpAPI results (via your backend)
 
-const searchSerp = async (query, signal, variants: any[] = []) => {
+const searchSerp = async (
+  query,
+  signal,
+  variants: any[] = [],
+  opts: { scanId?: string | null; imageHash?: string | null } = {},
+) => {
   try {
     const data: any = await searchMarket(
       {
         query,
         variants,
+        // Phase 2C.9 — thread scan identity so the post-stream collector pass
+        // shares the SerpAPI budget with /market/search/stream. Without these
+        // the server saw scanId=null on /market/search and billed a 2nd call.
+        scanId: opts.scanId || null,
+        imageHash: opts.imageHash || null,
       },
       signal
     );
@@ -6867,6 +6877,9 @@ const searchMarket = async (
     sizeHint = null, // Feature 11
     scanSource = null, // "vision" | "deterministic" — signals to backend which path was taken
     scanMode: reqScanMode = null,
+    // Phase 2C.9 — shared scan identity for the cross-route SerpAPI budget.
+    scanId = null,
+    imageHash = null,
   }: any,
   signal?: AbortSignal
 ) => {
@@ -6887,6 +6900,8 @@ body: JSON.stringify({
   userId: userId || installId || undefined,
   scanSource: scanSource || null,
   scanMode: reqScanMode || null,
+  scanId: scanId || null,
+  imageHash: imageHash || null,
 }),
   signal,
 });
@@ -7078,6 +7093,9 @@ const searchMarketStream = async (
     scanSource?: string | null;
     scanMode?: string | null;
     attributeCertainty?: any;
+    // Phase 2C.9 — shared scan identity for the cross-route SerpAPI budget.
+    scanId?: string | null;
+    imageHash?: string | null;
   },
   signal: AbortSignal,
   onProvisional: (data: any) => void,
@@ -7097,6 +7115,8 @@ const searchMarketStream = async (
     scanSource:         params.scanSource        ?? null,
     scanMode:           params.scanMode          ?? null,
     attributeCertainty: params.attributeCertainty ?? null,
+    scanId:             params.scanId            ?? null,
+    imageHash:          params.imageHash         ?? null,
   });
 
   let lastProvisional: any = null;
@@ -8750,6 +8770,23 @@ try {
       visionConfidence,
     });
 
+    // Phase 2C.9 — single scanId shared across /market/search/stream AND
+    // /market/search so the server's per-scan SerpAPI budget key collapses.
+    // Falls back to imageHash on the server side when scanId is omitted, but
+    // the FE now always sets one explicitly to avoid that path. ImageHash is
+    // also sent so retries with the same photo share the same budget too.
+    const _clientScanId = `c.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}`;
+    const _clientImageHash =
+      (visionIdentity && typeof (visionIdentity as any).imageHash === "string"
+        ? (visionIdentity as any).imageHash
+        : null) ||
+      (typeof (scanSessionRef.current as any)?.imageHash === "string"
+        ? (scanSessionRef.current as any).imageHash
+        : null);
+    try {
+      scanSessionRef.current = { ...(scanSessionRef.current || {}), clientScanId: _clientScanId, clientImageHash: _clientImageHash };
+    } catch {}
+
     let _provisionalMarketData: any = null;
     let _provisionalNavigated = false;
     let marketData: any;
@@ -8765,7 +8802,9 @@ try {
         sizeHint: sizeHint || null,
         scanSource: visionConfidence === 0 ? "deterministic" : "vision",
         scanMode: effectiveScanMode,
-      },
+        scanId: _clientScanId,
+        imageHash: _clientImageHash,
+      } as any,
       marketController.signal,
       // onProvisional: Phase 1 marketplace results
       // Phase 4: may fire twice — first from fast native API lanes (~2s),
@@ -9031,7 +9070,13 @@ const collectorAbortTimer = setTimeout(() => collectorAbortCtrl.abort(), 2500);
 const collectorRaw = await searchSerp(
   collectorQuery,
   collectorAbortCtrl.signal,
-  buildVisionVariants(collectorQuery).slice(1)
+  buildVisionVariants(collectorQuery).slice(1),
+  {
+    // Phase 2C.9 — same scan identity as the stream so the budget key
+    // collapses and /market/search returns the stream's cached pool.
+    scanId: (scanSessionRef.current as any)?.clientScanId || null,
+    imageHash: (scanSessionRef.current as any)?.clientImageHash || null,
+  },
 ).catch(() => []);
 clearTimeout(collectorAbortTimer);
 

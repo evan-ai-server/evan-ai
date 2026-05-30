@@ -419,6 +419,50 @@ export function CardDeck({
     }
   }, [onSnapToIndex]);
 
+  // Phase 2C.9 — fix active-listing desync. The Market Depth spotlight + dock
+  // + rail all derive from `selectedIndex` updated via `onSnapToIndex`. The
+  // legacy code only fired onSnapToIndex from `onMomentumScrollEnd`, which
+  // lands ~200-300ms AFTER the user releases the swipe. That window is the
+  // visible lag: the active card centers immediately but the spotlight
+  // stayed on the previous listing until momentum settled. Use the velocity-
+  // aware predicted-snap from `onScrollEndDrag` so every dependent component
+  // updates in the SAME render cycle as the visible card centering. The
+  // momentum-end handler above stays as a safety net for edge cases.
+  const handleScrollEndDrag = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (!mountedRef.current) return;
+    const live = cardsRef.current || [];
+    if (live.length <= 0) return;
+    const offsetX = Number(e?.nativeEvent?.contentOffset?.x);
+    if (!Number.isFinite(offsetX)) return;
+    // velocity sign predicts the snap direction; magnitude bumps the target
+    // one slot in the direction of travel so a fast flick lands in the right
+    // bucket immediately rather than rounding to the still-visible card.
+    const velX = Number(e?.nativeEvent?.velocity?.x || 0);
+    const baseIdx = Math.round(offsetX / SNAP);
+    const bias = velX > 0.4 ? 1 : velX < -0.4 ? -1 : 0;
+    const predicted = Math.max(0, Math.min(live.length - 1, baseIdx + bias));
+    if (predicted === snappedIndex) return;
+    try {
+      const card = live[predicted];
+      console.log("CARD_INDEX_SYNCED", {
+        index: predicted,
+        itemTitle: card?.itemName || (card as any)?.title || null,
+        source: card?.store || (card as any)?.source || null,
+        trigger: "scroll_end_drag",
+        velX,
+      });
+      console.log("ACTIVE_LISTING_CHANGED", {
+        listingId: (card as any)?.id || `${predicted}:${(card?.itemName || "").slice(0, 32)}`,
+        title: card?.itemName || (card as any)?.title || null,
+        cardIndex: predicted,
+      });
+      setSnappedIndex(predicted);
+      onSnapToIndex?.(predicted);
+    } catch (err: any) {
+      console.log("CARD_SWIPE_SAFE_BLOCKED", { reason: "scroll_end_drag_error", error: err?.message || String(err) });
+    }
+  }, [onSnapToIndex, snappedIndex]);
+
   const handleCardPress = useCallback((idx: number) => {
     if (!mountedRef.current) {
       console.log("CARD_SWIPE_SAFE_BLOCKED", { reason: "unmounted_on_press", idx });
@@ -497,6 +541,7 @@ export function CardDeck({
         bounces
         scrollEventThrottle={16}
         onScroll={onScroll}
+        onScrollEndDrag={handleScrollEndDrag}
         onMomentumScrollEnd={handleScrollEnd}
         contentContainerStyle={{
           paddingLeft: CARD.leftInset,
