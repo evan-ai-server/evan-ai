@@ -962,20 +962,21 @@ function CompactVerdict({
 }
 
 const compactVerdictStyles = StyleSheet.create({
-  // Pillar 1.8 — luxury hierarchy pass. Headline dollar gets more
-  // commanding type, sub-stats fade further into the background, the
-  // sentence gets one more pixel of breathing. The card now reads as
-  // "intelligence engine speaking" — BUY stamp → big headline → quiet
-  // supporting numbers → muted scout-note.
+  // Pillar 1.8.5 — final compression pass before Pillar 2 visual work.
+  // Card paddings tightened SP.md → SP.sm, gaps between header / dollar
+  // / strip / sentence shaved 2–4px each, lineHeights trimmed, sentence
+  // dropped to 11pt @ 15 lh. The verdict still reads as authoritative
+  // (BUY stamp + headline dollar untouched), but its overall footprint
+  // shrinks ~24%, letting the card and market intel rise on screen.
   outer: {
     paddingHorizontal: SP.lg,
-    paddingTop: 6,
+    paddingTop: 4,
     paddingBottom: 0,
   },
   card: {
     paddingHorizontal: 14,
-    paddingTop: SP.md,
-    paddingBottom: SP.md,
+    paddingTop: SP.sm,
+    paddingBottom: SP.sm,
     borderRadius: R.lg,
     backgroundColor: "rgba(255,255,255,0.020)",
     borderWidth: StyleSheet.hairlineWidth,
@@ -988,13 +989,13 @@ const compactVerdictStyles = StyleSheet.create({
   },
   glow: {
     position: "absolute",
-    top: -6,
+    top: -4,
     left: "50%",
     marginLeft: -140,
     width: 280,
-    height: 70,
+    height: 60,
     borderRadius: 140,
-    opacity: 0.78,
+    opacity: 0.72,
   },
   headerRow: {
     flexDirection: "row",
@@ -1002,10 +1003,10 @@ const compactVerdictStyles = StyleSheet.create({
     gap: SP.sm,
   },
   word: {
-    fontSize: 21,
+    fontSize: 20,
     fontWeight: "900",
-    letterSpacing: 2.0,
-    lineHeight: 25,
+    letterSpacing: 1.9,
+    lineHeight: 23,
   },
   reasonTitle: {
     flex: 1,
@@ -1013,37 +1014,37 @@ const compactVerdictStyles = StyleSheet.create({
     fontWeight: "600",
     color: "rgba(255,255,255,0.65)",
     letterSpacing: 0.15,
-    lineHeight: 17,
+    lineHeight: 16,
   },
   dollarRow: {
-    marginTop: 6,
+    marginTop: 3,
     flexDirection: "row",
     alignItems: "baseline",
     gap: SP.sm,
   },
   dollar: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: "900",
     color: C.text,
     letterSpacing: -0.7,
-    lineHeight: 32,
+    lineHeight: 29,
   },
   dollarSign: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: "900",
     letterSpacing: -0.7,
   },
   direction: {
     fontSize: 9,
     fontWeight: "900",
-    letterSpacing: 1.6,
+    letterSpacing: 1.5,
     color: "rgba(255,255,255,0.42)",
   },
   strip: {
     flexDirection: "row",
     gap: SP.lg,
-    marginTop: 10,
-    paddingTop: 8,
+    marginTop: 7,
+    paddingTop: 6,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,0.055)",
   },
@@ -1059,17 +1060,17 @@ const compactVerdictStyles = StyleSheet.create({
     color: "rgba(255,255,255,0.24)",
   },
   stripValue: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: "800",
     color: "rgba(255,255,255,0.74)",
     letterSpacing: -0.2,
   },
   sentence: {
-    marginTop: 10,
-    fontSize: 11.5,
+    marginTop: 6,
+    fontSize: 11,
     fontWeight: "500",
     color: "rgba(255,255,255,0.55)",
-    lineHeight: 16.5,
+    lineHeight: 15,
     letterSpacing: 0.1,
   },
 });
@@ -1147,53 +1148,49 @@ function MarketEvidenceStrip({ stats }: { stats: EvidenceStripStat[] }) {
 }
 
 const evidenceStripStyles = StyleSheet.create({
-  // Pillar 1.8 — paddingX SP.lg → 18 to align with verdict + market
-  // depth rhythm. paddingTop SP.xs → SP.sm so the proof line has more
-  // breathing under the verdict block — the prior 4px gap read as the
-  // verdict and proof fused into one chunk; 8px makes them feel like
-  // two beats of the same idea.
+  // Pillar 1.8.5 — strip weight reduced ~12% so evidence supports the
+  // card instead of competing with it. proofValue 900 → 800, full white
+  // → 0.82 white. proofText 12.5 → 11.5, lineHeight 18 → 16. Row paddingY
+  // 9 → 7, bg fill 0.025 → 0.018. Green/amber accent values toned down a
+  // half-step so the chip color still reads as trust state, not alarm.
+  // The strip remains fully readable — it just no longer outranks the
+  // card in the eye-flow chain.
   outer: {
     paddingHorizontal: 18,
-    paddingTop: SP.sm,
+    paddingTop: 6,
     paddingBottom: 6,
   },
-  // Pillar 1.6 — strip box keeps the soft fill + hairline border so the
-  // proof line still reads as a contained element, but content is now a
-  // single multi-line Text instead of equal-width cells. paddingX 12,
-  // paddingY 9 leaves enough room for two-line wrap on iPhone widths.
   row: {
-    backgroundColor: "rgba(255,255,255,0.025)",
+    backgroundColor: "rgba(255,255,255,0.018)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.05)",
+    borderColor: "rgba(255,255,255,0.04)",
     borderRadius: R.md,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 7,
   },
-  // Continuous proof line. Mixed-weight children inherit lineHeight from
-  // the parent Text so wraps stay tight without per-segment offset.
   proofText: {
-    fontSize: 12.5,
-    lineHeight: 18,
-    color: C.text2,
+    fontSize: 11.5,
+    lineHeight: 16,
+    color: "rgba(255,255,255,0.66)",
     letterSpacing: 0.05,
   },
   proofValue: {
-    fontWeight: "900",
-    color: C.text,
-    letterSpacing: -0.1,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.82)",
+    letterSpacing: -0.05,
   },
-  proofValueGood: { color: "rgba(180,255,200,0.92)" },
-  proofValueWarn: { color: "rgba(255,210,140,0.85)" },
-  proofValueMuted: { color: C.text2 },
+  proofValueGood: { color: "rgba(180,255,200,0.78)" },
+  proofValueWarn: { color: "rgba(255,210,140,0.72)" },
+  proofValueMuted: { color: "rgba(255,255,255,0.62)" },
   proofLabel: {
     fontWeight: "600",
-    color: "rgba(255,255,255,0.50)",
+    color: "rgba(255,255,255,0.44)",
     letterSpacing: 0.1,
   },
-  proofLabelGood: { color: "rgba(180,255,200,0.78)" },
-  proofLabelWarn: { color: "rgba(255,210,140,0.92)" },
+  proofLabelGood: { color: "rgba(180,255,200,0.66)" },
+  proofLabelWarn: { color: "rgba(255,210,140,0.80)" },
   proofSep: {
-    color: "rgba(255,255,255,0.22)",
+    color: "rgba(255,255,255,0.18)",
     fontWeight: "700",
   },
 });

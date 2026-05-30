@@ -526,21 +526,20 @@ export function CardDeck({
             idx * SNAP,
             (idx + 1) * SNAP,
           ];
-          // Pillar 1.8 — side cards quieted further so the active card
-          // becomes obviously the focal point. opacity floor 0.29 → 0.20
-          // keeps the neighbor silhouettes legible as depth hints but
-          // they no longer compete for attention. scale 0.88 → 0.86
-          // tightens the perspective: the active card reads larger by
-          // contrast, like a real card pulled out of a stack. Active
-          // stays at 1.0/1.0 — never punish the focal card.
+          // Pillar 1.8.5 — final atmospheric softening before Pillar 2.
+          // opacity floor 0.20 → 0.14, scale 0.86 → 0.85. Side cards now
+          // read as the suggestion of "more options exist" — quiet
+          // background depth that holds the layout's negative space but
+          // never bids for focus. The user's eye locks on the active
+          // card unambiguously, with no risk of double-reading.
           const cardOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.20, 1.0, 0.20],
+            outputRange: [0.14, 1.0, 0.14],
             extrapolate: "clamp",
           });
           const cardScale = scrollX.interpolate({
             inputRange,
-            outputRange: [0.86, 1.0, 0.86],
+            outputRange: [0.85, 1.0, 0.85],
             extrapolate: "clamp",
           });
           const cardLift = scrollX.interpolate({

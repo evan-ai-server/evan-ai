@@ -168,7 +168,14 @@ interface ResultCardProps {
 }
 
 // ─── Image area height ────────────────────────────────────────────────────────
-const IMAGE_H = Math.round(CARD.height * 0.60);
+// Pillar 1.8.5 — image ratio rebalanced 0.60 → 0.52. The card was
+// reading as a "photo gallery tile" with title + price + meta crammed
+// into the bottom 40%. Reclaiming ~31px for the content panel lets the
+// title, price row, store/condition, evidence chip, and (for hero) the
+// insight strip + why bullets breathe. The image still dominates the
+// upper half — the product is unmistakable — but the card now feels
+// like product intelligence, not a photo with a caption.
+const IMAGE_H = Math.round(CARD.height * 0.52);
 const _PANEL_H  = CARD.height - IMAGE_H;
 
 // ─── Heart shutter animation ──────────────────────────────────────────────────
