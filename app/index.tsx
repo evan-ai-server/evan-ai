@@ -13252,7 +13252,7 @@ style={[
 <SafeAreaView style={{ flex: 1 }} edges={loadingResults ? [] : ["top", "bottom"]}>
 <ScrollView
   style={loadingResults ? { flex: 1, backgroundColor: TOK.C.bg } : [styles.page, { flex: 1 }]}
-  contentContainerStyle={loadingResults ? { flexGrow: 1 } : { flexGrow: 1, paddingTop: 12, paddingBottom: 100, backgroundColor: "transparent" }}
+  contentContainerStyle={loadingResults ? { flexGrow: 1 } : { flexGrow: 1, paddingTop: 0, paddingBottom: 100, backgroundColor: "transparent" }}
   showsVerticalScrollIndicator={false}
   bounces={true}
   alwaysBounceVertical={true}
@@ -21363,7 +21363,7 @@ miniPrice: {
 // -------------------------
 page: {
   flex: 1,
-  paddingTop: 72,
+  paddingTop: 12,
   paddingHorizontal: 18,
   paddingBottom: 0,
   backgroundColor: TOK.C.bg,
@@ -21373,7 +21373,7 @@ resultsTopBar: {
   flexDirection: "row",
   alignItems: "center",
   justifyContent: "space-between",
-  marginBottom: 18,
+  marginBottom: 10,
 },
 
 resultsBackRow: {

@@ -230,13 +230,14 @@ export function ResultsDock({
         </View>
       ) : null}
 
-      {/* Primary row: View listing / Pricing signal + New Scan.
-          Pillar 1 — the CTA label is now derived from the canonical
-          cardActionLabel() helper so trust rules are enforced in one
-          place: it says "View listing" ONLY when clickable !== false AND
-          a real directUrl exists. Otherwise it shows "Pricing signal"
+      {/* Primary row: View listing / Market signal + New Scan.
+          Pillar 1.5 — the CTA label is derived from cardActionLabel(),
+          which now returns "View listing" ONLY when clickable !== false
+          AND a real directUrl exists. Otherwise it shows "Market signal"
           and the onPress is dropped, so the user can never tap an open
-          action on a row that has no direct merchant URL. */}
+          action on a row that has no direct merchant URL. The user-facing
+          string was unified from "Pricing signal" → "Market signal" in
+          Pillar 1.5 so the UI stops bouncing between names. */}
       <View style={styles.primaryRow}>
         <PressableScale
           onPress={cardIsClickable ? onOpenListing : undefined}
@@ -463,12 +464,16 @@ const styles = StyleSheet.create({
   //      dock glass feels "warmer / alive" rather than slate black
   // Softer custom shadow (taller, lower opacity) overrides SH.dock so the
   // dock floats more atmospherically without a visible halo.
+  // Pillar 1.5 — slimmed: paddingTop trimmed from 32 → 22 so the dock
+  // sits lower in its own frame, leaving more vertical room for the deck
+  // above it. The fade ladder still spans the top 32px; the content just
+  // doesn't start as far down inside the dock.
   dockWrap: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    paddingTop: SP.lg + SP.lg, // 32px → clears the fade ladder
+    paddingTop: 22,
     paddingHorizontal: SP.lg,
     borderTopLeftRadius: 40,
     borderTopRightRadius: 40,
@@ -546,36 +551,41 @@ const styles = StyleSheet.create({
   // dock's edge. paddingLeft 2 nudges the dot to optical-align with the
   // primary-row buttons' left edge (dot is a 6px circle, so a tiny
   // shoulder gives the text after it the right balanced offset).
+  // Pillar 1.5 — intel strip trimmed: smaller bottom margin so the
+  // primary row sits closer to the summary text. Reads as a tight
+  // intel cockpit instead of stacked sections.
   intelStrip: {
     flexDirection: "row",
     alignItems: "center",
     marginTop: SP.xs,
-    marginBottom: SP.md,
+    marginBottom: SP.sm,
     gap: SP.xs,
     paddingLeft: 2,
   },
   intelDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: "rgba(255,255,255,0.35)",
   },
   intelText: {
     ...TY.cap,
     color: C.text3,
+    fontSize: 11,
     letterSpacing: 0.4,
   },
 
-  // Primary
+  // Pillar 1.5 — primary row CTAs shorter (48 → 44) so the dock as a
+  // whole loses ~6pt of vertical weight without sacrificing tap target
+  // (44 is the Apple HIG minimum).
   primaryRow: {
     flexDirection: "row",
     gap: SP.sm,
     marginBottom: SP.sm,
   },
-  // Open + New scan share the row 50/50 so the white CTA never billboards.
   openBtn: {
     flex: 1,
-    minHeight: 48,
+    minHeight: 44,
     borderRadius: R.lg,
     backgroundColor: "#ffffff",
     flexDirection: "row",
@@ -594,7 +604,7 @@ const styles = StyleSheet.create({
   },
   newScanBtn: {
     flex: 1,
-    minHeight: 48,
+    minHeight: 44,
     borderRadius: R.lg,
     backgroundColor: "rgba(255,255,255,0.07)",
     flexDirection: "row",
@@ -632,7 +642,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    height: 44,
+    height: 40,
     paddingHorizontal: SP.md,
     borderRadius: R.md,
     backgroundColor: "rgba(255,255,255,0.05)",

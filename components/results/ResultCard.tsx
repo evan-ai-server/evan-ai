@@ -518,7 +518,7 @@ function _lowestPriceLabel(data: CardData): string {
   // consistent across deck + rail + dock + card. NEVER claims "verified"
   // without verification.
   if (_isVerifiedListing(data as MarketCard)) return "Lowest verified price";
-  if (_isPricingSignal(data as MarketCard))   return "Lowest pricing signal";
+  if (_isPricingSignal(data as MarketCard))   return "Lowest market signal";
   if (_isOracleEstimate(data as MarketCard))  return "AI estimate · lowest";
   return "Lowest in current set";
 }
@@ -1223,9 +1223,10 @@ export function ResultCard({
               Only clickable when the backend says so AND a real directUrl
               exists. When the card is a pricing signal / oracle estimate
               / explicit clickable:false, the CTA renders as a dimmed
-              "Pricing signal" pill with NO onPress handler, so the user
+              "Market signal" pill with NO onPress handler, so the user
               can never tap into an open path the trust layer didn't
-              vet. _cardActionLabel returns the canonical copy. */}
+              vet. _cardActionLabel returns the canonical copy
+              ("View listing" or "Market signal" — unified in Pillar 1.5). */}
           {(() => {
             const heroClickable =
               data.clickable !== false &&
@@ -1308,7 +1309,7 @@ export function ResultCard({
               gives room. */}
 
           {/* Alt: Tracked listing CTA — same trust gating as the hero CTA.
-              Pricing signals show the disabled "Pricing signal" label and
+              Pricing signals show the disabled "Market signal" label and
               skip the open path entirely. */}
           {!isHero ? (() => {
             const altClickable =

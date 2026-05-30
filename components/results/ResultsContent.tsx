@@ -130,20 +130,16 @@ interface ResultsContentProps {
   onBoughtIt?: () => void;
 }
 
-// Dock approximate height + safe area buffer + deck breathing room. The
-// dock renders an intel strip (~30px) + a primary row (48 + 8 gap = 56px)
-// + a 4-row 2-column action grid (4*44 + 3*8 = 200px) + ~26px of internal
-// padding + ~34px of iPhone home-indicator safe area = ~346px.
-//
-// Second refinement pass tightened this back from 380 → 332 to KILL the
-// dead-black "abyss" between the deck and the dock that the previous
-// extra-safe spacing introduced. The dock now also renders a tall top
-// gradient-fade band (32px of softly increasing opacity, see
-// dockFadeTop1/2/3 in ResultsDock) so the lifted active card's bottom
-// curve still lands inside the soft fade — the card looks like it's
-// floating ABOVE a misty control surface instead of sitting above an
-// empty void. The fade absorbs the clearance the spacer used to provide.
-const DOCK_SAFE_HEIGHT = 332;
+// Dock spacer height — keeps the scroll content from sliding under the
+// absolute-positioned dock. Recomputed for Pillar 1.5 after the dock
+// itself was slimmed:
+//   - paddingTop 22 + intelStrip ~22 + primary row 44 + sm 8
+//     + secondary 2×40 + rowGap 8 + safe-area ~42 ≈ 230px actual dock
+//   - Add ~50px buffer so the fade ladder absorbs the deck's bottom
+//     shadow without the deck guillotining into the dock.
+//   - Net: 280 (was 332) — the deck now has ~52px more vertical room
+//     to render its bottom edge before the spacer reserves the dock zone.
+const DOCK_SAFE_HEIGHT = 280;
 
 export const ResultsContent = React.memo(function ResultsContent({
   activeResult,
@@ -362,9 +358,24 @@ export const ResultsContent = React.memo(function ResultsContent({
     () => deriveEvansRead(activeResult, marketStats, verdictCopy),
     [activeResult, marketStats, verdictCopy],
   );
+  // Pillar 1.5 — pass the raw pool depth (marketPool/results) so the strip
+  // can render a "{N} CHECKED" cell whenever Evan filtered the input down
+  // to the displayed canonical card array. This makes thin scans read as
+  // intelligence ("6 checked · 1 match") rather than failure ("1 match").
+  const listingsChecked: number = React.useMemo(() => {
+    const m = Array.isArray(marketPool) ? marketPool.length : 0;
+    const r = Array.isArray(results) ? results.length : 0;
+    const upstreamTotal = Number(activeResult?.totalMatches);
+    return Math.max(
+      m,
+      r,
+      Number.isFinite(upstreamTotal) && upstreamTotal > 0 ? upstreamTotal : 0,
+      allMarketCards.length,
+    );
+  }, [marketPool, results, activeResult, allMarketCards]);
   const evidenceStrip: EvidenceStripStat[] = React.useMemo(
-    () => deriveEvidenceStripStats(marketStats),
-    [marketStats],
+    () => deriveEvidenceStripStats(marketStats, listingsChecked),
+    [marketStats, listingsChecked],
   );
 
   // Rail → deck snap state. The rail and the deck share the same
@@ -549,6 +560,8 @@ export const ResultsContent = React.memo(function ResultsContent({
                 cards={allMarketCards}
                 selectedIndex={selectedIndex}
                 onSelect={handleRailSelect}
+                listingsChecked={listingsChecked}
+                marketStats={marketStats}
               />
 
               <EvansReadBlock read={evansRead} />
@@ -930,10 +943,14 @@ function CompactVerdict({
           </Reanimated.View>
         ) : null}
 
-        {/* One-sentence explanation. Compact body copy, restrained tone. */}
+        {/* One-sentence explanation. Compact body copy, restrained tone.
+            Capped at 2 lines so the verdict never paragraph-blooms — Pillar
+            1.5 explicitly trades exhaustive context for a cockpit feel. */}
         <Reanimated.View style={sentenceStyle as any}>
           <Text
             allowFontScaling={false}
+            numberOfLines={2}
+            ellipsizeMode="tail"
             style={compactVerdictStyles.sentence}
           >
             {sentence}
@@ -945,15 +962,18 @@ function CompactVerdict({
 }
 
 const compactVerdictStyles = StyleSheet.create({
+  // Pillar 1.5 — tighter outer + inner padding so the verdict reads as a
+  // cockpit card, not an essay block. Sentence capped at 2 lines (see
+  // CompactVerdict render), glow reduced from 320×90 to 260×64.
   outer: {
     paddingHorizontal: SP.lg,
-    paddingTop: SP.sm,
+    paddingTop: SP.xs,
     paddingBottom: 0,
   },
   card: {
-    paddingHorizontal: SP.lg,
-    paddingTop: SP.md,
-    paddingBottom: SP.lg,
+    paddingHorizontal: SP.md,
+    paddingTop: SP.sm,
+    paddingBottom: SP.md,
     borderRadius: R.lg,
     backgroundColor: "rgba(255,255,255,0.022)",
     borderWidth: StyleSheet.hairlineWidth,
@@ -966,13 +986,13 @@ const compactVerdictStyles = StyleSheet.create({
   },
   glow: {
     position: "absolute",
-    top: -10,
+    top: -8,
     left: "50%",
-    marginLeft: -160,
-    width: 320,
-    height: 90,
-    borderRadius: 160,
-    opacity: 0.9,
+    marginLeft: -130,
+    width: 260,
+    height: 64,
+    borderRadius: 130,
+    opacity: 0.85,
   },
   headerRow: {
     flexDirection: "row",
@@ -980,47 +1000,47 @@ const compactVerdictStyles = StyleSheet.create({
     gap: SP.sm,
   },
   word: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: "900",
-    letterSpacing: 2.0,
-    lineHeight: 26,
+    letterSpacing: 1.8,
+    lineHeight: 24,
   },
   reasonTitle: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
     color: C.text2,
     letterSpacing: 0.15,
-    lineHeight: 18,
+    lineHeight: 17,
   },
   dollarRow: {
-    marginTop: SP.sm,
+    marginTop: 4,
     flexDirection: "row",
     alignItems: "baseline",
     gap: SP.sm,
   },
   dollar: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "900",
     color: C.text,
     letterSpacing: -0.6,
-    lineHeight: 32,
+    lineHeight: 28,
   },
   dollarSign: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "900",
     letterSpacing: -0.6,
   },
   direction: {
     fontSize: 9,
     fontWeight: "900",
-    letterSpacing: 1.6,
+    letterSpacing: 1.5,
     color: C.text3,
   },
   strip: {
     flexDirection: "row",
-    gap: SP.xl,
-    marginTop: SP.sm,
+    gap: SP.lg,
+    marginTop: 6,
     paddingTop: SP.xs,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,0.06)",
@@ -1033,21 +1053,21 @@ const compactVerdictStyles = StyleSheet.create({
   stripLabel: {
     fontSize: 9,
     fontWeight: "900",
-    letterSpacing: 1.4,
+    letterSpacing: 1.3,
     color: "rgba(255,255,255,0.30)",
   },
   stripValue: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "800",
     color: C.text2,
     letterSpacing: -0.2,
   },
   sentence: {
-    marginTop: SP.sm,
-    fontSize: 12,
+    marginTop: 8,
+    fontSize: 11.5,
     fontWeight: "500",
-    color: "rgba(255,255,255,0.62)",
-    lineHeight: 17,
+    color: "rgba(255,255,255,0.60)",
+    lineHeight: 16,
     letterSpacing: 0.1,
   },
 });
@@ -1067,35 +1087,59 @@ function MarketEvidenceStrip({ stats }: { stats: EvidenceStripStat[] }) {
   return (
     <View style={evidenceStripStyles.outer}>
       <View style={evidenceStripStyles.row}>
-        {stats.map((s, i) => (
-          <View
-            key={`${s.label}-${i}`}
-            style={[
-              evidenceStripStyles.cell,
-              i < stats.length - 1 && evidenceStripStyles.cellDivider,
-            ]}
-          >
-            <Text
-              allowFontScaling={false}
-              numberOfLines={1}
+        {stats.map((s, i) => {
+          const isLabelOnly = !s.value || s.value.length === 0;
+          return (
+            <View
+              key={`${s.label}-${i}`}
               style={[
-                evidenceStripStyles.value,
-                s.tone === "good" && evidenceStripStyles.valueGood,
-                s.tone === "warn" && evidenceStripStyles.valueWarn,
-                s.tone === "muted" && evidenceStripStyles.valueMuted,
+                evidenceStripStyles.cell,
+                i < stats.length - 1 && evidenceStripStyles.cellDivider,
               ]}
             >
-              {s.value}
-            </Text>
-            <Text
-              allowFontScaling={false}
-              numberOfLines={1}
-              style={evidenceStripStyles.label}
-            >
-              {s.label}
-            </Text>
-          </View>
-        ))}
+              {isLabelOnly ? (
+                // Label-only "Signal only" trust pill — replaces the legacy
+                // "0 Signals" numeric cell so the strip never reads as
+                // jargon-with-a-zero. The warn tone makes the eye land on
+                // the trust gap.
+                <Text
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  style={[
+                    evidenceStripStyles.tagOnly,
+                    s.tone === "good" && evidenceStripStyles.valueGood,
+                    s.tone === "warn" && evidenceStripStyles.tagOnlyWarn,
+                    s.tone === "muted" && evidenceStripStyles.valueMuted,
+                  ]}
+                >
+                  {s.label}
+                </Text>
+              ) : (
+                <>
+                  <Text
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    style={[
+                      evidenceStripStyles.value,
+                      s.tone === "good" && evidenceStripStyles.valueGood,
+                      s.tone === "warn" && evidenceStripStyles.valueWarn,
+                      s.tone === "muted" && evidenceStripStyles.valueMuted,
+                    ]}
+                  >
+                    {s.value}
+                  </Text>
+                  <Text
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    style={evidenceStripStyles.label}
+                  >
+                    {s.label}
+                  </Text>
+                </>
+              )}
+            </View>
+          );
+        })}
       </View>
     </View>
   );
@@ -1104,7 +1148,7 @@ function MarketEvidenceStrip({ stats }: { stats: EvidenceStripStat[] }) {
 const evidenceStripStyles = StyleSheet.create({
   outer: {
     paddingHorizontal: SP.lg,
-    paddingTop: SP.sm,
+    paddingTop: SP.xs,
     paddingBottom: SP.xs,
   },
   row: {
@@ -1113,19 +1157,20 @@ const evidenceStripStyles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.05)",
     borderRadius: R.md,
-    paddingVertical: SP.sm,
+    paddingVertical: 8,
   },
   cell: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 2,
   },
   cellDivider: {
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: "rgba(255,255,255,0.06)",
   },
   value: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "900",
     color: C.text,
     letterSpacing: -0.2,
@@ -1136,11 +1181,22 @@ const evidenceStripStyles = StyleSheet.create({
   label: {
     fontSize: 9,
     fontWeight: "800",
-    letterSpacing: 1.2,
+    letterSpacing: 1.0,
     color: "rgba(255,255,255,0.40)",
     textTransform: "uppercase",
     marginTop: 2,
   },
+  // Label-only trust pill (the "Signal only" cell). No numeric value, so
+  // the label itself gets weight + presence to balance the row visually.
+  tagOnly: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.0,
+    color: "rgba(255,255,255,0.55)",
+    textTransform: "uppercase",
+    textAlign: "center",
+  },
+  tagOnlyWarn: { color: "rgba(255,210,140,0.92)" },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1165,11 +1221,32 @@ function BestMarketMatchesRail({
   cards,
   selectedIndex,
   onSelect,
+  listingsChecked,
+  marketStats,
 }: {
   cards: MarketCard[];
   selectedIndex: number;
   onSelect: (idx: number) => void;
+  listingsChecked?: number;
+  marketStats?: MarketStats;
 }) {
+  // Pillar 1.5 — thin-market branch. When fewer than 4 strong matches
+  // exist, the rail collapses to a dedicated "Market Depth" module
+  // instead of showing 1–3 mini cards. The thin-market state should
+  // feel like intelligence ("1 strong match from 6 listings checked"),
+  // not like the rail failed to load.
+  if (cards.length < 4) {
+    return (
+      <MarketDepthBlock
+        cards={cards}
+        listingsChecked={listingsChecked ?? 0}
+        marketStats={marketStats ?? null}
+        selectedIndex={selectedIndex}
+        onSelect={onSelect}
+      />
+    );
+  }
+
   const altCount = Math.max(0, cards.length - 1);
   const allAlts = cards.slice(1, 8);
   // When alts are thin (1–3), include the hero so the rail still has
@@ -1367,6 +1444,292 @@ const railStyles = StyleSheet.create({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MARKET DEPTH BLOCK — thin-market state.
+//
+// Replaces the rail when fewer than 4 strong matches exist. Instead of
+// showing a half-empty row of mini-cards (which reads as "Evan failed to
+// find a market"), this block surfaces an honest sentence + chips that
+// tell the user exactly how thin the market is and why.
+//
+// Format:
+//   MARKET DEPTH
+//   1 strong match from 6 listings checked
+//   [5 filtered out] [0 verified] [signal only]
+//
+// Trust:
+//   - never claims hidden alternates exist
+//   - never duplicates the hero card to pad a row
+//   - verified count carries warn tint when 0
+//   - "signal only" pill appears only when verified === 0 AND we have
+//     at least one strong match (so the user knows what the evidence is)
+//
+// The block still surfaces the strong match(es) inline as a tappable
+// mini-row below the chips so the user can re-snap the deck — this
+// keeps parity with the rail's "tap to bring to front" affordance.
+// ─────────────────────────────────────────────────────────────────────────────
+function MarketDepthBlock({
+  cards,
+  listingsChecked,
+  marketStats,
+  selectedIndex,
+  onSelect,
+}: {
+  cards: MarketCard[];
+  listingsChecked: number;
+  marketStats: MarketStats | null;
+  selectedIndex: number;
+  onSelect: (idx: number) => void;
+}) {
+  if (cards.length === 0) return null;
+
+  const strongN = cards.length;
+  const checked = Math.max(strongN, Math.floor(Number(listingsChecked) || 0));
+  const filtered = Math.max(0, checked - strongN);
+  const verifiedN = marketStats?.verifiedCount ?? 0;
+  const onlySignals =
+    verifiedN === 0 && strongN > 0;
+
+  // Sentence — singular/plural correct on both sides.
+  const strongPhrase = `${strongN} strong ${strongN === 1 ? "match" : "matches"}`;
+  const checkedPhrase = `${checked} ${checked === 1 ? "listing" : "listings"} checked`;
+  const sentence = `${strongPhrase} from ${checkedPhrase}.`;
+
+  // Chip set.
+  const chips: { label: string; tone: "default" | "warn" | "good" | "muted" }[] = [];
+  if (filtered > 0) {
+    chips.push({
+      label: `${filtered} filtered out`,
+      tone: "muted",
+    });
+  }
+  chips.push({
+    label: `${verifiedN} verified`,
+    tone: verifiedN > 0 ? "good" : "warn",
+  });
+  if (onlySignals) {
+    chips.push({ label: "Signal only", tone: "warn" });
+  }
+  if (marketStats?.priceSpreadLabel === "wide") {
+    chips.push({ label: "Wide spread", tone: "muted" });
+  }
+
+  return (
+    <View style={depthStyles.outer}>
+      <View style={depthStyles.headerRow}>
+        <Text style={depthStyles.header} allowFontScaling={false}>
+          Market Depth
+        </Text>
+      </View>
+      <Text
+        style={depthStyles.sentence}
+        allowFontScaling={false}
+        numberOfLines={2}
+      >
+        {sentence}
+      </Text>
+      {chips.length > 0 ? (
+        <View style={depthStyles.chipRow}>
+          {chips.map((c, i) => (
+            <View
+              key={`depth-chip-${i}-${c.label}`}
+              style={[
+                depthStyles.chip,
+                c.tone === "warn" && depthStyles.chipWarn,
+                c.tone === "good" && depthStyles.chipGood,
+              ]}
+            >
+              <Text
+                style={[
+                  depthStyles.chipText,
+                  c.tone === "warn" && depthStyles.chipTextWarn,
+                  c.tone === "good" && depthStyles.chipTextGood,
+                ]}
+                allowFontScaling={false}
+                numberOfLines={1}
+              >
+                {c.label}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {/* Inline mini-rail of the strong cards. Stays inside the depth
+          block so the user can still tap to re-snap the deck — but
+          presented as a tight row of evidence rather than a fake rail. */}
+      {strongN > 1 ? (
+        <View style={depthStyles.evidenceRow}>
+          {cards.slice(0, Math.min(3, cards.length)).map((card, i) => {
+            const idx = i;
+            const isActive = idx === selectedIndex;
+            const labelText = evidenceLabel(card);
+            const price = Number.isFinite(Number(card.price))
+              ? Number(card.price)
+              : null;
+            return (
+              <PressableScale
+                key={`depth-mini-${idx}`}
+                onPress={() => onSelect(idx)}
+                style={[depthStyles.miniRow, isActive && depthStyles.miniRowActive]}
+                scale={0.97}
+                haptic
+              >
+                {card.image ? (
+                  <Image
+                    source={{ uri: String(card.image) }}
+                    style={depthStyles.miniRowThumb}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={depthStyles.miniRowThumbPlaceholder}>
+                    <Ionicons name="image-outline" size={12} color="rgba(255,255,255,0.22)" />
+                  </View>
+                )}
+                <View style={depthStyles.miniRowText}>
+                  <Text
+                    style={depthStyles.miniRowPrice}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                  >
+                    {price != null ? fmtMoney(price) : "—"}
+                  </Text>
+                  <Text
+                    style={[
+                      depthStyles.miniRowLabel,
+                      isVerifiedListing(card) && depthStyles.miniRowLabelGood,
+                      isPricingSignal(card) && depthStyles.miniRowLabelWarn,
+                    ]}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                  >
+                    {labelText}
+                  </Text>
+                </View>
+              </PressableScale>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const depthStyles = StyleSheet.create({
+  outer: {
+    marginTop: SP.md,
+    marginHorizontal: SP.lg,
+    paddingTop: SP.sm,
+    paddingBottom: 4,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    marginBottom: 6,
+  },
+  header: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: C.text2,
+    letterSpacing: 1.6,
+    textTransform: "uppercase",
+  },
+  sentence: {
+    fontSize: 12.5,
+    fontWeight: "600",
+    color: C.text2,
+    lineHeight: 17,
+    letterSpacing: 0.05,
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    rowGap: 6,
+    marginTop: 8,
+  },
+  chip: {
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: R.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.07)",
+  },
+  chipWarn: {
+    backgroundColor: "rgba(255,210,140,0.06)",
+    borderColor: "rgba(255,210,140,0.20)",
+  },
+  chipGood: {
+    backgroundColor: "rgba(180,255,200,0.05)",
+    borderColor: "rgba(180,255,200,0.18)",
+  },
+  chipText: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: C.text3,
+    letterSpacing: 0.15,
+  },
+  chipTextWarn: { color: "rgba(255,215,150,0.92)" },
+  chipTextGood: { color: "rgba(195,255,210,0.92)" },
+  evidenceRow: {
+    flexDirection: "column",
+    gap: 6,
+    marginTop: 10,
+  },
+  miniRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SP.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    backgroundColor: "rgba(255,255,255,0.025)",
+    borderRadius: R.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.05)",
+  },
+  miniRowActive: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(255,255,255,0.16)",
+  },
+  miniRowThumb: {
+    width: 28,
+    height: 28,
+    borderRadius: R.sm,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  miniRowThumbPlaceholder: {
+    width: 28,
+    height: 28,
+    borderRadius: R.sm,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  miniRowText: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: SP.sm,
+  },
+  miniRowPrice: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: C.text,
+    letterSpacing: -0.2,
+  },
+  miniRowLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: C.text3,
+    letterSpacing: 0.2,
+    textTransform: "uppercase",
+  },
+  miniRowLabelGood: { color: "rgba(180,255,200,0.82)" },
+  miniRowLabelWarn: { color: "rgba(255,210,140,0.78)" },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EVAN'S READ — interpretation + chips.
 //
 // Short data-driven sentence (1 line) + 2–4 chips. Lives between the
@@ -1380,12 +1743,19 @@ function EvansReadBlock({ read }: { read: EvansReadData }) {
   return (
     <View style={evansReadStyles.outer}>
       <View style={evansReadStyles.headerRow}>
-        <Ionicons name="sparkles" size={11} color={C.text3} />
+        <Ionicons name="sparkles" size={10} color={C.text3} />
         <Text style={evansReadStyles.header} allowFontScaling={false}>
           Evan&apos;s Read
         </Text>
       </View>
-      <Text style={evansReadStyles.sentence} allowFontScaling={false}>
+      {/* Pillar 1.5 — capped at 3 lines so the read stays a scout note,
+          not a paragraph. The chip row carries the structured judgement. */}
+      <Text
+        style={evansReadStyles.sentence}
+        allowFontScaling={false}
+        numberOfLines={3}
+        ellipsizeMode="tail"
+      >
         {read.sentence}
       </Text>
       {read.chips.length > 0 ? (
@@ -1408,50 +1778,55 @@ function EvansReadBlock({ read }: { read: EvansReadData }) {
 }
 
 const evansReadStyles = StyleSheet.create({
+  // Pillar 1.5 — tighter top margin, smaller sentence, smaller chips.
+  // The read used to dominate the bottom half of the screen; it now sits
+  // under the rail as quiet scout-note text. The structured chips still
+  // carry the data — they just don't shout.
   outer: {
-    marginTop: SP.md,
+    marginTop: SP.sm,
     marginHorizontal: SP.lg,
-    paddingTop: SP.md,
-    paddingBottom: SP.sm,
+    paddingTop: SP.sm,
+    paddingBottom: SP.xs,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,0.06)",
   },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: SP.xs,
-    marginBottom: SP.xs,
+    gap: 4,
+    marginBottom: 4,
   },
   header: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "900",
-    letterSpacing: 1.6,
+    letterSpacing: 1.5,
     color: C.text3,
     textTransform: "uppercase",
   },
   sentence: {
-    fontSize: 13,
-    fontWeight: "600",
+    fontSize: 12,
+    fontWeight: "500",
     color: C.text2,
-    lineHeight: 19,
+    lineHeight: 16.5,
     letterSpacing: 0.05,
   },
   chipRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: SP.xs,
-    marginTop: SP.sm,
+    gap: 6,
+    rowGap: 6,
+    marginTop: 8,
   },
   chip: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
+    paddingVertical: 3,
+    paddingHorizontal: 7,
     backgroundColor: "rgba(255,255,255,0.04)",
     borderRadius: R.pill,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(255,255,255,0.07)",
   },
   chipText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "700",
     color: C.text3,
     letterSpacing: 0.15,

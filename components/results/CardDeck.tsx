@@ -625,16 +625,15 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
 
-  // ScrollView height is CARD.height + 44 to fully expose:
+  // Pillar 1.5 — buffer trimmed from +44 to +28 so the ScrollView no
+  // longer reserves a huge spacer below the card. Still exposes:
   //   * the -10px active-card lift (transform translateY)
-  //   * the ~28px ambient shadow that radiates BELOW SH.cardActive
-  //   * a few pixels of breathing room before the pagination dots
-  // Without this extra height the ScrollView clipped the bottom of the
-  // active card's drop shadow and the deck read as a hard-edged rectangle
-  // pasted onto a backdrop instead of a card floating above one.
+  //   * ~16px of ambient shadow before the pagination dots
+  // Anything deeper than that was dead space contributing to the deck
+  // feeling jammed between sections in the iPhone screenshots.
   scrollView: {
     width: SCREEN.width,
-    height: CARD.height + 44,
+    height: CARD.height + 28,
     overflow: "visible",
   },
 

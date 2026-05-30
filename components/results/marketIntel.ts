@@ -14,10 +14,18 @@
  *   - evidenceQuality === "oracle_estimate"
  *                                   → labeled "AI estimate"
  *   - evidenceQuality === "pricing_signal" OR clickable === false
- *                                   → labeled "Pricing signal"
+ *                                   → labeled "Market signal" in user-facing UI
  *   - cardActionLabel returns "View listing" ONLY when there is a real
- *     directUrl AND clickable is not false. Otherwise "Pricing signal"
+ *     directUrl AND clickable is not false. Otherwise "Market signal"
  *     so the dock CTA never tries to open a URL it doesn't have.
+ *
+ * User-facing label policy (Pillar 1.5):
+ *   The internal evidenceQuality value stays "pricing_signal" so backend
+ *   field shape never changes, but every helper that produces text shown
+ *   to a human emits "Market signal" instead. This is a deliberate
+ *   trust-language change: "pricing signal" reads like jargon; "market
+ *   signal" tells the user honestly that there's evidence but no direct
+ *   verified listing. One name, one place.
  */
 
 import { fmtMoney } from "../design/DS";
@@ -160,13 +168,16 @@ export function evidenceLabel(card: MarketCard | null | undefined): string {
   if (!card) return "Market signal";
   if (isVerifiedListing(card)) return "Verified listing";
   if (isOracleEstimate(card)) return "AI estimate";
-  if (isPricingSignal(card)) return "Pricing signal";
+  // Pillar 1.5 — unify pricing-only evidence under one user-facing
+  // label. Both pricing signals and unclassified rows present as
+  // "Market signal" so the UI stops bouncing between names.
+  if (isPricingSignal(card)) return "Market signal";
   return "Market signal";
 }
 
 export function cardActionLabel(
   card: MarketCard | null | undefined,
-): "View listing" | "Pricing signal" {
+): "View listing" | "Market signal" {
   if (
     card &&
     card.clickable !== false &&
@@ -175,7 +186,7 @@ export function cardActionLabel(
   ) {
     return "View listing";
   }
-  return "Pricing signal";
+  return "Market signal";
 }
 
 // ─── Card normalization ─────────────────────────────────────────────────────
@@ -429,7 +440,7 @@ export function deriveVerdictCopy(
   const onlySignals =
     stats.verifiedCount === 0 && stats.totalMatches > 0;
   const onlySignalsAppend = onlySignals
-    ? " Most evidence here is pricing signal only, not verified direct listings."
+    ? " Most evidence here is market signal only, not verified direct listings."
     : "";
 
   if (silent) {
@@ -516,15 +527,45 @@ export function deriveVerdictNumbers(
 }
 
 // ─── Evidence strip ─────────────────────────────────────────────────────────
+// Pillar 1.5 — the strip now reads as a sentence:
+//   "{N} CHECKED · {M} MATCH(ES) · ${X} LOW · {K} VERIFIED · SIGNAL ONLY"
+//
+// Cells:
+//   - "Checked": raw pool count (the listings Evan examined). Only emitted
+//     when listingsChecked > totalMatches so we don't show the same number
+//     twice.
+//   - "Match" / "Matches": built strong-match count, singular/plural correct.
+//   - "Low" / "High": price range. High is suppressed when equal to low.
+//   - "Verified": direct verified count, "good" tone when >0, "warn" tone
+//     when 0 (so the eye lands on the trust gap).
+//   - "Signal only" warn pill: appended when verified=0 AND totalMatches>0
+//     so the user knows the supporting evidence is signal-grade, not
+//     direct-listing-grade. Replaces the legacy "Signals" numeric cell
+//     for that case so the strip never reads as "0 Verified · 1 Signals"
+//     (jargon) — it now reads "0 Verified · Signal only" (honest).
 export function deriveEvidenceStripStats(
   stats: MarketStats,
+  listingsChecked?: number | null,
 ): EvidenceStripStat[] {
   const out: EvidenceStripStat[] = [];
+  const checked = Math.max(0, Math.floor(Number(listingsChecked ?? 0)));
+
+  // "Checked" cell — only when it adds information beyond the built count.
+  if (checked > 0 && checked > stats.totalMatches) {
+    out.push({
+      label: "Checked",
+      value: String(checked),
+      tone: "muted",
+    });
+  }
+
+  const matchLabel = stats.totalMatches === 1 ? "Match" : "Matches";
   out.push({
-    label: "Matches",
+    label: matchLabel,
     value: String(stats.totalMatches),
     tone: stats.totalMatches >= 6 ? "default" : "muted",
   });
+
   if (stats.lowPrice != null) {
     out.push({ label: "Low", value: fmtCompactMoney(stats.lowPrice) });
   }
@@ -534,18 +575,31 @@ export function deriveEvidenceStripStats(
   ) {
     out.push({ label: "High", value: fmtCompactMoney(stats.highPrice) });
   }
+
   out.push({
     label: "Verified",
     value: String(stats.verifiedCount),
     tone: stats.verifiedCount > 0 ? "good" : "warn",
   });
-  if (stats.pricingSignalCount > 0) {
+
+  if (stats.verifiedCount === 0 && stats.totalMatches > 0) {
+    // Honest trailing pill — no number, just the trust label. Rendered
+    // by MarketEvidenceStrip as a value-less cell (label-only).
+    out.push({
+      label: "Signal only",
+      value: "",
+      tone: "warn",
+    });
+  } else if (stats.verifiedCount > 0 && stats.pricingSignalCount > 0) {
+    // When we DO have verified evidence, keep the numeric "Signals" cell
+    // so the user can still see the pricing-signal depth in context.
     out.push({
       label: "Signals",
       value: String(stats.pricingSignalCount),
-      tone: stats.verifiedCount > 0 ? "muted" : "default",
+      tone: "muted",
     });
   }
+
   return out;
 }
 
@@ -595,7 +649,7 @@ export function deriveEvansRead(
 
   const chips: string[] = [];
   if (stats.verifiedCount > 0) chips.push("Verified listings found");
-  if (stats.hasOnlyPricingSignals) chips.push("Pricing signal only");
+  if (stats.hasOnlyPricingSignals) chips.push("Market signal only");
   if (stats.priceSpreadLabel === "wide") chips.push("Wide spread");
   if (stats.priceSpreadLabel === "thin" || stats.totalMatches < 4) {
     chips.push("Thin market");
@@ -659,15 +713,15 @@ export function deriveCardBullets(
   }
   if (isLowest) {
     if (isVerifiedListing(card)) out.push("Lowest verified price");
-    else if (isPricingSignal(card)) out.push("Lowest pricing signal");
+    else if (isPricingSignal(card)) out.push("Lowest market signal");
     else if (isOracleEstimate(card)) out.push("AI estimate · lowest");
     else out.push("Lowest in current set");
   } else if (isVerifiedListing(card)) {
     out.push("Direct listing available");
   } else if (isPricingSignal(card)) {
-    out.push("Price evidence only");
+    out.push("Market signal only");
   } else if (isOracleEstimate(card)) {
-    out.push("Market price signal");
+    out.push("AI market estimate");
   }
   return out.slice(0, 2);
 }
