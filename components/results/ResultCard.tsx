@@ -81,6 +81,8 @@ export interface CardData {
   savedAmount?: number | null;
   cheaperPct?: number | null;
   visionConfidence?: number | null;
+  /** Pillar 1.7 — surfaced for the deck-wide BEST MATCH computation. */
+  matchScore?: number | null;
   buyVerdict?: string | null;
   buyScore?: number | null;
   resaleVelocity?: string | null;
@@ -134,6 +136,14 @@ interface ResultCardProps {
   scannedPrice?: number | null;
   /** True when this card has the lowest price across the deck */
   isLowest?: boolean;
+  /**
+   * Pillar 1.7 — true when this card has the highest visual match score
+   * (matchScore or visionConfidence) across the deck. Drives the
+   * "BEST MATCH" badge so the label only appears on the card that
+   * actually earned it. Computed once in CardDeck so the predicate is
+   * consistent across hero + alts.
+   */
+  isBestMatch?: boolean;
   isWatchlisted?: boolean;
   onPress?: () => void;
   onZoomImage?: (uri: string) => void;
@@ -436,13 +446,13 @@ function AmbientGlow({ tone }: { tone: GlowTone }) {
   );
 }
 
-// BadgeShimmer — one-time diagonal highlight sweep across the badge on mount.
-// Used on positive-status labels (LOWEST, TOP FLIP, HIDDEN GEM, BEST DEAL,
-// RARE LOW, UNCOMMON) so the eye instantly catches "this is the winning
-// card" the moment the deck lands. Runs once, then the View remains
-// off-screen translateX so it can't catch taps or paint cost.
+// BadgeShimmer — one-time diagonal highlight sweep across the badge on
+// mount. Used on positive-status labels so the eye instantly catches
+// "this is the winning card" the moment the deck lands. Runs once,
+// then the View remains off-screen translateX so it can't catch taps
+// or paint cost. Updated set after the Pillar 1.7 badge taxonomy cut.
 const SHIMMER_LABELS = new Set([
-  "LOWEST", "TOP FLIP", "HIDDEN GEM", "BEST DEAL",
+  "LOWEST", "TOP FLIP", "BEST MATCH",
   "RARE LOW", "UNCOMMON",
 ]);
 function BadgeShimmer() {
@@ -555,44 +565,55 @@ function deriveWhy(data: CardData, isLowest: boolean): string[] {
 }
 
 // ─── Card label helper ────────────────────────────────────────────────────────
-// Market Spectrum labels use scannedPrice as the anchor (what user is evaluating).
-// Hero labels additionally respond to isLowest (VALUE FLOOR) and flip verdict.
-// Alt labels: PREMIUM ANCHOR >2.5x, MARKET ALIGN ±20%, HIDDEN GEM, CHEAPER ALT.
+// Pillar 1.7 — badge taxonomy unified to role-derived labels only. Every
+// badge must reflect a real card stat (lowest price, top visual match,
+// premium-tier anchor) — never a hype word. Removed: "PREMIUM" (read as
+// a paid feature), "BEST DEAL" (vague), "MATCH" / "CHEAPER" / "HIDDEN GEM"
+// (the price spectrum is now communicated through the delta pill and the
+// "above low" caption; another badge layer on top was noisy and rarely
+// useful). Kept / added:
+//   - LOWEST       — only when isLowest from parent (real stat)
+//   - BEST MATCH   — only when isBestMatch from parent (highest match in deck)
+//   - TOP SIGNAL   — hero card when nothing more specific applies
+//   - TOP FLIP     — preserved for clear flip verdicts
+//   - ANCHOR       — alt card with price >2.5× user's scannedPrice (kept
+//                    so the user can spot premium-tier comp anchoring)
+// Everything else returns null so unbadged cards stay clean.
 function cardLabel(
   isHero: boolean,
   price: number | null,
-  heroPrice: number | null,
+  _heroPrice: number | null,
   scannedPrice: number | null,
   isLowest: boolean,
+  isBestMatch: boolean,
   verdict?: string,
 ): { text: string; bg: string; border: string; color: string; heavy?: boolean } | null {
-  // Restrained palette: dark backings with tinted text so badges remain
-  // crisp against bright product photos (the prior 10%-opacity green-on-green
-  // washed out completely over the white sunglasses image in screenshot 2).
+  // Priority order: LOWEST > BEST MATCH > TOP FLIP > TOP SIGNAL > ANCHOR > null.
+  // Real stats first, role labels second.
+  if (isLowest) {
+    return { text: "LOWEST", bg: "rgba(8,18,12,0.78)", border: "rgba(180,255,200,0.45)", color: "rgba(180,255,200,1)" };
+  }
+  if (isBestMatch) {
+    return { text: "BEST MATCH", bg: "rgba(8,14,22,0.78)", border: "rgba(160,210,255,0.40)", color: "rgba(190,230,255,1)" };
+  }
   if (isHero) {
-    if (isLowest)
-      return { text: "LOWEST", bg: "rgba(8,18,12,0.78)", border: "rgba(180,255,200,0.45)", color: "rgba(180,255,200,1)" };
     if (/GREAT|FLIP/i.test(verdict || ""))
       return { text: "TOP FLIP", bg: "rgba(8,18,12,0.78)", border: "rgba(180,255,200,0.45)", color: "rgba(180,255,200,1)" };
-    return { text: "BEST DEAL", bg: "rgba(12,12,12,0.78)", border: "rgba(255,255,255,0.35)", color: "rgba(255,255,255,1)" };
+    return { text: "TOP SIGNAL", bg: "rgba(12,12,12,0.78)", border: "rgba(255,255,255,0.30)", color: "rgba(255,255,255,0.92)" };
   }
 
   if (price == null) return null;
 
-  if (Number.isFinite(scannedPrice) && price > scannedPrice! * 2.5)
+  // Anchor — alt sits well above the user's scanned cost. Useful trust
+  // signal ("this is a premium-tier comp, not a like-for-like") so we
+  // keep it. Muted neutral tone — never celebratory.
+  if (Number.isFinite(scannedPrice) && price > scannedPrice! * 2.5) {
     return { text: "ANCHOR", bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.14)", color: "rgba(255,255,255,0.55)" };
+  }
 
-  if (Number.isFinite(scannedPrice) && price >= scannedPrice! * 0.80 && price <= scannedPrice! * 1.20)
-    return { text: "MATCH", bg: "rgba(255,255,255,0.06)", border: "rgba(255,255,255,0.16)", color: "rgba(255,255,255,0.75)" };
-
-  if (heroPrice == null)
-    return { text: "CHEAPER", bg: "rgba(8,18,12,0.72)", border: "rgba(180,255,200,0.38)", color: "rgba(180,255,200,0.98)" };
-  const pctDiff = ((heroPrice - price) / heroPrice) * 100;
-  if (pctDiff >= 18)
-    return { text: "HIDDEN GEM", bg: "rgba(8,18,12,0.78)", border: "rgba(180,255,200,0.45)", color: "rgba(180,255,200,1)" };
-  if (pctDiff > 0)
-    return { text: "CHEAPER", bg: "rgba(8,18,12,0.72)", border: "rgba(180,255,200,0.38)", color: "rgba(180,255,200,0.98)" };
-  return { text: "PREMIUM", bg: "rgba(12,12,12,0.68)", border: "rgba(255,255,255,0.25)", color: "rgba(255,255,255,0.78)" };
+  // No badge for everything else — the price + delta caption already
+  // tells the story without an extra label layer.
+  return null;
 }
 
 // ─── Price Ladder ─────────────────────────────────────────────────────────────
@@ -661,6 +682,7 @@ export function ResultCard({
   heroPrice,
   scannedPrice,
   isLowest = false,
+  isBestMatch = false,
   isWatchlisted = false,
   onPress,
   onZoomImage,
@@ -846,11 +868,20 @@ export function ResultCard({
   const _scannedPrice = Number.isFinite(Number(scannedPrice ?? data.scannedPrice))
     ? Number(scannedPrice ?? data.scannedPrice)
     : null;
-  const label = cardLabel(isHero, price, heroPrice ?? null, _scannedPrice, isLowest, data.buyVerdict ?? undefined);
+  const label = cardLabel(
+    isHero,
+    price,
+    heroPrice ?? null,
+    _scannedPrice,
+    isLowest,
+    isBestMatch,
+    data.buyVerdict ?? undefined,
+  );
   // On HOLD/PASS, positive (green) badges stay visible but dimmed — they
-  // shouldn't celebrate a deal the verdict doesn't endorse. Neutral badges
-  // (MATCH, ANCHOR, PREMIUM) are already muted and stay as-is.
-  const POSITIVE_LABELS = new Set(["LOWEST", "TOP FLIP", "HIDDEN GEM", "BEST DEAL", "CHEAPER"]);
+  // shouldn't celebrate a deal the verdict doesn't endorse. Neutral
+  // badges (BEST MATCH, TOP SIGNAL, ANCHOR) are already restrained and
+  // stay as-is. Updated set after the Pillar 1.7 badge taxonomy cut.
+  const POSITIVE_LABELS = new Set(["LOWEST", "TOP FLIP"]);
   const labelDimmed = !isWinVerdict && label != null && POSITIVE_LABELS.has(label.text);
 
   // Tweak 1: Signal Velocity — compute once at render
@@ -945,12 +976,12 @@ export function ResultCard({
         <View style={styles.imageVignetteRight} pointerEvents="none" />
         <View style={styles.imageTopHighlight} pointerEvents="none" />
 
-        {/* Card label badge (top-left). Premium-status labels (LOWEST,
-            HIDDEN GEM, TOP FLIP, BEST DEAL, RARE LOW, UNCOMMON) get a
-            one-time shimmer sweep on mount — the eye locks onto "this is
-            the winning card" the moment the deck lands. Non-premium labels
-            (MATCH, ANCHOR, PREMIUM) stay quiet. The shimmer overlay is
-            clipped by `overflow: hidden` on the badge so it never bleeds. */}
+        {/* Card label badge (top-left). Status labels (LOWEST, TOP FLIP,
+            BEST MATCH, RARE LOW, UNCOMMON) get a one-time shimmer sweep
+            on mount — the eye locks onto "this is the winning card" the
+            moment the deck lands. Role labels (TOP SIGNAL, ANCHOR) stay
+            quiet. The shimmer overlay is clipped by `overflow: hidden`
+            on the badge so it never bleeds. Updated Pillar 1.7. */}
         {label ? (
           <View style={[
             styles.labelBadge,
@@ -1050,29 +1081,71 @@ export function ResultCard({
               </View>
             ) : null}
 
-            {delta != null && !isHero ? (
-              <View style={[
-                styles.deltaPill,
-                { backgroundColor: delta > 0 ? C.dangerBg : C.goodBg,
-                  borderColor: delta > 0 ? C.dangerBorder : C.goodBorder }
-              ]}>
-                <Ionicons
-                  name={delta > 0 ? "trending-up" : "trending-down"}
-                  size={11}
-                  color={delta > 0 ? C.danger : C.good}
-                />
-                <Text
-                  allowFontScaling={false}
-                  numberOfLines={1}
-                  style={[
-                    styles.deltaText,
-                    { color: delta > 0 ? C.danger : C.good }
-                  ]}
-                >
-                  {delta > 0 ? "+" : ""}{fmtMoney(Math.abs(delta))}
-                </Text>
-              </View>
-            ) : null}
+            {/* Pillar 1.7 — delta pill is trust-gated. The previous
+                implementation rendered a red "+$X" pill on every alt
+                that priced above the cheapest market match. On HOLD/PASS
+                scans that read as profit/loss arithmetic — exactly the
+                wrong frame, since the verdict says the buy isn't safe.
+                New rules:
+                  - BUY verdict + clickable: keep the colored ±$X delta
+                    pill (it's actionable arithmetic the user can trust).
+                  - HOLD/PASS or market-signal-only: replace the +$X
+                    pill with a neutral "above low" / "below low" caption
+                    so the user can still see the price spread without
+                    reading it as profit.
+                  - delta === 0 / null: no pill.
+                Verified-vs-signal is a stricter gate than verdict — a
+                market-signal-only card never gets the colored pill even
+                on BUY, because the math behind it doesn't survive the
+                trust layer. */}
+            {delta != null && !isHero ? (() => {
+              const isAbove = delta > 0;
+              const cardIsSignalOnly = _isPricingSignal(data as MarketCard);
+              const showColoredDelta = isWinVerdict && !cardIsSignalOnly;
+
+              if (showColoredDelta) {
+                return (
+                  <View style={[
+                    styles.deltaPill,
+                    { backgroundColor: isAbove ? C.dangerBg : C.goodBg,
+                      borderColor: isAbove ? C.dangerBorder : C.goodBorder }
+                  ]}>
+                    <Ionicons
+                      name={isAbove ? "trending-up" : "trending-down"}
+                      size={11}
+                      color={isAbove ? C.danger : C.good}
+                    />
+                    <Text
+                      allowFontScaling={false}
+                      numberOfLines={1}
+                      style={[
+                        styles.deltaText,
+                        { color: isAbove ? C.danger : C.good }
+                      ]}
+                    >
+                      {isAbove ? "+" : ""}{fmtMoney(Math.abs(delta))}
+                    </Text>
+                  </View>
+                );
+              }
+
+              // Neutral caption — only shown for the "above" direction
+              // since "below low" on a card with the same price as low
+              // would be redundant with the LOWEST badge. We surface
+              // direction without surfacing a profit-looking number.
+              if (!isAbove) return null;
+              return (
+                <View style={styles.deltaNeutralPill}>
+                  <Text
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    style={styles.deltaNeutralText}
+                  >
+                    above low
+                  </Text>
+                </View>
+              );
+            })() : null}
           </View>
 
           {/* Store + condition + evidence chip — minimal context.
@@ -1549,6 +1622,30 @@ const styles = StyleSheet.create({
     borderRadius: R.pill,
     borderWidth: StyleSheet.hairlineWidth,
     flexShrink: 1,
+  },
+  // Pillar 1.7 — neutral "above low" caption used on HOLD/PASS or
+  // market-signal-only alt cards. Same pill footprint as deltaPill so
+  // the meta-row layout doesn't shift between BUY and non-BUY scans,
+  // but warm-muted tint instead of red/green so the user never reads
+  // it as profit arithmetic.
+  deltaNeutralPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: R.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.03)",
+    flexShrink: 1,
+  },
+  deltaNeutralText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.50)",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   deltaText: {
     ...TY.label,

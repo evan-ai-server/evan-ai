@@ -313,6 +313,25 @@ export function CardDeck({
   const allPrices = cards.map((c) => Number(c.price ?? Infinity)).filter(Number.isFinite);
   const lowestPrice = allPrices.length ? Math.min(...allPrices) : null;
 
+  // Pillar 1.7 — pre-compute the deck-wide best visual match. The card
+  // with the highest matchScore (or visionConfidence fallback) gets the
+  // "BEST MATCH" badge. Ties resolve to the earlier index so the badge
+  // is stable across snaps. Threshold 0.5 keeps the label off cards that
+  // clearly don't match — "BEST MATCH" should mean something.
+  const bestMatchIndex: number | null = (() => {
+    let bestIdx: number | null = null;
+    let bestScore = 0.5;
+    cards.forEach((c, i) => {
+      const m =
+        Number(c?.matchScore ?? c?.visionConfidence ?? NaN);
+      if (Number.isFinite(m) && m > bestScore) {
+        bestScore = m;
+        bestIdx = i;
+      }
+    });
+    return bestIdx;
+  })();
+
   // Mount guard for the snap-end callback — short-circuits if the deck
   // tore down while a momentum scroll was still in flight.
   const mountedRef = useRef(true);
@@ -549,6 +568,7 @@ export function CardDeck({
                 heroPrice={idx === 0 ? null : heroPrice}
                 scannedPrice={_scannedPrice}
                 isLowest={cardIsLowest}
+                isBestMatch={bestMatchIndex != null && idx === bestMatchIndex}
                 isWatchlisted={isWatchlisted(card)}
                 onPress={() => handleCardPress(idx)}
                 onZoomImage={onZoomImage}
@@ -590,14 +610,19 @@ export function CardDeck({
               cardCount === 1
                 ? [0, 1]
                 : [Math.max(0, (i - 1) * SNAP), i * SNAP, (i + 1) * SNAP];
+            // Pillar 1.7 — inactive dots dampened (scale 0.15, opacity
+            // 0.16) so they read as a quiet capsule track. Active bar
+            // brightened (opacity 0.95) so the leading pill is clearly
+            // the focus. The differential makes the live tracking feel
+            // even more responsive without changing any layout.
             const dotScaleX = scrollX.interpolate({
               inputRange,
-              outputRange: cardCount === 1 ? [1, 1] : [0.20, 1.0, 0.20],
+              outputRange: cardCount === 1 ? [1, 1] : [0.15, 1.0, 0.15],
               extrapolate: "clamp",
             });
             const dotOpacity = scrollX.interpolate({
               inputRange,
-              outputRange: cardCount === 1 ? [0.85, 0.85] : [0.20, 0.85, 0.20],
+              outputRange: cardCount === 1 ? [0.95, 0.95] : [0.16, 0.95, 0.16],
               extrapolate: "clamp",
             });
             return (
@@ -645,40 +670,38 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
 
-  // Pillar 1.5 — buffer trimmed from +44 to +28 so the ScrollView no
-  // longer reserves a huge spacer below the card. Still exposes:
-  //   * the -10px active-card lift (transform translateY)
-  //   * ~16px of ambient shadow before the pagination dots
-  // Anything deeper than that was dead space contributing to the deck
-  // feeling jammed between sections in the iPhone screenshots.
+  // Pillar 1.7 — buffer trimmed from +28 → +16. The remaining 16pt
+  // still exposes the -10px active-card lift and a sliver of shadow,
+  // but the pager now sits visually anchored to the card rather than
+  // floating in dead space below it.
   scrollView: {
     width: SCREEN.width,
-    height: CARD.height + 28,
+    height: CARD.height + 16,
     overflow: "visible",
   },
 
+  // Pillar 1.7 — pager pulled in tight to the card (marginTop 4 instead
+  // of SP.sm) so it reads as part of the deck, not a disconnected widget
+  // floating in the void. dot slot 22→18pt and bar 3→2.5pt for a more
+  // elegant capsule track silhouette.
   dotsRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    marginTop: SP.sm,
+    marginTop: 4,
     marginBottom: SP.xs,
   },
-  // Pillar 1.6 — each dot owns a fixed 22pt slot so the row layout never
-  // thrashes during scroll. The bar inside the slot scales horizontally
-  // via Animated.scaleX so its visual width grows/shrinks live with
-  // scrollX without triggering a relayout pass.
   dotSlot: {
-    width: 22,
-    height: 3,
+    width: 18,
+    height: 2.5,
     alignItems: "center",
     justifyContent: "center",
   },
   dotBar: {
-    width: 22,
-    height: 3,
+    width: 18,
+    height: 2.5,
     borderRadius: R.pill,
-    backgroundColor: "rgba(255,255,255,0.85)",
+    backgroundColor: "rgba(255,255,255,0.78)",
   },
   // Legacy dot style — preserved for backward compat. The new slot/bar
   // pair above replaces it for the live pager.
