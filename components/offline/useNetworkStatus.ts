@@ -16,6 +16,15 @@ import { AppState, AppStateStatus } from 'react-native';
 const HEARTBEAT_INTERVAL_MS = 15_000;  // poll when offline
 const HEALTH_TIMEOUT_MS     = 4_000;
 
+// Module-level debounce — even if the hook mounts/remounts rapidly
+// (Expo Fast Refresh, hot-reload, StrictMode double-invoke) the actual
+// fetch fires at most once per DEBOUNCE_MS. Without this guard, every
+// remount fires a check immediately, which produces a burst of ~10+
+// /health requests when the dev server restarts.
+const DEBOUNCE_MS = 10_000;
+let _lastFetchAt  = 0;
+let _lastResult   = true; // optimistic: assume online until first check
+
 export interface NetworkStatus {
   isOnline: boolean;
   wasOffline: boolean;        // true during the session when we've been offline
@@ -39,24 +48,35 @@ export function useNetworkStatus(apiBase: string): NetworkStatus {
   const checkServer = useCallback(async (): Promise<boolean> => {
     const base = apiBaseRef.current;
     if (!base) return false;
+
+    // Debounce: skip the network round-trip if we checked recently and
+    // already know we're online. This prevents Expo Fast Refresh / rapid
+    // remounts from flooding /health with burst requests.
+    const now = Date.now();
+    if (_lastResult && now - _lastFetchAt < DEBOUNCE_MS) {
+      return _lastResult;
+    }
+
     try {
       const ctrl = new AbortController();
       const tid  = setTimeout(() => ctrl.abort(), HEALTH_TIMEOUT_MS);
       const r    = await fetch(`${base}/health`, { method: 'GET', signal: ctrl.signal });
       clearTimeout(tid);
       const ok = r.ok;
-      setLastChecked(Date.now());
+      _lastFetchAt = Date.now();
+      _lastResult  = ok;
+      setLastChecked(_lastFetchAt);
       setIsOnline(prev => {
-        if (!prev && ok) {
-          // Came back online
-        }
         if (prev && !ok) setWasOffline(true);
         return ok;
       });
       if (!ok) setWasOffline(true);
       return ok;
     } catch {
-      setLastChecked(Date.now());
+      const ts = Date.now();
+      _lastFetchAt = ts;
+      _lastResult  = false;
+      setLastChecked(ts);
       setIsOnline(prev => {
         if (prev) setWasOffline(true);
         return false;
