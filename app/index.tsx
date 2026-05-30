@@ -13269,7 +13269,10 @@ style={[
     style={[
       styles.resultsTopBar,
       {
-        marginBottom: 10,
+        // Pillar 1.8 — wider nav-to-identity gap so the verdict
+        // module owns the eye-stop. 10 → 14 reads as intentional
+        // whitespace separating the chrome from the intelligence.
+        marginBottom: 14,
         paddingTop: 0,
         backgroundColor: "transparent",
         zIndex: 20,
@@ -13283,7 +13286,7 @@ style={[
         pressed && { opacity: 0.85 },
       ]}
     >
-      <Ionicons name="chevron-back" size={20} color="white" />
+      <Ionicons name="chevron-back" size={16} color="rgba(255,255,255,0.78)" />
       <Text style={styles.resultsBackText}>Camera</Text>
     </Pressable>
 
@@ -13297,7 +13300,7 @@ style={[
         },
       ]}
     >
-      <Ionicons name="camera-outline" size={18} color="white" />
+      <Ionicons name="camera-outline" size={14} color="rgba(255,255,255,0.92)" />
       <Text style={styles.resultsNewScanText}>New scan</Text>
     </Pressable>
   </View>
@@ -21373,39 +21376,46 @@ resultsTopBar: {
   flexDirection: "row",
   alignItems: "center",
   justifyContent: "space-between",
-  marginBottom: 10,
+  marginBottom: 8,
 },
 
+// Pillar 1.8 — nav weight reduction (~18%). Lower vertical & horizontal
+// padding, hairline border, dimmer fills, smaller icon-text. Nav reads
+// as ambient chrome rather than a primary CTA so the verdict module
+// owns the eye-stop on first glance.
 resultsBackRow: {
   flexDirection: "row",
   alignItems: "center",
-  gap: 6,
-  paddingVertical: 10,
+  gap: 4,
+  paddingVertical: 7,
   paddingHorizontal: 10,
-  borderRadius: 18,
-  backgroundColor: "rgba(255,255,255,0.06)", // glass
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.12)",
+  borderRadius: 14,
+  backgroundColor: "rgba(255,255,255,0.035)",
+  borderWidth: StyleSheet.hairlineWidth,
+  borderColor: "rgba(255,255,255,0.08)",
 },
 resultsBackText: {
-  color: "rgba(255,255,255,0.85)",
-  fontWeight: "800",
+  color: "rgba(255,255,255,0.78)",
+  fontSize: 13,
+  fontWeight: "700",
+  letterSpacing: 0.1,
 },
 resultsNewScanPill: {
   flexDirection: "row",
   alignItems: "center",
-  gap: 10,
-  paddingVertical: 12,
-  paddingHorizontal: 16,
-  borderRadius: 18,
-  backgroundColor: "rgba(255,255,255,0.08)", // glass
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.14)",
+  gap: 6,
+  paddingVertical: 7,
+  paddingHorizontal: 12,
+  borderRadius: 14,
+  backgroundColor: "rgba(255,255,255,0.05)",
+  borderWidth: StyleSheet.hairlineWidth,
+  borderColor: "rgba(255,255,255,0.10)",
 },
 resultsNewScanText: {
-  color: "white",
-  fontWeight: "900",
-  letterSpacing: 0.2,
+  color: "rgba(255,255,255,0.94)",
+  fontSize: 13,
+  fontWeight: "800",
+  letterSpacing: 0.15,
 },
 resultsTitleBig: {
   color: TOK.C.text,

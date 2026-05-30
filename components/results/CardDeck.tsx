@@ -526,20 +526,21 @@ export function CardDeck({
             idx * SNAP,
             (idx + 1) * SNAP,
           ];
-          // Side-card visibility further dampened. opacity 0.34 (lower
-          // edge of the 0.32-0.36 band) and scale 0.88 keep the peeked
-          // alternates as peripheral hints — visible enough to advertise
-          // "more here, swipe to compare," dim enough that the eye never
-          // splits focus between active and side cards. Active stays at
-          // exactly 1.0 / 1.0 for the cleanest natural-size focal point.
+          // Pillar 1.8 — side cards quieted further so the active card
+          // becomes obviously the focal point. opacity floor 0.29 → 0.20
+          // keeps the neighbor silhouettes legible as depth hints but
+          // they no longer compete for attention. scale 0.88 → 0.86
+          // tightens the perspective: the active card reads larger by
+          // contrast, like a real card pulled out of a stack. Active
+          // stays at 1.0/1.0 — never punish the focal card.
           const cardOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.29, 1.0, 0.29],
+            outputRange: [0.20, 1.0, 0.20],
             extrapolate: "clamp",
           });
           const cardScale = scrollX.interpolate({
             inputRange,
-            outputRange: [0.88, 1.0, 0.88],
+            outputRange: [0.86, 1.0, 0.86],
             extrapolate: "clamp",
           });
           const cardLift = scrollX.interpolate({
@@ -622,21 +623,24 @@ export function CardDeck({
               : isLast
                 ? [(i - 1) * SNAP, i * SNAP]
                 : [(i - 1) * SNAP, i * SNAP, (i + 1) * SNAP];
-            // Pillar 1.7 — inactive dots dampened (scale 0.15, opacity
-            // 0.16) so they read as a quiet capsule track. Active bar
-            // brightened (opacity 0.95) so the leading pill is clearly
-            // the focus. The differential makes the live tracking feel
-            // even more responsive without changing any layout.
+            // Pillar 1.8 — pager capsule refined toward iOS-onboarding
+            // feel. Active opacity nudged 0.95 → 0.97 so the leading
+            // pill reads as a confident bright dot. Inactive opacity
+            // 0.16 → 0.18 so the inactive track is a faint ghost rail
+            // — still legible as "more cards here" but never competing
+            // with the active leader. Inactive scaleX 0.15 → 0.18 so
+            // the inactive footprint is a touch more visible at iPhone
+            // viewing distance, matching the new dot dimensions below.
             const scaleOutput = isFirst
-              ? [1.0, 0.15]
+              ? [1.0, 0.18]
               : isLast
-                ? [0.15, 1.0]
-                : [0.15, 1.0, 0.15];
+                ? [0.18, 1.0]
+                : [0.18, 1.0, 0.18];
             const opacityOutput = isFirst
-              ? [0.95, 0.16]
+              ? [0.97, 0.18]
               : isLast
-                ? [0.16, 0.95]
-                : [0.16, 0.95, 0.16];
+                ? [0.18, 0.97]
+                : [0.18, 0.97, 0.18];
             const dotScaleX = scrollX.interpolate({
               inputRange,
               outputRange: scaleOutput,
@@ -702,28 +706,31 @@ const styles = StyleSheet.create({
     overflow: "visible",
   },
 
-  // Pillar 1.7 — pager pulled in tight to the card (marginTop 4 instead
-  // of SP.sm) so it reads as part of the deck, not a disconnected widget
-  // floating in the void. dot slot 22→18pt and bar 3→2.5pt for a more
-  // elegant capsule track silhouette.
+  // Pillar 1.8 — pager capsule luxe pass. Slot widened 18 → 22 and bar
+  // height 2.5 → 3 so the active leading pill lands with the iOS
+  // onboarding-pager confidence (the prior pill was a touch too thin
+  // to read as "you are here"). Gap 4 → 6 so the inactive ghost dots
+  // breathe instead of sitting shoulder-to-shoulder. Base bar color
+  // pushed 0.78 → 0.92 white so the active pill at opacity 0.97 reads
+  // as near-luminous against the inactive dots floored at opacity 0.18.
   dotsRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    marginTop: 4,
+    gap: 6,
+    marginTop: 6,
     marginBottom: SP.xs,
   },
   dotSlot: {
-    width: 18,
-    height: 2.5,
+    width: 22,
+    height: 3,
     alignItems: "center",
     justifyContent: "center",
   },
   dotBar: {
-    width: 18,
-    height: 2.5,
+    width: 22,
+    height: 3,
     borderRadius: R.pill,
-    backgroundColor: "rgba(255,255,255,0.78)",
+    backgroundColor: "rgba(255,255,255,0.92)",
   },
   // Legacy dot style — preserved for backward compat. The new slot/bar
   // pair above replaces it for the live pager.

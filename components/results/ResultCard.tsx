@@ -1104,24 +1104,30 @@ export function ResultCard({
               const showColoredDelta = isWinVerdict && !cardIsSignalOnly;
 
               if (showColoredDelta) {
+                // Pillar 1.8 — "above low" on a BUY card now uses warn
+                // (amber) tones instead of danger (red). The red pill
+                // read as an alarm against the BUY verdict; amber lands
+                // as a directional price-position note ("this alt is
+                // pricier than the cheapest comp") without the threat
+                // tone. Below-low keeps emerald — that direction IS
+                // genuine good news.
+                const tones = isAbove
+                  ? { bg: C.warnBg, border: C.warnBorder, text: C.warn, icon: C.warn }
+                  : { bg: C.goodBg, border: C.goodBorder, text: C.good, icon: C.good };
                 return (
                   <View style={[
                     styles.deltaPill,
-                    { backgroundColor: isAbove ? C.dangerBg : C.goodBg,
-                      borderColor: isAbove ? C.dangerBorder : C.goodBorder }
+                    { backgroundColor: tones.bg, borderColor: tones.border },
                   ]}>
                     <Ionicons
                       name={isAbove ? "trending-up" : "trending-down"}
                       size={11}
-                      color={isAbove ? C.danger : C.good}
+                      color={tones.icon}
                     />
                     <Text
                       allowFontScaling={false}
                       numberOfLines={1}
-                      style={[
-                        styles.deltaText,
-                        { color: isAbove ? C.danger : C.good }
-                      ]}
+                      style={[styles.deltaText, { color: tones.text }]}
                     >
                       {isAbove ? "+" : ""}{fmtMoney(Math.abs(delta))}
                     </Text>
@@ -1560,16 +1566,21 @@ const styles = StyleSheet.create({
   panelContent: {
     flex: 1,
     paddingHorizontal: SP.lg,
-    paddingTop: SP.md,
+    paddingTop: 10,
     paddingBottom: SP.sm,
     justifyContent: "space-between",
   },
 
   // ── Item name ─────────────────────────────────────────────────────────────
+  // Pillar 1.8 — fontWeight dialed 900 → 800 so the title reads as
+  // confident-bold rather than slab-black, marginBottom 2 → 5 so the
+  // title-to-price gap reads as intentional whitespace. The card now
+  // feels less stamp-heavy without giving up legibility.
   itemName: {
     ...TY.h2,
+    fontWeight: "800",
     color: C.text,
-    marginBottom: 2,
+    marginBottom: 5,
   },
 
   // ── Price row ─────────────────────────────────────────────────────────────
@@ -1581,7 +1592,7 @@ const styles = StyleSheet.create({
   priceRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 7,
     rowGap: 6,
     flexWrap: "wrap",
   },

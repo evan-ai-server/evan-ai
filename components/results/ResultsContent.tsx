@@ -962,22 +962,24 @@ function CompactVerdict({
 }
 
 const compactVerdictStyles = StyleSheet.create({
-  // Pillar 1.5 — tighter outer + inner padding so the verdict reads as a
-  // cockpit card, not an essay block. Sentence capped at 2 lines (see
-  // CompactVerdict render), glow reduced from 320×90 to 260×64.
+  // Pillar 1.8 — luxury hierarchy pass. Headline dollar gets more
+  // commanding type, sub-stats fade further into the background, the
+  // sentence gets one more pixel of breathing. The card now reads as
+  // "intelligence engine speaking" — BUY stamp → big headline → quiet
+  // supporting numbers → muted scout-note.
   outer: {
     paddingHorizontal: SP.lg,
-    paddingTop: SP.xs,
+    paddingTop: 6,
     paddingBottom: 0,
   },
   card: {
-    paddingHorizontal: SP.md,
-    paddingTop: SP.sm,
+    paddingHorizontal: 14,
+    paddingTop: SP.md,
     paddingBottom: SP.md,
     borderRadius: R.lg,
-    backgroundColor: "rgba(255,255,255,0.022)",
+    backgroundColor: "rgba(255,255,255,0.020)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.040)",
+    borderColor: "rgba(255,255,255,0.045)",
     overflow: "hidden",
   },
   cardSilent: {
@@ -986,13 +988,13 @@ const compactVerdictStyles = StyleSheet.create({
   },
   glow: {
     position: "absolute",
-    top: -8,
+    top: -6,
     left: "50%",
-    marginLeft: -130,
-    width: 260,
-    height: 64,
-    borderRadius: 130,
-    opacity: 0.85,
+    marginLeft: -140,
+    width: 280,
+    height: 70,
+    borderRadius: 140,
+    opacity: 0.78,
   },
   headerRow: {
     flexDirection: "row",
@@ -1000,50 +1002,50 @@ const compactVerdictStyles = StyleSheet.create({
     gap: SP.sm,
   },
   word: {
-    fontSize: 20,
+    fontSize: 21,
     fontWeight: "900",
-    letterSpacing: 1.8,
-    lineHeight: 24,
+    letterSpacing: 2.0,
+    lineHeight: 25,
   },
   reasonTitle: {
     flex: 1,
     fontSize: 12,
-    fontWeight: "700",
-    color: C.text2,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.65)",
     letterSpacing: 0.15,
     lineHeight: 17,
   },
   dollarRow: {
-    marginTop: 4,
+    marginTop: 6,
     flexDirection: "row",
     alignItems: "baseline",
     gap: SP.sm,
   },
   dollar: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: "900",
     color: C.text,
-    letterSpacing: -0.6,
-    lineHeight: 28,
+    letterSpacing: -0.7,
+    lineHeight: 32,
   },
   dollarSign: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: "900",
-    letterSpacing: -0.6,
+    letterSpacing: -0.7,
   },
   direction: {
     fontSize: 9,
     fontWeight: "900",
-    letterSpacing: 1.5,
-    color: C.text3,
+    letterSpacing: 1.6,
+    color: "rgba(255,255,255,0.42)",
   },
   strip: {
     flexDirection: "row",
     gap: SP.lg,
-    marginTop: 6,
-    paddingTop: SP.xs,
+    marginTop: 10,
+    paddingTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.06)",
+    borderTopColor: "rgba(255,255,255,0.055)",
   },
   stripCell: {
     flexDirection: "row",
@@ -1051,23 +1053,23 @@ const compactVerdictStyles = StyleSheet.create({
     gap: 6,
   },
   stripLabel: {
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: "900",
-    letterSpacing: 1.3,
-    color: "rgba(255,255,255,0.30)",
+    letterSpacing: 1.5,
+    color: "rgba(255,255,255,0.24)",
   },
   stripValue: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: "800",
-    color: C.text2,
+    color: "rgba(255,255,255,0.74)",
     letterSpacing: -0.2,
   },
   sentence: {
-    marginTop: 8,
+    marginTop: 10,
     fontSize: 11.5,
     fontWeight: "500",
-    color: "rgba(255,255,255,0.60)",
-    lineHeight: 16,
+    color: "rgba(255,255,255,0.55)",
+    lineHeight: 16.5,
     letterSpacing: 0.1,
   },
 });
@@ -1145,10 +1147,15 @@ function MarketEvidenceStrip({ stats }: { stats: EvidenceStripStat[] }) {
 }
 
 const evidenceStripStyles = StyleSheet.create({
+  // Pillar 1.8 — paddingX SP.lg → 18 to align with verdict + market
+  // depth rhythm. paddingTop SP.xs → SP.sm so the proof line has more
+  // breathing under the verdict block — the prior 4px gap read as the
+  // verdict and proof fused into one chunk; 8px makes them feel like
+  // two beats of the same idea.
   outer: {
-    paddingHorizontal: SP.lg,
-    paddingTop: SP.xs,
-    paddingBottom: SP.xs,
+    paddingHorizontal: 18,
+    paddingTop: SP.sm,
+    paddingBottom: 6,
   },
   // Pillar 1.6 — strip box keeps the soft fill + hairline border so the
   // proof line still reads as a contained element, but content is now a
@@ -1508,6 +1515,7 @@ function MarketDepthBlock({
   return (
     <View style={depthStyles.outer}>
       <View style={depthStyles.headerRow}>
+        <Ionicons name="stats-chart" size={11} color="rgba(255,255,255,0.55)" />
         <Text style={depthStyles.header} allowFontScaling={false}>
           Market Depth
         </Text>
@@ -1607,59 +1615,66 @@ function MarketDepthBlock({
 }
 
 const depthStyles = StyleSheet.create({
+  // Pillar 1.8 — depth section presents like an intelligence report,
+  // not a data table. Header gets an analytics chevron + heavier label
+  // type, the sentence reads as a confident paragraph (13.5pt @ 19 lh),
+  // chips inflate slightly so they feel like trust stamps rather than
+  // compact bullets. Outer margin opens 16 → 18 so the section anchors
+  // to the page rhythm without crowding the deck above it.
   outer: {
-    marginTop: SP.md,
-    marginHorizontal: SP.lg,
+    marginTop: SP.lg,
+    marginHorizontal: 18,
     paddingTop: SP.sm,
     paddingBottom: 4,
   },
   headerRow: {
     flexDirection: "row",
-    alignItems: "baseline",
-    marginBottom: 6,
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 8,
   },
   header: {
-    fontSize: 10,
+    fontSize: 11.5,
     fontWeight: "900",
-    color: C.text2,
-    letterSpacing: 1.6,
+    color: "rgba(255,255,255,0.78)",
+    letterSpacing: 1.3,
     textTransform: "uppercase",
   },
   sentence: {
-    fontSize: 12.5,
+    fontSize: 13.5,
     fontWeight: "600",
-    color: C.text2,
-    lineHeight: 17,
-    letterSpacing: 0.05,
+    color: "rgba(255,255,255,0.88)",
+    lineHeight: 19,
+    letterSpacing: 0,
   },
   chipRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 6,
     rowGap: 6,
-    marginTop: 8,
+    marginTop: 10,
   },
   chip: {
-    paddingVertical: 3,
-    paddingHorizontal: 7,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    paddingVertical: 4,
+    paddingHorizontal: 9,
+    backgroundColor: "rgba(255,255,255,0.045)",
     borderRadius: R.pill,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.07)",
+    borderColor: "rgba(255,255,255,0.08)",
   },
   chipWarn: {
-    backgroundColor: "rgba(255,210,140,0.06)",
-    borderColor: "rgba(255,210,140,0.20)",
+    backgroundColor: "rgba(255,210,140,0.07)",
+    borderColor: "rgba(255,210,140,0.22)",
   },
   chipGood: {
-    backgroundColor: "rgba(180,255,200,0.05)",
-    borderColor: "rgba(180,255,200,0.18)",
+    backgroundColor: "rgba(180,255,200,0.06)",
+    borderColor: "rgba(180,255,200,0.22)",
   },
   chipText: {
-    fontSize: 9,
-    fontWeight: "700",
-    color: C.text3,
-    letterSpacing: 0.15,
+    fontSize: 10,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.62)",
+    letterSpacing: 0.3,
   },
   chipTextWarn: { color: "rgba(255,215,150,0.92)" },
   chipTextGood: { color: "rgba(195,255,210,0.92)" },
@@ -1770,14 +1785,14 @@ function EvansReadBlock({ read }: { read: EvansReadData }) {
 }
 
 const evansReadStyles = StyleSheet.create({
-  // Pillar 1.5 — tighter top margin, smaller sentence, smaller chips.
-  // The read used to dominate the bottom half of the screen; it now sits
-  // under the rail as quiet scout-note text. The structured chips still
-  // carry the data — they just don't shout.
+  // Pillar 1.8 — marginTop SP.sm → SP.md so Evan's Read lands as a
+  // discrete beat below Market Depth, not as a continuation of it.
+  // marginX SP.lg → 18 aligns with the new section rhythm; paddingTop
+  // bumps to SP.md for a more confident header strip.
   outer: {
-    marginTop: SP.sm,
-    marginHorizontal: SP.lg,
-    paddingTop: SP.sm,
+    marginTop: SP.md,
+    marginHorizontal: 18,
+    paddingTop: SP.md,
     paddingBottom: SP.xs,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,0.06)",
@@ -1939,10 +1954,14 @@ const styles = StyleSheet.create({
     backgroundColor: C.bg,
   },
 
-  // Identity header — quiet breadcrumb above the verdict
+  // Identity header — quiet breadcrumb above the verdict.
+  // Pillar 1.8 — paddingX 24 → 18 so the breadcrumb shares the same
+  // left/right rhythm as the verdict, evidence strip, market depth,
+  // and Evan's Read sections below. Identity used to stick out
+  // further right than every other section, breaking the eye-line.
   identityHeader: {
-    paddingHorizontal: SP.xl,
-    paddingTop: SP.xs,
+    paddingHorizontal: 18,
+    paddingTop: SP.sm,
     paddingBottom: 2,
   },
   identityRow: {
