@@ -13307,6 +13307,7 @@ style={[
 <ResultsContent
   activeResult={activeResult}
   results={results}
+  marketPool={seeMoreListings}
   loadingResults={loadingResults}
   loadingPhotoUri={loadingPhotoUri}
   uiError={uiError}

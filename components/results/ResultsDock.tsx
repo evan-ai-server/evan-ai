@@ -9,6 +9,8 @@ import {
   StyleSheet,
   Animated as RNAnimated,
   Easing,
+  Modal,
+  Pressable,
   Platform,
 } from "react-native";
 import { BlurView } from "expo-blur";
@@ -18,6 +20,7 @@ import { C, SP, R, TY, SH, fmtMoney, EASE_PANTHERE, SINGULARITY } from "../desig
 import { PressableScale } from "../primitives/PressableScale";
 import { DecisionSheet } from "./DecisionSheet";
 import { OutcomeEditorSheet } from "./OutcomeEditorSheet";
+import { cardActionLabel } from "./marketIntel";
 
 const IS_ANDROID = Platform.OS === "android";
 const panthere = Easing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
@@ -93,6 +96,13 @@ export function ResultsDock({
   const insets = useSafeAreaInsets();
   const [decisionOpen, setDecisionOpen]           = useState(false);
   const [outcomeEditorOpen, setOutcomeEditorOpen] = useState(false);
+  // Pillar 1: "More" overflow sheet. The visible action surface is
+  // intentionally narrow (Ask AI · Track · Rescan · More) so the screen
+  // reads as a cockpit, not a settings panel. Less-frequent actions
+  // (Bought / Copy / Lowball / Profit / Details) live behind this sheet
+  // so they're discoverable without competing for attention up front.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const closeMore = () => setMoreOpen(false);
 
   // Fade-only entrance. The prior translateY 80→0 spring made the dock
   // appear to "rise" while the dark background underneath shifted with it —
@@ -220,24 +230,29 @@ export function ResultsDock({
         </View>
       ) : null}
 
-      {/* Primary row: Open + New Scan.
-          Open button is intentionally compact (flex 2:2). When the merchant
-          name is long (eBay – frankshop21s, etc.) we drop the store name and
-          show the generic "View listing" so the chip never billboard-dominates
-          the dock. The full merchant attribution lives in the card's store
-          line, not this CTA. */}
+      {/* Primary row: View listing / Pricing signal + New Scan.
+          Pillar 1 — the CTA label is now derived from the canonical
+          cardActionLabel() helper so trust rules are enforced in one
+          place: it says "View listing" ONLY when clickable !== false AND
+          a real directUrl exists. Otherwise it shows "Pricing signal"
+          and the onPress is dropped, so the user can never tap an open
+          action on a row that has no direct merchant URL. */}
       <View style={styles.primaryRow}>
         <PressableScale
           onPress={cardIsClickable ? onOpenListing : undefined}
-          style={[styles.openBtn, !cardIsClickable && { opacity: 0.35 }]}
+          style={[styles.openBtn, !cardIsClickable && { opacity: 0.55 }]}
           scale={cardIsClickable ? 0.96 : 1}
           haptic={cardIsClickable}
         >
-          <Ionicons name={cardIsClickable ? "open-outline" : "bar-chart-outline"} size={16} color="#000" />
+          <Ionicons
+            name={cardIsClickable ? "open-outline" : "bar-chart-outline"}
+            size={16}
+            color="#000"
+          />
           <Text style={styles.openText} allowFontScaling={false} numberOfLines={1}>
             {cardIsClickable
-              ? (store && String(store).length <= 9 ? `View on ${store}` : "View listing")
-              : "Market price"}
+              ? (store && String(store).length <= 9 ? `View on ${store}` : cardActionLabel(card))
+              : cardActionLabel(card)}
           </Text>
         </PressableScale>
 
@@ -247,30 +262,13 @@ export function ResultsDock({
         </PressableScale>
       </View>
 
-      {/* Action grid — symmetric 2-column. Every chip is the same size, every
-          row is the same height. Short labels per UX spec (Bought / Ask AI /
-          Track / Copy / Rescan / Lowball / Profit / Details). `List it` is
-          dropped from the visible grid — parent still wires onAutoList, but
-          surfacing it here pushed the row count to an odd 9 and left the
-          bottom row asymmetric. Re-enable by un-commenting the chip below
-          when a more capacious dock layout lands. */}
+      {/* Pillar 1 — narrowed visible action surface.
+          Ask AI · Track · Rescan · More
+          All other actions (Bought / Copy / Lowball / Profit / Details)
+          live behind the More overflow sheet so the dock reads as a
+          confident cockpit instead of a button warehouse. Handlers
+          themselves are preserved 1:1 — only the visible layout changed. */}
       <View style={styles.secondaryRow}>
-        <ActionChip
-          icon="bag-check-outline"
-          label="Bought"
-          onPress={() => {
-            // Confetti is parent-owned (it overlays the entire results screen
-            // via a screen-anchored Modal); the dock just signals the intent.
-            // The DecisionSheet stays as the attribution capture path below —
-            // delayed by 900ms so the burst's peak ~800ms of outward
-            // explosion is fully visible BEFORE the sheet's opaque backdrop
-            // mounts over it. Earlier value of 320ms was inside the
-            // explosion window: users only saw ~20% of the burst before it
-            // was covered.
-            if (onBoughtIt) onBoughtIt();
-            setTimeout(() => setDecisionOpen(true), 900);
-          }}
-        />
         {onAskAI ? (
           <ActionChip icon="sparkles" label="Ask AI" onPress={onAskAI} highlight />
         ) : null}
@@ -280,22 +278,100 @@ export function ResultsDock({
           onPress={onTrack}
           tracked={isTracked}
         />
-        <ActionChip icon="copy-outline" label="Copy" onPress={onCopy} />
         {onScanAgain ? (
           <ActionChip icon="refresh-outline" label="Rescan" onPress={onScanAgain} />
         ) : null}
-        {onLowball ? (
-          <ActionChip icon="chatbubbles-outline" label="Lowball" onPress={onLowball} />
-        ) : null}
         <ActionChip
-          icon="trending-up-outline"
-          label="Profit"
-          onPress={() => setOutcomeEditorOpen(true)}
+          icon="ellipsis-horizontal-circle-outline"
+          label="More"
+          onPress={() => setMoreOpen(true)}
         />
-        {onDetails ? (
-          <ActionChip icon="information-circle-outline" label="Details" onPress={onDetails} />
-        ) : null}
       </View>
+
+      {/* More overflow sheet — discoverable secondary actions. */}
+      <Modal
+        visible={moreOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={closeMore}
+      >
+        <Pressable style={styles.moreBackdrop} onPress={closeMore}>
+          <Pressable
+            style={[
+              styles.moreSheet,
+              { paddingBottom: Math.max(insets.bottom, SP.md) + SP.md },
+            ]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.moreHandle} pointerEvents="none" />
+            <Text style={styles.moreTitle} allowFontScaling={false}>
+              More actions
+            </Text>
+            <View style={styles.moreGrid}>
+              <ActionChip
+                icon="bag-check-outline"
+                label="Bought"
+                onPress={() => {
+                  // Confetti is parent-owned (it overlays the entire
+                  // results screen via a screen-anchored Modal); the dock
+                  // just signals intent. DecisionSheet is the attribution
+                  // capture path, delayed by 900ms so the burst is visible
+                  // before the sheet's opaque backdrop mounts over it.
+                  closeMore();
+                  if (onBoughtIt) onBoughtIt();
+                  setTimeout(() => setDecisionOpen(true), 900);
+                }}
+              />
+              <ActionChip
+                icon="copy-outline"
+                label="Copy"
+                onPress={() => {
+                  closeMore();
+                  onCopy();
+                }}
+              />
+              {onLowball ? (
+                <ActionChip
+                  icon="chatbubbles-outline"
+                  label="Lowball"
+                  onPress={() => {
+                    closeMore();
+                    onLowball();
+                  }}
+                />
+              ) : null}
+              <ActionChip
+                icon="trending-up-outline"
+                label="Profit"
+                onPress={() => {
+                  closeMore();
+                  setOutcomeEditorOpen(true);
+                }}
+              />
+              {onDetails ? (
+                <ActionChip
+                  icon="information-circle-outline"
+                  label="Details"
+                  onPress={() => {
+                    closeMore();
+                    onDetails();
+                  }}
+                />
+              ) : null}
+              {onAutoList ? (
+                <ActionChip
+                  icon="pricetag-outline"
+                  label="List it"
+                  onPress={() => {
+                    closeMore();
+                    onAutoList();
+                  }}
+                />
+              ) : null}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Decision + source capture sheet */}
       <DecisionSheet
@@ -584,5 +660,42 @@ const styles = StyleSheet.create({
   chipTextTracked: {
     color: "rgba(255,225,150,0.95)",
     fontWeight: "800" as const,
+  },
+
+  // ── Pillar 1: "More" overflow sheet ────────────────────────────────────
+  moreBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "flex-end",
+  },
+  moreSheet: {
+    backgroundColor: C.cardBg,
+    paddingTop: SP.lg,
+    paddingHorizontal: SP.lg,
+    borderTopLeftRadius: R.xl,
+    borderTopRightRadius: R.xl,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  moreHandle: {
+    alignSelf: "center",
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    marginBottom: SP.md,
+  },
+  moreTitle: {
+    ...TY.label,
+    color: C.text2,
+    textTransform: "uppercase",
+    letterSpacing: 1.4,
+    marginBottom: SP.md,
+  },
+  moreGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: SP.sm,
+    rowGap: SP.sm,
   },
 });

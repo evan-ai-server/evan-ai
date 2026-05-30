@@ -51,6 +51,16 @@ import { PriceHistoryChart, PriceChartPoint } from "./PriceHistoryChart";
 import { CommunityCompsPanel } from "./CommunityCompsPanel";
 import { PremiumIntelPanel } from "./PremiumIntelPanel";
 import { routeListingClick } from "../../services/revenue/TransactionRouter";
+import {
+  evidenceLabel as _evidenceLabel,
+  cardActionLabel as _cardActionLabel,
+  deriveCardBullets as _deriveCardBullets,
+  deriveMatchPercent as _deriveMatchPercent,
+  isVerifiedListing as _isVerifiedListing,
+  isPricingSignal as _isPricingSignal,
+  isOracleEstimate as _isOracleEstimate,
+  type MarketCard,
+} from "./marketIntel";
 
 export interface CardData {
   // Core
@@ -504,12 +514,13 @@ function deriveRarity(data: CardData): { text: string; tone: RarityTone } | null
 }
 
 function _lowestPriceLabel(data: CardData): string {
-  const eq = data.evidenceQuality;
-  const clickable = data.clickable;
-  if (eq === "verified_listing" && clickable !== false) return "Lowest verified price";
-  if (eq === "oracle_estimate")                         return "AI pricing estimate";
-  if (eq === "pricing_signal" || clickable === false)   return "Market price";
-  return "Market price";
+  // Pillar 1: route through marketIntel so the trust language is
+  // consistent across deck + rail + dock + card. NEVER claims "verified"
+  // without verification.
+  if (_isVerifiedListing(data as MarketCard)) return "Lowest verified price";
+  if (_isPricingSignal(data as MarketCard))   return "Lowest pricing signal";
+  if (_isOracleEstimate(data as MarketCard))  return "AI estimate · lowest";
+  return "Lowest in current set";
 }
 
 function deriveWhy(data: CardData, isLowest: boolean): string[] {
@@ -521,12 +532,18 @@ function deriveWhy(data: CardData, isLowest: boolean): string[] {
   if (Array.isArray(data.scanWhy) && data.scanWhy.length) {
     return data.scanWhy.filter((s) => typeof s === "string" && s.trim()).slice(0, 3);
   }
-  // Fallback: synthesize 2–3 bullets from signals already on the card.
-  const out: string[] = [];
-  if (isLowest) out.push(_lowestPriceLabel(data));
-  if ((data.visionConfidence ?? 0) >= 0.7) out.push("Matches the item we scanned");
+  // Pillar 1: synthesize 2 evidence-aware proof bullets via the canonical
+  // marketIntel helper, then add one card-specific seller/comp signal.
+  // This keeps the rail's mini-card subtitle and the deck card's bullet
+  // pair perfectly aligned ("Pricing signal · 69%" stays "Lowest pricing
+  // signal" / "Price evidence only" rather than drifting into "Market
+  // price" or "Lowest verified price").
+  const out: string[] = _deriveCardBullets(data as MarketCard, isLowest);
+  if ((data.visionConfidence ?? 0) >= 0.7 && out.length < 2) {
+    out.push("Matches the item we scanned");
+  }
   const store = data.store || data.source;
-  if (store) {
+  if (store && out.length < 3) {
     const TRUSTED = /amazon|ebay|target|walmart|best.?buy|costco|kohls|home.?depot/i;
     if (TRUSTED.test(String(store))) out.push(`Trusted seller · ${store}`);
     else out.push(`Listed on ${store}`);
@@ -1057,7 +1074,15 @@ export function ResultCard({
             ) : null}
           </View>
 
-          {/* Store + condition — minimal context, no scoring labels */}
+          {/* Store + condition + evidence chip — minimal context.
+              Pillar 1: when the card is NOT a verified direct listing
+              (i.e. it's a pricing signal, oracle estimate, or
+              clickable:false marketplace row), show an inline evidence
+              chip on the meta row so the user instantly knows the
+              card represents price evidence, not a tappable storefront.
+              The chip is suppressed on verified rows because "Verified
+              listing" is the user's default expectation — surfacing it
+              there would be noise. */}
           <View style={styles.metaRow}>
             {store ? (
               <Text numberOfLines={1} allowFontScaling={false} style={styles.store}>{store}</Text>
@@ -1069,6 +1094,33 @@ export function ResultCard({
                 <Text style={styles.conditionLine} allowFontScaling={false} numberOfLines={1}>
                   {data.conditionLabel}
                 </Text>
+              </>
+            ) : null}
+
+            {!_isVerifiedListing(data as MarketCard) ? (
+              <>
+                {(store || (isHero && data.conditionLabel)) ? (
+                  <View style={styles.metaDot} />
+                ) : null}
+                <View
+                  style={[
+                    styles.evidenceChip,
+                    _isPricingSignal(data as MarketCard) && styles.evidenceChipPricing,
+                    _isOracleEstimate(data as MarketCard) && styles.evidenceChipOracle,
+                  ]}
+                >
+                  <Text
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    style={[
+                      styles.evidenceChipText,
+                      _isPricingSignal(data as MarketCard) && styles.evidenceChipTextPricing,
+                      _isOracleEstimate(data as MarketCard) && styles.evidenceChipTextOracle,
+                    ]}
+                  >
+                    {_evidenceLabel(data as MarketCard)}
+                  </Text>
+                </View>
               </>
             ) : null}
           </View>
@@ -1129,22 +1181,26 @@ export function ResultCard({
             </View>
           ) : null}
 
-          {/* Single inline "why" signal — one line max, no header, no
-              paragraph. Refinement pass collapsed the prior 3-bullet
-              PICKED BECAUSE block down to whyChips[0] only so the compact
-              card prioritizes image · title · price · savings · rarity ·
-              source. Full rankWhy explanation lives in the Details modal
-              (app/index.tsx — "Why this is ranked #1"). */}
+          {/* Pillar 1 — up to two proof bullets so each card communicates
+              evidence in two voices: WHY this is the lowest/match (first
+              bullet, evidence-aware via _deriveCardBullets), and a
+              card-specific signal (seller/comp count, second bullet).
+              Hero card surfaces both; alt cards keep the single-line
+              tagline to preserve the compact alt-card silhouette. */}
           {isHero && whyChips.length > 0 ? (
-            <View style={styles.whyTaglineRow}>
-              <View style={styles.whyTaglineDot} />
-              <Text
-                style={styles.whyTagline}
-                allowFontScaling={false}
-                numberOfLines={1}
-              >
-                {whyChips[0]}
-              </Text>
+            <View style={styles.whyBullets}>
+              {whyChips.slice(0, 2).map((b, i) => (
+                <View key={`why-${i}`} style={styles.whyTaglineRow}>
+                  <View style={styles.whyTaglineDot} />
+                  <Text
+                    style={styles.whyTagline}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                  >
+                    {b}
+                  </Text>
+                </View>
+              ))}
             </View>
           ) : null}
 
@@ -1163,52 +1219,87 @@ export function ResultCard({
             </View>
           ) : null}
 
-          {/* Hero: tracked buy CTA */}
-          {isHero && (data.url ?? data.buyLink) ? (
-            <TouchableOpacity
-              activeOpacity={0.72}
-              onPress={() => {
-                // routeListingClick is async and could reject if the URL fails
-                // to resolve. Catching here prevents the onPress promise from
-                // floating into an unhandled rejection.
-                try {
-                  Promise.resolve(
-                    routeListingClick(data.url ?? data.buyLink, {
-                      scanId,
-                      userId,
-                      itemName: name,
-                      listingPrice: price,
-                      source: store,
-                      cardRole: "hero",
-                      intent: "buy",
-                    }),
-                  ).catch((e: any) => {
+          {/* Hero: tracked buy CTA — Pillar 1 trust gating.
+              Only clickable when the backend says so AND a real directUrl
+              exists. When the card is a pricing signal / oracle estimate
+              / explicit clickable:false, the CTA renders as a dimmed
+              "Pricing signal" pill with NO onPress handler, so the user
+              can never tap into an open path the trust layer didn't
+              vet. _cardActionLabel returns the canonical copy. */}
+          {(() => {
+            const heroClickable =
+              data.clickable !== false &&
+              typeof data.directUrl === "string" &&
+              data.directUrl.length > 0;
+            const ctaLabel = _cardActionLabel(data as MarketCard);
+            const heroDisplayLabel = heroClickable
+              ? (isWinVerdict ? "Buy Now  →" : `${ctaLabel}  →`)
+              : ctaLabel;
+            if (!isHero) return null;
+            return (
+              <TouchableOpacity
+                activeOpacity={heroClickable ? 0.72 : 1}
+                onPress={() => {
+                  if (!heroClickable) {
+                    try {
+                      console.log("FRONTEND_LISTING_NOT_CLICKABLE", {
+                        title: String(name).slice(0, 80),
+                        source: store || null,
+                        cardRole: "hero",
+                        reason: "pricing_signal_or_blocked",
+                      });
+                    } catch {}
+                    return;
+                  }
+                  // routeListingClick is async and could reject if the URL fails
+                  // to resolve. Catching here prevents the onPress promise from
+                  // floating into an unhandled rejection.
+                  try {
+                    Promise.resolve(
+                      routeListingClick(data.directUrl, {
+                        scanId,
+                        userId,
+                        itemName: name,
+                        listingPrice: price,
+                        source: store,
+                        cardRole: "hero",
+                        intent: "buy",
+                      }),
+                    ).catch((e: any) => {
+                      console.log("CARD_LINK_OPEN_ERROR", { role: "hero", error: e?.message || String(e) });
+                    });
+                  } catch (e: any) {
                     console.log("CARD_LINK_OPEN_ERROR", { role: "hero", error: e?.message || String(e) });
-                  });
-                } catch (e: any) {
-                  console.log("CARD_LINK_OPEN_ERROR", { role: "hero", error: e?.message || String(e) });
-                }
-              }}
-              style={[
-                styles.heroBuyBar,
-                !isWinVerdict && styles.heroBuyBarNeutral,
-              ]}
-            >
-              <Ionicons
-                name="cart-outline"
-                size={13}
-                color={isWinVerdict ? "rgba(120,255,170,0.85)" : "rgba(255,255,255,0.55)"}
-              />
-              <Text
+                  }
+                }}
                 style={[
-                  styles.heroBuyText,
-                  !isWinVerdict && styles.heroBuyTextNeutral,
+                  styles.heroBuyBar,
+                  (!isWinVerdict || !heroClickable) && styles.heroBuyBarNeutral,
+                  !heroClickable && { opacity: 0.55 },
                 ]}
               >
-                {isWinVerdict ? "Buy Now  →" : "View listing  →"}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
+                <Ionicons
+                  name={heroClickable ? "cart-outline" : "bar-chart-outline"}
+                  size={13}
+                  color={
+                    !heroClickable
+                      ? "rgba(255,255,255,0.45)"
+                      : isWinVerdict
+                        ? "rgba(120,255,170,0.85)"
+                        : "rgba(255,255,255,0.55)"
+                  }
+                />
+                <Text
+                  style={[
+                    styles.heroBuyText,
+                    (!isWinVerdict || !heroClickable) && styles.heroBuyTextNeutral,
+                  ]}
+                >
+                  {heroDisplayLabel}
+                </Text>
+              </TouchableOpacity>
+            );
+          })()}
 
           {/* Sell mode trigger + Community comps removed from inline hero
               card. Both live in the Details modal (dock's Details chip) so
@@ -1216,34 +1307,59 @@ export function ResultCard({
               clipping. Re-add here only if a future card height bump
               gives room. */}
 
-          {/* Alt: Tracked listing CTA */}
-          {!isHero ? (
-            <TouchableOpacity
-              activeOpacity={0.72}
-              onPress={() => {
-                try {
-                  Promise.resolve(
-                    routeListingClick(data.url ?? data.buyLink, {
-                      scanId,
-                      userId,
-                      itemName: name,
-                      listingPrice: price,
-                      source: store,
-                      cardRole: "alt",
-                      intent: "buy",
-                    }),
-                  ).catch((e: any) => {
+          {/* Alt: Tracked listing CTA — same trust gating as the hero CTA.
+              Pricing signals show the disabled "Pricing signal" label and
+              skip the open path entirely. */}
+          {!isHero ? (() => {
+            const altClickable =
+              data.clickable !== false &&
+              typeof data.directUrl === "string" &&
+              data.directUrl.length > 0;
+            const ctaLabel = _cardActionLabel(data as MarketCard);
+            return (
+              <TouchableOpacity
+                activeOpacity={altClickable ? 0.72 : 1}
+                onPress={() => {
+                  if (!altClickable) {
+                    try {
+                      console.log("FRONTEND_LISTING_NOT_CLICKABLE", {
+                        title: String(name).slice(0, 80),
+                        source: store || null,
+                        cardRole: "alt",
+                        reason: "pricing_signal_or_blocked",
+                      });
+                    } catch {}
+                    return;
+                  }
+                  try {
+                    Promise.resolve(
+                      routeListingClick(data.directUrl, {
+                        scanId,
+                        userId,
+                        itemName: name,
+                        listingPrice: price,
+                        source: store,
+                        cardRole: "alt",
+                        intent: "buy",
+                      }),
+                    ).catch((e: any) => {
+                      console.log("CARD_LINK_OPEN_ERROR", { role: "alt", error: e?.message || String(e) });
+                    });
+                  } catch (e: any) {
                     console.log("CARD_LINK_OPEN_ERROR", { role: "alt", error: e?.message || String(e) });
-                  });
-                } catch (e: any) {
-                  console.log("CARD_LINK_OPEN_ERROR", { role: "alt", error: e?.message || String(e) });
-                }
-              }}
-              style={styles.viewListingBar}
-            >
-              <Text style={styles.viewListingText}>View listing  →</Text>
-            </TouchableOpacity>
-          ) : null}
+                  }
+                }}
+                style={[
+                  styles.viewListingBar,
+                  !altClickable && { opacity: 0.55 },
+                ]}
+              >
+                <Text style={styles.viewListingText}>
+                  {altClickable ? `${ctaLabel}  →` : ctaLabel}
+                </Text>
+              </TouchableOpacity>
+            );
+          })() : null}
         </View>
       </View>
     </View>
@@ -1479,6 +1595,41 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
 
+  // Pillar 1 evidence chip — sits inline on the meta row when the card
+  // is NOT a verified direct listing. Default is the "Market signal"
+  // neutral tone; pricing signals shift to a warm tint; oracle estimates
+  // to a cool tint. Visual weight is intentionally restrained — the
+  // chip exists to signal trust state, not to bid for attention.
+  evidenceChip: {
+    paddingVertical: 1,
+    paddingHorizontal: 6,
+    borderRadius: R.pill,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.10)",
+    flexShrink: 1,
+  },
+  evidenceChipPricing: {
+    backgroundColor: "rgba(255,210,140,0.06)",
+    borderColor: "rgba(255,210,140,0.18)",
+  },
+  evidenceChipOracle: {
+    backgroundColor: "rgba(160,210,255,0.06)",
+    borderColor: "rgba(160,210,255,0.18)",
+  },
+  evidenceChipText: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+    color: C.text3,
+  },
+  evidenceChipTextPricing: {
+    color: "rgba(255,210,140,0.85)",
+  },
+  evidenceChipTextOracle: {
+    color: "rgba(180,220,255,0.85)",
+  },
+
   // ── Margin range — single quiet line, no "Est. margin" label ─────────────
   confRangeRow: {
     flexDirection: "row",
@@ -1709,6 +1860,13 @@ const styles = StyleSheet.create({
   // terse sentence (e.g. "Lowest verified price in comps", "Strong resale
   // comps", "Trusted seller · Amazon") so the compact deck card stays
   // scannable. ~14px tall, no header, no paragraph.
+  // Pillar 1: container for up to 2 inline proof bullets. Each row is
+  // ~14px tall, the two rows together still fit comfortably above the
+  // hero buy CTA. The marginTop on whyTaglineRow handles the inter-row
+  // spacing so this wrapper just owns the outer offset.
+  whyBullets: {
+    marginTop: 0,
+  },
   whyTaglineRow: {
     flexDirection: "row",
     alignItems: "center",

@@ -43,6 +43,7 @@ import {
 // movement is passive, not a confirmation moment).
 import { C, SP, R, CARD, SCREEN, EASE_PANTHERE } from "../design/DS";
 import { ResultCard, CardData } from "./ResultCard";
+import { MarketCard } from "./marketIntel";
 
 const IS_ANDROID = Platform.OS === "android";
 const panthereRN = RNEasing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
@@ -56,6 +57,21 @@ const GAP = Math.max(0, CARD.slotWidth - CARD.width);
 interface CardDeckProps {
   activeResult: any;
   results: any[];
+  /**
+   * Pillar 1: pre-built card array. When provided, the deck uses it
+   * directly and skips its internal dedup/junk-filter pass. ResultsContent
+   * uses this to share the same canonical array with the Best Market
+   * Matches rail. When omitted, the deck falls back to the legacy
+   * activeResult + results derivation so older call sites still work.
+   */
+  cards?: MarketCard[];
+  /**
+   * Pillar 1: controlled snap target. When set and different from the
+   * current snapped index, the deck programmatically scrolls to that
+   * index without disturbing user swipe. Used by the rail to bring a
+   * tapped mini-card to the front.
+   */
+  selectedIndex?: number;
   /** Watchlist query keys for heart state */
   watchlistQueries?: string[];
   onPressCard?: (itemOrUrl: any, title: string) => void;
@@ -77,6 +93,8 @@ const snapHaptic = () => {};
 export function CardDeck({
   activeResult,
   results,
+  cards: cardsOverride,
+  selectedIndex,
   watchlistQueries = [],
   onPressCard,
   onZoomImage,
@@ -92,6 +110,18 @@ export function CardDeck({
     : null;
 
   const cards: CardData[] = React.useMemo(() => {
+    // Pillar 1 override: parent provides the canonical card array.
+    // marketIntel.buildAllMarketCards has already deduped, junk-filtered,
+    // and per-store-capped — trust it and skip the internal pass below
+    // so deck + rail stay in sync. Cap at 8 to keep swipe + image budget
+    // sane; the rail uses the same array and may show up to 7 minis.
+    if (Array.isArray(cardsOverride) && cardsOverride.length > 0) {
+      console.log("CARD_DECK_BUILD", {
+        mode: "override",
+        totalCards: Math.min(cardsOverride.length, 8),
+      });
+      return cardsOverride.slice(0, 8) as unknown as CardData[];
+    }
     const heroCard: CardData = {
       itemName:         activeResult?.itemName,
       store:            activeResult?.store,
@@ -302,6 +332,34 @@ export function CardDeck({
       try { scrollRef.current?.scrollTo({ x: 0, animated: false }); } catch {}
     });
   }, [activeResult]);
+
+  // Pillar 1: controlled snap from the Best Market Matches rail.
+  // When the parent updates selectedIndex (e.g. user tapped a mini card),
+  // animate the deck to that index — but only when it differs from the
+  // current snapped index so we never fight the user's own swipe.
+  useEffect(() => {
+    if (selectedIndex == null) return;
+    if (!Number.isInteger(selectedIndex)) return;
+    const live = cardsRef.current || [];
+    if (selectedIndex < 0 || selectedIndex >= live.length) return;
+    if (selectedIndex === snappedIndex) return;
+    requestAnimationFrame(() => {
+      try {
+        scrollRef.current?.scrollTo({
+          x: selectedIndex * SNAP,
+          animated: true,
+        });
+        setSnappedIndex(selectedIndex);
+        onSnapToIndex?.(selectedIndex);
+      } catch (e: any) {
+        console.log("CARD_SWIPE_SAFE_BLOCKED", {
+          reason: "controlled_snap_error",
+          error: e?.message || String(e),
+        });
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIndex]);
 
   // Native-driver scrollX for premium per-card opacity dim on the sides.
   // useNativeDriver: true means this never crosses the JS bridge during

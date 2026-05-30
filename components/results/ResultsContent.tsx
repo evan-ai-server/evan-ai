@@ -14,6 +14,7 @@ import {
   View,
   Text,
   Image,
+  ScrollView,
   StyleSheet,
   Animated as RNAnimated,
   Platform,
@@ -36,6 +37,24 @@ import { AutoListingDrawer } from "./AutoListingDrawer";
 import { OfflineBanner } from "./OfflineBanner";
 import { C, SP, R, TY, fmtMoney, EASE_PANTHERE, SINGULARITY } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
+import {
+  buildAllMarketCards,
+  computeMarketStats,
+  deriveVerdictCopy,
+  deriveVerdictNumbers,
+  deriveEvansRead,
+  deriveEvidenceStripStats,
+  deriveMatchPercent,
+  evidenceLabel,
+  isVerifiedListing,
+  isPricingSignal,
+  type MarketCard,
+  type MarketStats,
+  type VerdictCopy,
+  type VerdictNumbers,
+  type EvansRead as EvansReadData,
+  type EvidenceStripStat,
+} from "./marketIntel";
 
 const IS_ANDROID = Platform.OS === "android";
 const panthere = Easing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
@@ -44,6 +63,13 @@ interface ResultsContentProps {
   // ── Data ──────────────────────────────────
   activeResult: any;
   results: any[];
+  /**
+   * Pillar 1: full marketplace pool (up to 60 deep) from the scan
+   * response. Optional — when present we build the Best Market Matches
+   * rail off this richer pool so the user sees true depth, not just the
+   * top-3 ranked subset. When omitted we fall back to `results`.
+   */
+  marketPool?: any[];
   loadingResults: boolean;
   loadingPhotoUri?: string | null;
   uiError?: { title: string; msg: string } | null;
@@ -122,6 +148,7 @@ const DOCK_SAFE_HEIGHT = 332;
 export const ResultsContent = React.memo(function ResultsContent({
   activeResult,
   results,
+  marketPool,
   loadingResults,
   loadingPhotoUri,
   uiError,
@@ -290,6 +317,15 @@ export const ResultsContent = React.memo(function ResultsContent({
 
   const handleSnap = useCallback((idx: number) => {
     setDeckIndex(idx);
+    // Keep the rail's selectedIndex in sync with user swipe so swiping
+    // also highlights the active mini-card and the rail tap can't fight
+    // the swipe via the controlled-snap effect inside CardDeck.
+    setSelectedIndex(idx);
+  }, []);
+
+  const handleRailSelect = useCallback((idx: number) => {
+    if (!Number.isInteger(idx) || idx < 0) return;
+    setSelectedIndex(idx);
   }, []);
 
   // Build watchlist query set for heart state
@@ -298,14 +334,51 @@ export const ResultsContent = React.memo(function ResultsContent({
     [watchlist],
   );
 
-  // Resolve the "current" card for the dock's open action
-  const allCards = React.useMemo(() => {
-    if (!activeResult) return [];
-    const alts = (results || []).slice(1, 5);
-    return [activeResult, ...alts];
-  }, [activeResult, results]);
+  // ── Pillar 1: market intelligence ────────────────────────────────────────
+  // Build the canonical card array (hero + alts, deduped, junk-filtered,
+  // per-store-capped). Used by:
+  //   - the swipeable CardDeck (immersive view)
+  //   - the Best Market Matches rail (at-a-glance market spread)
+  //   - the ResultsDock primary CTA (currentCard for clickable guard)
+  // Cards are shared so the rail's mini-card tap can snap the deck to
+  // exactly the same listing the user clicked.
+  const allMarketCards: MarketCard[] = React.useMemo(
+    () => buildAllMarketCards(activeResult, results, marketPool),
+    [activeResult, results, marketPool],
+  );
+  const marketStats: MarketStats = React.useMemo(
+    () => computeMarketStats(allMarketCards, Number(activeResult?.scannedPrice) || null),
+    [allMarketCards, activeResult],
+  );
+  const verdictCopy: VerdictCopy = React.useMemo(
+    () => deriveVerdictCopy(activeResult, marketStats),
+    [activeResult, marketStats],
+  );
+  const verdictNumbers: VerdictNumbers = React.useMemo(
+    () => deriveVerdictNumbers(activeResult, marketStats),
+    [activeResult, marketStats],
+  );
+  const evansRead: EvansReadData = React.useMemo(
+    () => deriveEvansRead(activeResult, marketStats, verdictCopy),
+    [activeResult, marketStats, verdictCopy],
+  );
+  const evidenceStrip: EvidenceStripStat[] = React.useMemo(
+    () => deriveEvidenceStripStats(marketStats),
+    [marketStats],
+  );
 
-  const currentCard = allCards[deckIndex] ?? activeResult;
+  // Rail → deck snap state. The rail and the deck share the same
+  // selectedIndex so tapping a mini card brings that listing to the
+  // front of the deck. Deck swipe still owns the source of truth via
+  // handleSnap below — selectedIndex is just the controlled prop.
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  // Reset selected index when activeResult changes (matches deckIndex reset).
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [activeResult]);
+
+  const currentCard = allMarketCards[deckIndex] ?? activeResult;
   // Prefer directUrl (backend-vetted) over buyLink/url fallbacks.
   // Do not open when clickable:false — pass the full card so safeOpenListingUrl
   // can enforce the clickable guard and log correctly.
@@ -416,15 +489,32 @@ export const ResultsContent = React.memo(function ResultsContent({
                 />
               </Reanimated.View>
 
-              {/* The decision moment — verdict hero with self-sequenced reveal */}
-              <VerdictHero activeResult={activeResult} results={results} />
+              {/* Pillar 1 — compact verdict module + market evidence strip.
+                  Replaces the legacy "giant verdict box" with a smaller
+                  structurally correct block that teaches the user the
+                  decision in one glance, then immediately shows the proof
+                  (matches · low · high · verified · signals) underneath
+                  so the user can see Evan investigated, not guessed. */}
+              <CompactVerdict
+                activeResult={activeResult}
+                results={results}
+                verdictCopy={verdictCopy}
+                verdictNumbers={verdictNumbers}
+              />
+
+              <MarketEvidenceStrip stats={evidenceStrip} />
 
               {/* Card deck — proof, slid in after the verdict lands.
                   Wrapped in CardDeckBoundary so a render-phase throw inside
                   any individual card (image NSException retry storms, a
                   malformed comp blowing up PremiumIntelPanel, etc.) collapses
                   to an empty space instead of unmounting the entire results
-                  tree. The verdict + dock survive even if the deck explodes. */}
+                  tree. The verdict + dock survive even if the deck explodes.
+
+                  Pillar 1: we now hand the deck the pre-built canonical
+                  card array (allMarketCards) so the Best Market Matches
+                  rail below can snap the deck via selectedIndex and both
+                  surfaces stay in perfect sync. */}
               <Reanimated.View
                 style={deckAnimStyle as any}
                 renderToHardwareTextureAndroid={IS_ANDROID}
@@ -434,6 +524,8 @@ export const ResultsContent = React.memo(function ResultsContent({
                   <CardDeck
                     activeResult={activeResult}
                     results={results}
+                    cards={allMarketCards}
+                    selectedIndex={selectedIndex}
                     watchlistQueries={watchlistQueries}
                     onPressCard={onOpenListing}
                     onZoomImage={onZoomImage}
@@ -445,6 +537,21 @@ export const ResultsContent = React.memo(function ResultsContent({
                   />
                 </CardDeckBoundary>
               </Reanimated.View>
+
+              {/* Pillar 1 — Best Market Matches rail + Evan's Read.
+                  The rail surfaces 4–7 mini cards (when available) so the
+                  user can scan the market spread at a glance and tap
+                  through to bring a specific listing into the deck. The
+                  read is Evan's interpretation — a short data-driven
+                  sentence + 2–4 chips so the screen reads as analysis,
+                  not a search results page. */}
+              <BestMarketMatchesRail
+                cards={allMarketCards}
+                selectedIndex={selectedIndex}
+                onSelect={handleRailSelect}
+              />
+
+              <EvansReadBlock read={evansRead} />
             </>
           ) : null}
 
@@ -560,32 +667,22 @@ export const ResultsContent = React.memo(function ResultsContent({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VERDICT HERO — the decision moment.
+// PILLAR 1 — COMPACT VERDICT MODULE.
 //
-// Visual hierarchy (Apple-level): the WORD lands first, the dollar follows,
-// the context is whispered. Generous breathing room. Restrained color.
-// Sequenced reveal so the result feels intelligent, not loaded.
+// Replaces the legacy full-screen VerdictHero capsule. Same information,
+// half the height — BUY/HOLD/PASS word, reason title, main delta number,
+// cost/market mini-strip, one-sentence explanation. The screen no longer
+// feels like a single oversized billboard followed by a thin shopping
+// result; the verdict teaches the decision quickly, then the evidence
+// strip + deck + rail + read carry the proof.
 //
-// Confidence silence: when the signal is weak (few comps / low vision conf),
-// the verdict softens to neutral with "Need more comps" — trust through honesty.
+// Confidence silence (HOLD) is preserved via deriveSilentReason so HOLD
+// reads as a real AI opinion ("Visual match uncertain — rescan", "Comp
+// data is thin", "Above market, but resale signal isn't strong"), not a
+// generic stall. Tones, glow, and direction copy ("X% UNDER MARKET" /
+// "NOT ENOUGH EDGE") match the legacy treatment so the emotional register
+// of the screen doesn't suddenly change in this pillar.
 // ─────────────────────────────────────────────────────────────────────────────
-
-type VerdictTone = {
-  word: "BUY" | "PASS" | "HOLD";
-  /** Tinted color for the verdict word — restrained, not neon */
-  wordColor: string;
-  /** Sign tint for the dollar number */
-  signColor: string;
-  /** Direction: "+" / "−" / "" */
-  sign: string;
-  /** Glow color under the verdict — barely visible */
-  glow: string;
-  /** Whether to render the dominant verdict layout vs. confidence-silence layout */
-  silent: boolean;
-  /** When silent=true, the AI-derived reason shown under the HOLD word.
-   *  Set only on the silent branch — undefined elsewhere. */
-  silentReason?: string;
-};
 
 // ── Silent (HOLD) reason synthesis ──────────────────────────────────────────
 // Used to replace the generic "Need more comps to lock the call" with a real
@@ -643,428 +740,721 @@ function deriveSilentReason(args: {
   return "Signal is thin — gather one more comp before committing.";
 }
 
-function resolveVerdictTone(activeResult: any, results: any[] | undefined): VerdictTone {
-  const rawVerdict = String(activeResult?.buyVerdict || "").toUpperCase();
-  const saved = Number(activeResult?.savedAmount);
-  const cheaperPct = Number(activeResult?.cheaperPct);
-  const scanned = Number(activeResult?.scannedPrice);
-  const avg = Number(activeResult?.avgMarket);
-  const conf = Number(activeResult?.visionConfidence ?? 0);
-  const totalMatches = Number(activeResult?.totalMatches ?? 0);
-  const compCount = (results || []).filter(r => Number.isFinite(Number(r?.price))).length;
-
-  // Confidence silence — earn trust by admitting uncertainty.
-  // Trigger on thin signal OR when the upstream verdict already says HOLD.
-  const tooFewComps = compCount < 2 && totalMatches < 3;
-  const lowVision = conf > 0 && conf < 0.45;
-  const upstreamHold = rawVerdict === "HOLD";
-  const silent = upstreamHold || tooFewComps || lowVision;
-
-  if (silent) {
-    return {
-      word: "HOLD",
-      wordColor: "rgba(255,255,255,0.55)",
-      signColor: C.text3,
-      sign: "",
-      glow: "rgba(255,255,255,0.04)",
-      silent: true,
-      silentReason: deriveSilentReason({
-        lowVision, tooFewComps, upstreamHold, conf, compCount,
-        scanned: Number.isFinite(scanned) ? scanned : null,
-        avg:     Number.isFinite(avg)     ? avg     : null,
-        ebayComps: activeResult?.ebaySoldComps ?? null,
-        cheaperPct: Number.isFinite(cheaperPct) ? cheaperPct : null,
-      }),
-    };
-  }
-
-  // Prefer the upstream verdict when it lands cleanly. Fall back to the
-  // price-vs-market heuristic only when the string is missing/legacy.
-  const isBuy = rawVerdict === "BUY"
-    || (rawVerdict === "" && (
-         (Number.isFinite(saved) && saved > 0) ||
-         (Number.isFinite(cheaperPct) && cheaperPct > 5) ||
-         (Number.isFinite(avg) && Number.isFinite(scanned) && avg > scanned)
-       ));
-
-  if (isBuy) {
-    return {
-      word: "BUY",
-      wordColor: "rgba(180,255,200,0.96)",
-      signColor: "rgba(140,255,180,0.92)",
-      sign: "+",
-      glow: "rgba(80,255,160,0.10)",
-      silent: false,
-    };
-  }
-
-  return {
-    word: "PASS",
-    wordColor: "rgba(255,170,150,0.94)",
-    signColor: "rgba(255,140,120,0.90)",
-    sign: "−",
-    glow: "rgba(255,120,100,0.08)",
-    silent: false,
-  };
-}
-
-function VerdictHero({
+function CompactVerdict({
   activeResult,
   results,
+  verdictCopy,
+  verdictNumbers,
 }: {
   activeResult: any;
   results?: any[];
+  verdictCopy: VerdictCopy;
+  verdictNumbers: VerdictNumbers;
 }) {
-  const tone = resolveVerdictTone(activeResult, results);
-  const saved = Number(activeResult?.savedAmount);
-  const cheaperPct = Number(activeResult?.cheaperPct);
-  const scanned = Number(activeResult?.scannedPrice);
-  const avg = Number(activeResult?.avgMarket);
+  // Restrained word tones — match the legacy treatment so the screen's
+  // emotional register stays consistent across this pillar's structural
+  // change. Pillar 2 will revisit color systemically.
+  const wordTone =
+    verdictCopy.word === "BUY"
+      ? { color: "rgba(180,255,200,0.96)", glow: "rgba(80,255,160,0.10)" }
+      : verdictCopy.word === "PASS"
+        ? { color: "rgba(255,170,150,0.94)", glow: "rgba(255,120,100,0.08)" }
+        : { color: "rgba(255,255,255,0.62)", glow: "rgba(255,255,255,0.05)" };
 
-  // Headline number: dollar delta vs market (the truth in one number)
-  let headlineAmount: number | null = null;
-  let contextLine = "";
-  if (Number.isFinite(saved) && saved > 0) {
-    headlineAmount = saved;
-    contextLine = Number.isFinite(cheaperPct) && cheaperPct > 0
-      ? `${Math.round(cheaperPct)}% UNDER MARKET`
-      : "UNDER MARKET";
-  } else if (Number.isFinite(avg) && Number.isFinite(scanned)) {
-    if (avg > scanned) {
-      headlineAmount = avg - scanned;
-      const pct = Math.round(((avg - scanned) / avg) * 100);
-      contextLine = pct > 0 ? `${pct}% UNDER MARKET` : "UNDER MARKET";
-    } else if (scanned > avg) {
-      headlineAmount = scanned - avg;
-      const pct = Math.round(((scanned - avg) / avg) * 100);
-      contextLine = pct > 0 ? `${pct}% ABOVE MARKET` : "ABOVE MARKET";
+  // Enhanced silent sentence — drop in deriveSilentReason output when
+  // marketIntel flagged silent. Keeps the smart per-gap copy that the
+  // legacy VerdictHero relied on, so HOLD never reads as boilerplate.
+  let sentence = verdictCopy.sentence;
+  if (verdictCopy.silent) {
+    const conf = Number(activeResult?.visionConfidence ?? 0);
+    const compCount = Array.isArray(results)
+      ? results.filter((r) => Number.isFinite(Number(r?.price))).length
+      : 0;
+    const totalMatches = Number(activeResult?.totalMatches ?? 0);
+    const tooFewComps = compCount < 2 && totalMatches < 3;
+    const lowVision = conf > 0 && conf < 0.45;
+    const scannedN = Number(activeResult?.scannedPrice);
+    const avgN = Number(activeResult?.avgMarket);
+    const cheaperPctN = Number(activeResult?.cheaperPct);
+    sentence = deriveSilentReason({
+      lowVision,
+      tooFewComps,
+      upstreamHold:
+        String(activeResult?.buyVerdict || "").toUpperCase() === "HOLD",
+      conf,
+      compCount,
+      scanned: Number.isFinite(scannedN) ? scannedN : null,
+      avg: Number.isFinite(avgN) ? avgN : null,
+      ebayComps: activeResult?.ebaySoldComps ?? null,
+      cheaperPct: Number.isFinite(cheaperPctN) ? cheaperPctN : null,
+    });
+  }
+
+  // Headline number tone — positive delta ($X above market) carries
+  // PASS tint when relevant; negative delta ($X under market) carries
+  // BUY tint when relevant. Matches the legacy hero's color logic so
+  // the user's eye still tracks "what direction is this dollar number"
+  // the same way it did before.
+  let headline: { sign: string; amount: string; tone: string } | null = null;
+  if (verdictNumbers.delta != null) {
+    const dollarStr = fmtMoney(Math.abs(verdictNumbers.delta));
+    if (verdictNumbers.delta < 0) {
+      headline = {
+        sign: "−",
+        amount: dollarStr,
+        tone: verdictCopy.word === "BUY" ? "rgba(140,255,180,0.92)" : C.text2,
+      };
+    } else if (verdictNumbers.delta > 0) {
+      headline = {
+        sign: "+",
+        amount: dollarStr,
+        tone: verdictCopy.word === "PASS" ? "rgba(255,140,120,0.90)" : C.text2,
+      };
     } else {
-      headlineAmount = 0;
-      contextLine = "MATCHES MARKET";
+      headline = { sign: "", amount: dollarStr, tone: C.text2 };
     }
   }
-  // PASS + below-market reads as contradictory ("39% UNDER MARKET" sounds
-  // like a win). Replace with neutral copy that doesn't imply a good deal.
-  if (tone.word === "PASS" && contextLine.includes("UNDER MARKET")) {
-    contextLine = "NOT ENOUGH EDGE";
+
+  let directionLine = "";
+  if (verdictNumbers.deltaPct != null) {
+    const pct = Math.round(Math.abs(verdictNumbers.deltaPct));
+    if (verdictNumbers.deltaPct < -2) directionLine = `${pct}% UNDER MARKET`;
+    else if (verdictNumbers.deltaPct > 2) directionLine = `${pct}% ABOVE MARKET`;
+    else directionLine = "MATCHES MARKET";
+    if (verdictCopy.word === "PASS" && directionLine.includes("UNDER MARKET")) {
+      directionLine = "NOT ENOUGH EDGE";
+    }
   }
 
-  // Sold range across comps for the strip
-  const compPrices = (results || [])
-    .map(r => Number(r?.price))
-    .filter(n => Number.isFinite(n) && n > 0);
-  const median = compPrices.length
-    ? compPrices.slice().sort((a, b) => a - b)[Math.floor(compPrices.length / 2)]
-    : null;
-  const marketValue = median ?? (Number.isFinite(avg) ? avg : null);
-
-  // ── Sequenced reveal ──────────────────────────────────────────────────────
-  // Sequenced reveal — opacity-only across the board. The previous version
-  // scaled the verdict word (0.94→1.0) and lifted the dollar/strip with a
-  // small translateY. Even small text-scale animations rasterized the
-  // BUY/PASS glyph between renders and the user saw pixelation on the
-  // word at the moment of reveal. Keeping the timing/staggers identical
-  // preserves the choreography; only the transform pieces are gone.
-  const wordOpacity   = useSharedValue(0);
-  const dollarOpacity = useSharedValue(0);
-  const subOpacity    = useSharedValue(0);
-  const stripOpacity  = useSharedValue(0);
-  const glowOpacity   = useSharedValue(0);
-
+  // Sequenced opacity-only entrance — matches the rest of the screen's
+  // text-glyph-safe reveal policy (no transforms on text).
+  const cardOpacity = useSharedValue(0);
+  const numbersOpacity = useSharedValue(0);
+  const sentenceOpacity = useSharedValue(0);
   useEffect(() => {
-    wordOpacity.value   = 0;
-    dollarOpacity.value = 0;
-    subOpacity.value    = 0;
-    stripOpacity.value  = 0;
-    glowOpacity.value   = 0;
-
-    wordOpacity.value   = withTiming(1, { duration: 360, easing: panthere });
-    glowOpacity.value   = withDelay(80,  withTiming(1, { duration: 480, easing: panthere }));
-    dollarOpacity.value = withDelay(200, withTiming(1, { duration: 320, easing: panthere }));
-    subOpacity.value    = withDelay(380, withTiming(1, { duration: 300, easing: panthere }));
-    stripOpacity.value  = withDelay(520, withTiming(1, { duration: 320, easing: panthere }));
+    cardOpacity.value = 0;
+    numbersOpacity.value = 0;
+    sentenceOpacity.value = 0;
+    cardOpacity.value = withTiming(1, { duration: 320, easing: panthere });
+    numbersOpacity.value = withDelay(180, withTiming(1, { duration: 280, easing: panthere }));
+    sentenceOpacity.value = withDelay(360, withTiming(1, { duration: 280, easing: panthere }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeResult]);
-
-  const wordStyle = useAnimatedStyle(() => ({ opacity: wordOpacity.value }));
-  const glowStyleHero = useAnimatedStyle(() => ({ opacity: glowOpacity.value }));
-  const dollarStyle = useAnimatedStyle(() => ({ opacity: dollarOpacity.value }));
-  const subStyle = useAnimatedStyle(() => ({ opacity: subOpacity.value }));
-  const stripStyle = useAnimatedStyle(() => ({ opacity: stripOpacity.value }));
+  const cardStyle = useAnimatedStyle(() => ({ opacity: cardOpacity.value }));
+  const numbersStyle = useAnimatedStyle(() => ({ opacity: numbersOpacity.value }));
+  const sentenceStyle = useAnimatedStyle(() => ({ opacity: sentenceOpacity.value }));
 
   return (
-    <View style={heroStyles.outer}>
-      <View
+    <View style={compactVerdictStyles.outer}>
+      <Reanimated.View
         style={[
-          heroStyles.card,
-          tone.silent && heroStyles.cardSilent,
-          // HOLD: inset the card horizontally so it reads as a quiet
-          // annotation, not a full-width banner.
-          tone.silent && { marginHorizontal: SP.md },
+          compactVerdictStyles.card,
+          verdictCopy.silent && compactVerdictStyles.cardSilent,
+          cardStyle as any,
         ]}
+        renderToHardwareTextureAndroid={IS_ANDROID}
+        shouldRasterizeIOS={!IS_ANDROID}
       >
-        {/* Soft spotlight glow under the verdict — depth, not noise */}
-        <Reanimated.View
+        <View
           pointerEvents="none"
-          style={[
-            heroStyles.glow,
-            { backgroundColor: tone.glow },
-            glowStyleHero as any,
-          ]}
-          renderToHardwareTextureAndroid={IS_ANDROID}
-          shouldRasterizeIOS={!IS_ANDROID}
+          style={[compactVerdictStyles.glow, { backgroundColor: wordTone.glow }]}
         />
 
-        {/* The decision word. Silent HOLD uses a smaller, calmer treatment
-            (verdictSilent override) so the screen reads as a Bloomberg-calm
-            "model declines to call it" rather than a giant AI-warning
-            billboard. BUY / PASS keep their full 38pt presence. */}
-        <Reanimated.View
-          style={wordStyle as any}
-          renderToHardwareTextureAndroid={IS_ANDROID}
-          shouldRasterizeIOS={!IS_ANDROID}
-        >
+        {/* Verdict word + reason title — side by side, baseline-aligned. */}
+        <View style={compactVerdictStyles.headerRow}>
           <Text
             allowFontScaling={false}
-            style={[
-              heroStyles.verdict,
-              tone.silent && heroStyles.verdictSilent,
-              { color: tone.wordColor },
-            ]}
+            style={[compactVerdictStyles.word, { color: wordTone.color }]}
           >
-            {tone.word}
+            {verdictCopy.word}
           </Text>
-        </Reanimated.View>
+          <Text
+            allowFontScaling={false}
+            numberOfLines={1}
+            style={compactVerdictStyles.reasonTitle}
+          >
+            {verdictCopy.title}
+          </Text>
+        </View>
 
-        {/* Confidence-silence layout — admit uncertainty cleanly.
-            Reason text comes from deriveSilentReason so the user sees the
-            ACTUAL gap ("Visual match uncertain — rescan", "Comp data is
-            thin", "Above market but resale signal isn't strong", etc.)
-            instead of the legacy generic "Need more comps to lock the call".
-            That makes HOLD read as a real AI opinion, not a stalled call. */}
-        {tone.silent ? (
-          <Reanimated.View style={subStyle as any}>
-            <Text style={heroStyles.silentSub} allowFontScaling={false}>
-              {tone.silentReason ?? "Signal is thin — gather one more comp before committing."}
-            </Text>
-            {Number.isFinite(scanned) ? (
-              <Text style={heroStyles.silentPrice} allowFontScaling={false}>
-                {fmtMoney(scanned)}
-              </Text>
-            ) : null}
-          </Reanimated.View>
-        ) : (
-          <>
-            {/* Dollar amount — the truth in one number */}
-            {headlineAmount != null && headlineAmount > 0 ? (
-              <Reanimated.View
-                style={dollarStyle as any}
-                renderToHardwareTextureAndroid={IS_ANDROID}
-                shouldRasterizeIOS={!IS_ANDROID}
-              >
-                <Text style={heroStyles.dollar} allowFontScaling={false}>
-                  <Text style={[heroStyles.dollarSign, { color: tone.signColor }]}>
-                    {tone.sign}
-                  </Text>
-                  {fmtMoney(Math.abs(headlineAmount))}
-                </Text>
-              </Reanimated.View>
-            ) : Number.isFinite(scanned) ? (
-              <Reanimated.View
-                style={dollarStyle as any}
-                renderToHardwareTextureAndroid={IS_ANDROID}
-                shouldRasterizeIOS={!IS_ANDROID}
-              >
-                <Text style={heroStyles.dollar} allowFontScaling={false}>
-                  {fmtMoney(scanned)}
-                </Text>
-              </Reanimated.View>
-            ) : null}
-
-            {/* Context — whispered, not declared */}
-            {contextLine ? (
-              <Reanimated.View style={subStyle as any}>
-                <Text style={heroStyles.context} allowFontScaling={false}>
-                  {contextLine}
-                </Text>
-              </Reanimated.View>
-            ) : null}
-          </>
-        )}
-
-        {/* Price strip — proof, quiet */}
-        {(Number.isFinite(scanned) || marketValue != null) ? (
+        {/* Main delta number + direction caption. */}
+        {headline ? (
           <Reanimated.View
-            style={[heroStyles.strip, stripStyle as any]}
+            style={[compactVerdictStyles.dollarRow, numbersStyle as any]}
             renderToHardwareTextureAndroid={IS_ANDROID}
             shouldRasterizeIOS={!IS_ANDROID}
           >
-            {Number.isFinite(scanned) ? (
-              <View style={heroStyles.stripCell}>
-                <Text style={heroStyles.stripLabel} allowFontScaling={false}>COST</Text>
-                <Text style={heroStyles.stripValue} allowFontScaling={false}>
-                  {fmtMoney(scanned)}
+            <Text allowFontScaling={false} style={compactVerdictStyles.dollar}>
+              <Text style={[compactVerdictStyles.dollarSign, { color: headline.tone }]}>
+                {headline.sign}
+              </Text>
+              {headline.amount}
+            </Text>
+            {directionLine ? (
+              <Text allowFontScaling={false} style={compactVerdictStyles.direction}>
+                {directionLine}
+              </Text>
+            ) : null}
+          </Reanimated.View>
+        ) : null}
+
+        {/* Cost / Market mini strip — same shape as the legacy hero
+            but inline-baseline instead of stacked cells, since the
+            compact layout has less vertical space to give. */}
+        {verdictNumbers.cost != null || verdictNumbers.market != null ? (
+          <Reanimated.View
+            style={[compactVerdictStyles.strip, numbersStyle as any]}
+            renderToHardwareTextureAndroid={IS_ANDROID}
+            shouldRasterizeIOS={!IS_ANDROID}
+          >
+            {verdictNumbers.cost != null ? (
+              <View style={compactVerdictStyles.stripCell}>
+                <Text style={compactVerdictStyles.stripLabel} allowFontScaling={false}>
+                  COST
+                </Text>
+                <Text style={compactVerdictStyles.stripValue} allowFontScaling={false}>
+                  {fmtMoney(verdictNumbers.cost)}
                 </Text>
               </View>
             ) : null}
-            {marketValue != null ? (
-              <View style={heroStyles.stripCell}>
-                <Text style={heroStyles.stripLabel} allowFontScaling={false}>MARKET</Text>
-                <Text style={heroStyles.stripValue} allowFontScaling={false}>
-                  {fmtMoney(marketValue)}
+            {verdictNumbers.market != null ? (
+              <View style={compactVerdictStyles.stripCell}>
+                <Text style={compactVerdictStyles.stripLabel} allowFontScaling={false}>
+                  {verdictNumbers.marketLabel.toUpperCase()}
+                </Text>
+                <Text style={compactVerdictStyles.stripValue} allowFontScaling={false}>
+                  {fmtMoney(verdictNumbers.market)}
                 </Text>
               </View>
             ) : null}
           </Reanimated.View>
         ) : null}
-      </View>
+
+        {/* One-sentence explanation. Compact body copy, restrained tone. */}
+        <Reanimated.View style={sentenceStyle as any}>
+          <Text
+            allowFontScaling={false}
+            style={compactVerdictStyles.sentence}
+          >
+            {sentence}
+          </Text>
+        </Reanimated.View>
+      </Reanimated.View>
     </View>
   );
 }
 
-const heroStyles = StyleSheet.create({
+const compactVerdictStyles = StyleSheet.create({
   outer: {
     paddingHorizontal: SP.lg,
     paddingTop: SP.sm,
     paddingBottom: 0,
   },
-  // BUY/PASS verdict capsule. Extra paddingTop (xxl + sm) gives the
-  // verdict word (PASS / BUY) ~8px more headroom inside the capsule so
-  // the word reads as anchored, not jammed against the top edge. Border
-  // alpha softened so the capsule outline is "felt" rather than seen —
-  // the inner glow does the depth work, not the stroke.
   card: {
-    paddingHorizontal: SP.xl,
-    paddingTop: SP.xxl + SP.sm,
-    paddingBottom: SP.xl,
-    borderRadius: R.xl,
+    paddingHorizontal: SP.lg,
+    paddingTop: SP.md,
+    paddingBottom: SP.lg,
+    borderRadius: R.lg,
     backgroundColor: "rgba(255,255,255,0.022)",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.040)",
-    alignItems: "center",
     overflow: "hidden",
   },
-  // Silent / HOLD card variant — Bloomberg-calm. paddingTop bumped (lg
-  // → lg+sm) so the HOLD word sits visually lower inside the capsule —
-  // the prior layout had it pinned to the top edge and the center of
-  // the card felt empty. paddingBottom matches so the silhouette stays
-  // balanced; the reason text + price + COST/MARKET strip now occupy
-  // the middle of the card instead of the upper third. Width narrowed
-  // via self margins (set on outer in the component); background and
-  // border kept ultra-soft so the bubble still reads as quiet annotation,
-  // not an alert panel.
   cardSilent: {
-    paddingTop: SP.xl + SP.sm,
-    paddingBottom: SP.md + 2,
-    paddingHorizontal: SP.lg,
-    borderRadius: R.lg,
     backgroundColor: "rgba(255,255,255,0.012)",
     borderColor: "rgba(255,255,255,0.035)",
   },
-  // Inner glow — wider + taller + softer than before so the verdict word
-  // sits inside a diffuse halo instead of a tight oval. The larger
-  // borderRadius keeps the falloff radial; centering math compensates for
-  // the bigger size. Reads as "the capsule is illuminated from within"
-  // rather than "there's a colored shape behind the word."
   glow: {
     position: "absolute",
-    top: SP.lg,
+    top: -10,
     left: "50%",
-    marginLeft: -170,
-    width: 340,
-    height: 120,
-    borderRadius: 170,
+    marginLeft: -160,
+    width: 320,
+    height: 90,
+    borderRadius: 160,
+    opacity: 0.9,
   },
-  verdict: {
-    fontSize: 36,
-    fontWeight: "900",
-    letterSpacing: 5.0,
-    lineHeight: 42,
-    textAlign: "center",
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: SP.sm,
   },
-  // Silent HOLD: even calmer. 22pt with reduced tracking lands
-  // as institutional confidence — visually equivalent weight to a
-  // section header, not a billboard.
-  verdictSilent: {
+  word: {
     fontSize: 22,
-    letterSpacing: 3.0,
-    lineHeight: 28,
-  },
-  dollar: {
-    marginTop: SP.md,
-    fontSize: 40,
-    fontWeight: "900",
-    color: C.text,
-    letterSpacing: -1.0,
-    lineHeight: 44,
-    textAlign: "center",
-  },
-  dollarSign: {
-    fontSize: 40,
-    fontWeight: "900",
-    letterSpacing: -1.0,
-  },
-  context: {
-    marginTop: SP.xs,
-    fontSize: 10,
     fontWeight: "900",
     letterSpacing: 2.0,
-    color: C.text3,
-    textAlign: "center",
+    lineHeight: 26,
   },
-  // Confidence-silence variants. silentSub.marginTop bumped (sm → md)
-  // so the reason line breathes below the HOLD word instead of crowding
-  // it — the prior tight spacing made the verdict capsule's upper half
-  // feel cramped while the lower half felt empty. silentPrice marginTop
-  // up (2 → 6) for the same balance reason: the dollar reads as a quiet
-  // annotation with real breathing room above it.
-  silentSub: {
-    marginTop: SP.md,
-    fontSize: 12,
-    fontWeight: "500",
-    color: "rgba(255,255,255,0.44)",
-    textAlign: "center",
-    letterSpacing: 0.15,
-    lineHeight: 16,
-    paddingHorizontal: SP.xs,
-  },
-  silentPrice: {
-    marginTop: 6,
-    fontSize: 17,
+  reasonTitle: {
+    flex: 1,
+    fontSize: 13,
     fontWeight: "700",
-    color: "rgba(255,255,255,0.58)",
-    textAlign: "center",
-    letterSpacing: -0.3,
+    color: C.text2,
+    letterSpacing: 0.15,
+    lineHeight: 18,
   },
-  strip: {
-    flexDirection: "row",
-    gap: SP.xxl,
+  dollarRow: {
     marginTop: SP.sm,
-    paddingTop: SP.xs,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.05)",
-    alignSelf: "stretch",
-    justifyContent: "center",
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: SP.sm,
   },
-  stripCell: {
-    alignItems: "center",
+  dollar: {
+    fontSize: 28,
+    fontWeight: "900",
+    color: C.text,
+    letterSpacing: -0.6,
+    lineHeight: 32,
   },
-  // COST / MARKET labels — dimmed one tier so the numbers below carry
-  // the eye instead of the all-caps labels. The text4 color (32%) read
-  // as too bright against the verdict capsule's near-black fill; 22%
-  // lands the labels at "felt context," letting the dollar values win.
-  stripLabel: {
+  dollarSign: {
+    fontSize: 28,
+    fontWeight: "900",
+    letterSpacing: -0.6,
+  },
+  direction: {
     fontSize: 9,
     fontWeight: "900",
     letterSpacing: 1.6,
-    color: "rgba(255,255,255,0.22)",
-    marginBottom: 4,
+    color: C.text3,
+  },
+  strip: {
+    flexDirection: "row",
+    gap: SP.xl,
+    marginTop: SP.sm,
+    paddingTop: SP.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.06)",
+  },
+  stripCell: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 6,
+  },
+  stripLabel: {
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.4,
+    color: "rgba(255,255,255,0.30)",
   },
   stripValue: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: "800",
     color: C.text2,
     letterSpacing: -0.2,
+  },
+  sentence: {
+    marginTop: SP.sm,
+    fontSize: 12,
+    fontWeight: "500",
+    color: "rgba(255,255,255,0.62)",
+    lineHeight: 17,
+    letterSpacing: 0.1,
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MARKET EVIDENCE STRIP — the proof bar.
+//
+// Sits directly below the verdict. Data-driven cells: matches, low, high,
+// verified, signals. Fixes the trust gap the user flagged: even when Evan
+// finds 9 listings the screen previously read as "Evan only found one."
+// This strip makes the actual depth visible. Verified count carries a
+// good/warn tone so the user can instantly tell whether the market has
+// real direct links or only pricing signals.
+// ─────────────────────────────────────────────────────────────────────────────
+function MarketEvidenceStrip({ stats }: { stats: EvidenceStripStat[] }) {
+  if (!stats || stats.length === 0) return null;
+  return (
+    <View style={evidenceStripStyles.outer}>
+      <View style={evidenceStripStyles.row}>
+        {stats.map((s, i) => (
+          <View
+            key={`${s.label}-${i}`}
+            style={[
+              evidenceStripStyles.cell,
+              i < stats.length - 1 && evidenceStripStyles.cellDivider,
+            ]}
+          >
+            <Text
+              allowFontScaling={false}
+              numberOfLines={1}
+              style={[
+                evidenceStripStyles.value,
+                s.tone === "good" && evidenceStripStyles.valueGood,
+                s.tone === "warn" && evidenceStripStyles.valueWarn,
+                s.tone === "muted" && evidenceStripStyles.valueMuted,
+              ]}
+            >
+              {s.value}
+            </Text>
+            <Text
+              allowFontScaling={false}
+              numberOfLines={1}
+              style={evidenceStripStyles.label}
+            >
+              {s.label}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const evidenceStripStyles = StyleSheet.create({
+  outer: {
+    paddingHorizontal: SP.lg,
+    paddingTop: SP.sm,
+    paddingBottom: SP.xs,
+  },
+  row: {
+    flexDirection: "row",
+    backgroundColor: "rgba(255,255,255,0.025)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.05)",
+    borderRadius: R.md,
+    paddingVertical: SP.sm,
+  },
+  cell: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cellDivider: {
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: "rgba(255,255,255,0.06)",
+  },
+  value: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: C.text,
+    letterSpacing: -0.2,
+  },
+  valueGood: { color: "rgba(180,255,200,0.92)" },
+  valueWarn: { color: "rgba(255,210,140,0.82)" },
+  valueMuted: { color: C.text3 },
+  label: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    color: "rgba(255,255,255,0.40)",
+    textTransform: "uppercase",
+    marginTop: 2,
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BEST MARKET MATCHES RAIL — at-a-glance market spread.
+//
+// 4–7 mini cards in a horizontal scroll. Each shows thumbnail, price,
+// source, evidence label + match %. Tapping a mini brings that listing
+// to the front of the main deck via the parent's selectedIndex.
+//
+// Trust:
+//   - evidenceLabel() never claims "Verified listing" without verification
+//   - pricing signals are labeled "Pricing signal · NN%" and never
+//     promise a direct link
+//   - tapping a mini just snaps the deck (selectedIndex); it does NOT
+//     open a URL — opening is gated through the dock's primary CTA
+//
+// Honesty: when fewer than 4 strong alts exist, the rail shows a small
+// "Only X strong matches found" note rather than padding the row with
+// duplicates. We do not fake abundance.
+// ─────────────────────────────────────────────────────────────────────────────
+function BestMarketMatchesRail({
+  cards,
+  selectedIndex,
+  onSelect,
+}: {
+  cards: MarketCard[];
+  selectedIndex: number;
+  onSelect: (idx: number) => void;
+}) {
+  const altCount = Math.max(0, cards.length - 1);
+  const allAlts = cards.slice(1, 8);
+  // When alts are thin (1–3), include the hero so the rail still has
+  // something to surface — the user still sees a market, just an honest one.
+  const includeHero = altCount > 0 && altCount < 4;
+  const railCards = includeHero
+    ? cards.slice(0, Math.min(7, cards.length))
+    : allAlts;
+  if (railCards.length === 0) return null;
+
+  // Header / honesty note.
+  let railHeader = "Best Market Matches";
+  let railNote: string | null = null;
+  if (altCount === 0) {
+    railHeader = "Market evidence";
+    railNote = "Evan surfaced only the active listing — no swipeable alternates.";
+  } else if (altCount < 4) {
+    railNote = `Only ${altCount} strong ${altCount === 1 ? "alternate" : "alternates"} found`;
+  }
+
+  // Index base — when includeHero, the rail and deck share the same
+  // index space so tapping the hero mini stays on the hero card. When
+  // not, the rail starts at index 1 of the canonical cards array.
+  const indexBase = includeHero ? 0 : 1;
+
+  return (
+    <View style={railStyles.outer}>
+      <View style={railStyles.headerRow}>
+        <Text style={railStyles.header} allowFontScaling={false}>
+          {railHeader}
+        </Text>
+        {railNote ? (
+          <Text style={railStyles.note} allowFontScaling={false} numberOfLines={1}>
+            {railNote}
+          </Text>
+        ) : null}
+      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={railStyles.scrollContent}
+      >
+        {railCards.map((card, i) => {
+          const idx = indexBase + i;
+          const isActive = idx === selectedIndex;
+          const price = Number.isFinite(Number(card.price))
+            ? Number(card.price)
+            : null;
+          const source =
+            (typeof card.store === "string" && card.store) ||
+            (typeof card.source === "string" && card.source) ||
+            "Marketplace";
+          const labelText = evidenceLabel(card);
+          const matchPct = deriveMatchPercent(card);
+          const subtitle =
+            matchPct != null ? `${labelText} · ${matchPct}%` : labelText;
+          const subtitleTone = isVerifiedListing(card)
+            ? railStyles.miniSubVerified
+            : isPricingSignal(card)
+              ? railStyles.miniSubPricing
+              : railStyles.miniSubDefault;
+          return (
+            <PressableScale
+              key={`rail-${idx}-${i}`}
+              onPress={() => onSelect(idx)}
+              style={[railStyles.mini, isActive && railStyles.miniActive]}
+              scale={0.96}
+              haptic
+            >
+              <View style={railStyles.miniThumbWrap}>
+                {card.image ? (
+                  <Image
+                    source={{ uri: String(card.image) }}
+                    style={railStyles.miniThumb}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={railStyles.miniThumbPlaceholder}>
+                    <Ionicons
+                      name="image-outline"
+                      size={16}
+                      color="rgba(255,255,255,0.22)"
+                    />
+                  </View>
+                )}
+              </View>
+              <Text
+                allowFontScaling={false}
+                numberOfLines={1}
+                style={railStyles.miniPrice}
+              >
+                {price != null ? fmtMoney(price) : "—"}
+              </Text>
+              <Text
+                allowFontScaling={false}
+                numberOfLines={1}
+                style={railStyles.miniSource}
+              >
+                {source}
+              </Text>
+              <Text
+                allowFontScaling={false}
+                numberOfLines={1}
+                style={[railStyles.miniSubtitle, subtitleTone]}
+              >
+                {subtitle}
+              </Text>
+            </PressableScale>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
+const railStyles = StyleSheet.create({
+  outer: {
+    marginTop: SP.md,
+    paddingBottom: SP.xs,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: SP.sm,
+    paddingHorizontal: SP.lg,
+    marginBottom: SP.sm,
+  },
+  header: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: C.text2,
+    letterSpacing: 1.6,
+    textTransform: "uppercase",
+  },
+  note: {
+    flex: 1,
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.text3,
+    letterSpacing: 0.2,
+  },
+  scrollContent: {
+    paddingLeft: SP.lg,
+    paddingRight: SP.lg,
+    gap: SP.sm,
+  },
+  mini: {
+    width: 130,
+    backgroundColor: "rgba(255,255,255,0.025)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.06)",
+    borderRadius: R.md,
+    padding: SP.sm,
+  },
+  miniActive: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderColor: "rgba(255,255,255,0.18)",
+  },
+  miniThumbWrap: {
+    width: "100%",
+    height: 70,
+    borderRadius: R.sm,
+    overflow: "hidden",
+    backgroundColor: "rgba(255,255,255,0.04)",
+    marginBottom: SP.xs,
+  },
+  miniThumb: { width: "100%", height: "100%" },
+  miniThumbPlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  miniPrice: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: C.text,
+    letterSpacing: -0.2,
+  },
+  miniSource: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.text3,
+    marginTop: 1,
+    letterSpacing: 0.1,
+  },
+  miniSubtitle: {
+    fontSize: 9,
+    fontWeight: "700",
+    marginTop: 4,
+    letterSpacing: 0.2,
+  },
+  miniSubVerified: { color: "rgba(180,255,200,0.85)" },
+  miniSubPricing: { color: "rgba(255,210,140,0.78)" },
+  miniSubDefault: { color: C.text3 },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EVAN'S READ — interpretation + chips.
+//
+// Short data-driven sentence (1 line) + 2–4 chips. Lives between the
+// rail and the dock. Tells the user what Evan thinks the market means,
+// not what it is. The sentence and chips come from marketIntel.deriveEvansRead
+// which knows about verified vs pricing-signal evidence, spread label,
+// and visual-match strength — so it never claims certainty it doesn't have.
+// ─────────────────────────────────────────────────────────────────────────────
+function EvansReadBlock({ read }: { read: EvansReadData }) {
+  if (!read || !read.sentence) return null;
+  return (
+    <View style={evansReadStyles.outer}>
+      <View style={evansReadStyles.headerRow}>
+        <Ionicons name="sparkles" size={11} color={C.text3} />
+        <Text style={evansReadStyles.header} allowFontScaling={false}>
+          Evan&apos;s Read
+        </Text>
+      </View>
+      <Text style={evansReadStyles.sentence} allowFontScaling={false}>
+        {read.sentence}
+      </Text>
+      {read.chips.length > 0 ? (
+        <View style={evansReadStyles.chipRow}>
+          {read.chips.map((c, i) => (
+            <View key={`chip-${i}-${c}`} style={evansReadStyles.chip}>
+              <Text
+                style={evansReadStyles.chipText}
+                allowFontScaling={false}
+                numberOfLines={1}
+              >
+                {c}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const evansReadStyles = StyleSheet.create({
+  outer: {
+    marginTop: SP.md,
+    marginHorizontal: SP.lg,
+    paddingTop: SP.md,
+    paddingBottom: SP.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(255,255,255,0.06)",
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SP.xs,
+    marginBottom: SP.xs,
+  },
+  header: {
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.6,
+    color: C.text3,
+    textTransform: "uppercase",
+  },
+  sentence: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: C.text2,
+    lineHeight: 19,
+    letterSpacing: 0.05,
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: SP.xs,
+    marginTop: SP.sm,
+  },
+  chip: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: R.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  chipText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: C.text3,
+    letterSpacing: 0.15,
   },
 });
 
