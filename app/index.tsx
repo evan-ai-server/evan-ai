@@ -5705,7 +5705,7 @@ if (finalQuery) {
 }
 
 console.warn("Vision failed on all endpoints. Last status:", lastStatus);
-return { query: null, variants: [], confidence: 0 };
+return { query: null, variants: [], confidence: 0, _lastStatus: lastStatus };
 };
 
 // helpers moved to module scope (do not redfine in app)
@@ -8273,13 +8273,19 @@ const successHapticTimer = setTimeout(() => {
   try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
 }, 2500);
 
+  // Preserve visionRetries across internalRetry so MAX_VISION_RETRIES
+  // actually bounds the loop. Without this, each retry resets the counter
+  // to 0 and the loop runs forever on a 429.
+  const prevRetries = internalRetry
+    ? Number(scanSessionRef.current?.visionRetries ?? 0)
+    : 0;
   scanSessionRef.current = {
     photoUri,
     scannedPrice,
     cheapestAlt: cheapestAlt ?? null,
     counted: !!countScan,
     startedAt: Date.now(),
-    visionRetries: 0,
+    visionRetries: prevRetries,
   };
 
   setUiError(null);
@@ -8529,7 +8535,15 @@ if (!visionQuery || !String(visionQuery).trim()) {
 
   const retries = Number(scanSessionRef.current.visionRetries || 0);
 
-  if (retries < MAX_VISION_RETRIES) {
+  // Collect the HTTP status from any failed vision result so we can
+  // decide whether retrying makes sense (429 = rate-limited; retrying
+  // immediately will keep failing and creates a tight loop).
+  const lastVisionStatus = visionResults
+    .map((v: any) => Number(v?._lastStatus ?? 0))
+    .find((s: number) => s > 0) ?? null;
+  const isRateLimited = lastVisionStatus === 429;
+
+  if (!isRateLimited && retries < MAX_VISION_RETRIES) {
     scanSessionRef.current.visionRetries = retries + 1;
     clearTimeout(softRetryTimer);
     clearTimeout(hardStopTimer);
