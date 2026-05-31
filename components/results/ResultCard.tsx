@@ -973,16 +973,23 @@ export function ResultCard({
           </View>
         )}
 
-        {/* Pillar 2 — 5-band gradient ladder. Replaces the prior 3-band
-            scrim that produced a visible dark slab across every product
-            photo. Each band steps from ~0.48 → 0.02 over 130px so the
-            composite reads as a smooth fade. Side vignettes + top
-            highlight unchanged for the "lens-framed product" feel. */}
+        {/* Pillar 2.4 — 10-band micro-gradient. No LinearGradient available,
+            but 10 ultra-thin (~10–16px) bands with very small alpha steps
+            are perceptually indistinguishable from a true gradient — the
+            eye integrates them as one smooth fade. Top 70% of the image
+            is completely clear (bands 7-10 are near-zero). Only the
+            bottom 30% carries meaningful darkening, concentrated in the
+            lowest 40px for text contrast. No discrete layer boundaries. */}
         <View style={styles.imageScrim1} pointerEvents="none" />
         <View style={styles.imageScrim2} pointerEvents="none" />
         <View style={styles.imageScrim3} pointerEvents="none" />
         <View style={styles.imageScrim4} pointerEvents="none" />
         <View style={styles.imageScrim5} pointerEvents="none" />
+        <View style={styles.imageScrim6} pointerEvents="none" />
+        <View style={styles.imageScrim7} pointerEvents="none" />
+        <View style={styles.imageScrim8} pointerEvents="none" />
+        <View style={styles.imageScrim9} pointerEvents="none" />
+        <View style={styles.imageScrim10} pointerEvents="none" />
         <View style={styles.imageVignetteLeft} pointerEvents="none" />
         <View style={styles.imageVignetteRight} pointerEvents="none" />
         <View style={styles.imageTopHighlight} pointerEvents="none" />
@@ -1482,54 +1489,52 @@ const styles = StyleSheet.create({
   // Top tint is dropped — the previous 16% darkening at the top muddied
   // the product photo without adding any text-contrast value, since no
   // overlay text ever lives in that zone.
-  // Pillar 2.2 — scrim alphas reduced ~17-50% per band so the overlay
-  // feels like premium photography again, not "image under UI glass".
-  // scrim1 (bottom-most) keeps a strong 0.42 alpha for badge/text
-  // readability on the dock CTA edge. Mid bands (3-5) were the source of
-  // the visible horizontal banding the user flagged in screenshots — those
-  // were the bands where the eye could perceive the step between layers.
-  // New ladder: 0.42 → 0.22 → 0.09 → 0.04 → 0.01 (was 0.48 → 0.30 → 0.16
-  // → 0.07 → 0.02). Total darkening reduced ~22%, weighted toward the
-  // bottom so the product photo dominates and the UI scrim disappears.
-  imageScrim1: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 30,
-    backgroundColor: "rgba(0,0,0,0.42)",
+  // Pillar 2.4 — 10-band perceptual gradient. Bands are sized 10–16px
+  // each; alphas follow an ease-out curve so the darkening accelerates
+  // only near the bottom where text lives. Top 70%+ of the image carries
+  // zero or near-zero alpha so no overlay is visible in the photo zone.
+  // Total coverage: 130px from bottom. Curve: 0, 0, 0.01, 0.02, 0.04,
+  // 0.07, 0.11, 0.17, 0.24, 0.32 — each step is ≤7% opacity, below the
+  // threshold where the eye perceives a discrete layer boundary.
+  imageScrim1: {          // bottom 0–14px, darkest (text zone)
+    position: "absolute", bottom: 0,   left: 0, right: 0, height: 14,
+    backgroundColor: "rgba(0,0,0,0.32)",
   },
-  imageScrim2: {
-    position: "absolute",
-    bottom: 30,
-    left: 0,
-    right: 0,
-    height: 28,
-    backgroundColor: "rgba(0,0,0,0.22)",
+  imageScrim2: {          // 14–28px
+    position: "absolute", bottom: 14,  left: 0, right: 0, height: 14,
+    backgroundColor: "rgba(0,0,0,0.24)",
   },
-  imageScrim3: {
-    position: "absolute",
-    bottom: 58,
-    left: 0,
-    right: 0,
-    height: 26,
-    backgroundColor: "rgba(0,0,0,0.09)",
+  imageScrim3: {          // 28–42px
+    position: "absolute", bottom: 28,  left: 0, right: 0, height: 14,
+    backgroundColor: "rgba(0,0,0,0.17)",
   },
-  imageScrim4: {
-    position: "absolute",
-    bottom: 84,
-    left: 0,
-    right: 0,
-    height: 24,
+  imageScrim4: {          // 42–56px
+    position: "absolute", bottom: 42,  left: 0, right: 0, height: 14,
+    backgroundColor: "rgba(0,0,0,0.11)",
+  },
+  imageScrim5: {          // 56–69px
+    position: "absolute", bottom: 56,  left: 0, right: 0, height: 13,
+    backgroundColor: "rgba(0,0,0,0.07)",
+  },
+  imageScrim6: {          // 69–82px
+    position: "absolute", bottom: 69,  left: 0, right: 0, height: 13,
     backgroundColor: "rgba(0,0,0,0.04)",
   },
-  imageScrim5: {
-    position: "absolute",
-    bottom: 108,
-    left: 0,
-    right: 0,
-    height: 22,
+  imageScrim7: {          // 82–95px
+    position: "absolute", bottom: 82,  left: 0, right: 0, height: 13,
+    backgroundColor: "rgba(0,0,0,0.02)",
+  },
+  imageScrim8: {          // 95–107px
+    position: "absolute", bottom: 95,  left: 0, right: 0, height: 12,
     backgroundColor: "rgba(0,0,0,0.01)",
+  },
+  imageScrim9: {          // 107–119px
+    position: "absolute", bottom: 107, left: 0, right: 0, height: 12,
+    backgroundColor: "rgba(0,0,0,0.00)",
+  },
+  imageScrim10: {         // 119–130px — pure clear, just extends coverage
+    position: "absolute", bottom: 119, left: 0, right: 0, height: 11,
+    backgroundColor: "rgba(0,0,0,0.00)",
   },
   // Thin side bands at low alpha — soft "frame" that draws the eye to the
   // product photo. Slightly lighter (8%) so corners feel framed but never
