@@ -145,10 +145,12 @@ import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-
 import { StatusBar } from "expo-status-bar";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
-// Pillar 3B — hero image prefetch. ExpoImage.prefetch warms the disk +
-// memory cache during the verdict beat so the hero card never "pops in"
-// after the deck has already settled.
-import { Image as ExpoImage } from "expo-image";
+// Pillar 3B.1 hotfix — hero prefetch switched from expo-image to RN
+// core Image.prefetch. The card hero render reverted to bare <Image>
+// (expo-image was collapsing the card layout); RN's prefetch warms
+// the cache that bare <Image> actually reads from, so the cache layer
+// now matches what the card consumes. Same prefetch behavior, just
+// using RN's built-in API instead of expo-image's.
 import { Ionicons, FontAwesome } from "@expo/vector-icons";
 
 import Reanimated, {
@@ -8002,14 +8004,15 @@ const canTriggerScan = () => {
 // registers "step 4 lit" as a checkpoint.
 //
 // Pillar 3B — `opts.heroImageUri` lets the verdict beat double as a
-// hero-image prefetch window. ExpoImage warms the cache while the
-// "Building verdict" pill is lit; the beat resolves the moment EITHER
-// the prefetch completes OR the hard ceiling (VERDICT_BEAT_MAX_MS)
-// fires — whichever comes first. We still hold the floor
-// (VERDICT_BEAT_MIN_MS) so the pill is visible. Result: on cached or
-// fast networks the user feels a 280ms beat; on slow networks the beat
-// stretches up to ~400ms while the hero photo loads in the background,
-// and the card never "pops in" after the deck has settled.
+// hero-image prefetch window. RN Image.prefetch (post-3B.1 hotfix —
+// see Image import note) warms the cache while the "Building verdict"
+// pill is lit; the beat resolves the moment EITHER the prefetch
+// completes OR the hard ceiling (VERDICT_BEAT_MAX_MS) fires — whichever
+// comes first. We still hold the floor (VERDICT_BEAT_MIN_MS) so the
+// pill is visible. Result: on cached or fast networks the user feels
+// a 280ms beat; on slow networks the beat stretches up to ~400ms while
+// the hero photo loads in the background, and the card never "pops in"
+// after the deck has settled.
 const VERDICT_BEAT_MIN_MS = 280;
 const VERDICT_BEAT_MAX_MS = 400;
 
@@ -8064,10 +8067,13 @@ const stopLoadingSafely = (
       setTimeout(() => _finalizeStopLoading(reqId), wait);
     };
 
-    // Pillar 3B — race the hero prefetch against the hard ceiling.
-    // Either path wins → we proceed to _finalizeStopLoading (after
-    // the visible-beat floor of VERDICT_BEAT_MIN_MS has elapsed).
-    // Prefetch never crashes the scan: any rejection is swallowed.
+    // Pillar 3B / 3B.1 — race the hero prefetch against the hard
+    // ceiling. Either path wins → we proceed to _finalizeStopLoading
+    // (after the visible-beat floor of VERDICT_BEAT_MIN_MS has
+    // elapsed). Prefetch never crashes the scan: any rejection is
+    // swallowed. RN core Image.prefetch warms the same image cache
+    // that bare <Image> in ResultCard reads from (the card render
+    // reverted from expo-image to fix a layout regression in 3B.1).
     if (_isPrefetchableUri(opts.heroImageUri)) {
       let settled = false;
       const settle = () => {
@@ -8076,9 +8082,13 @@ const stopLoadingSafely = (
         proceed();
       };
       try {
-        ExpoImage.prefetch(opts.heroImageUri as string)
-          .then(() => settle())
-          .catch(() => settle());
+        const p = Image.prefetch(opts.heroImageUri as string);
+        // Image.prefetch returns Promise<boolean> on iOS/Android.
+        if (p && typeof (p as any).then === "function") {
+          (p as Promise<boolean>).then(() => settle()).catch(() => settle());
+        } else {
+          settle();
+        }
       } catch { settle(); }
       setTimeout(settle, VERDICT_BEAT_MAX_MS);
     } else {

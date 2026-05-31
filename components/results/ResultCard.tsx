@@ -13,6 +13,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   Share,
   TouchableOpacity,
@@ -24,14 +25,15 @@ const IS_ANDROID = Platform.OS === "android";
 import { captureRef } from "react-native-view-shot";
 import * as Sharing from "expo-sharing";
 import { BlurView } from "expo-blur";
-// Pillar 3B — expo-image replaces RN core <Image>. Gains: disk+memory
-// cache (no re-decode on swipe back), built-in transition prop (180ms
-// crossfade from placeholder to image, no manual opacity animation),
-// no NSException on malformed URIs (returns onError instead of throwing
-// from the native side), and a stable `recyclingKey` so swapping the
-// hero on swipe doesn't reuse a stale bitmap. Card layout / sizing /
-// scrim stack are all preserved exactly.
-import { Image as ExpoImage } from "expo-image";
+// Pillar 3B.1 hotfix — reverted the card hero from `expo-image` back to
+// RN core <Image>. The expo-image native view inside the existing
+// TouchableOpacity+absoluteFillObject wrapper measured to a smaller
+// intrinsic height than RN's UIImageView, collapsing the card to a
+// thin image strip on TestFlight (panel area gone). Reverting just
+// the card render is safe: RN Image.prefetch warms RN's own image
+// cache, which bare <Image> reads from — the hero-prefetch window in
+// stopLoadingSafely now uses Image.prefetch instead of ExpoImage.prefetch
+// so the cache layer matches what the card actually consumes.
 import { Ionicons } from "@expo/vector-icons";
 import Reanimated, {
   useSharedValue,
@@ -966,23 +968,10 @@ export function ResultCard({
             }}
             style={StyleSheet.absoluteFillObject}
           >
-            <ExpoImage
+            <Image
               source={{ uri: imageUri }}
               style={StyleSheet.absoluteFillObject}
-              contentFit="cover"
-              // Pillar 3B — short crossfade from the dark placeholder
-              // background to the decoded image. Native-driven; replaces
-              // the previous bare <Image> that hard-cut on decode and
-              // produced the "image pop-in" the user flagged.
-              transition={180}
-              // memory + disk cache — repeat-scans of the same SKU never
-              // re-decode the same bitmap; image is instant on swipe back.
-              cachePolicy="memory-disk"
-              // Stable identity so the deck doesn't reuse a stale decoded
-              // bitmap when activeResult changes (rail tap, retake, new
-              // scan). Without this, swipes between cards can briefly
-              // flash the wrong photo before the new one materializes.
-              recyclingKey={imageUri}
+              resizeMode="cover"
               onLoad={() => setImageLoaded(true)}
               onError={() => setImageLoaded(false)}
             />

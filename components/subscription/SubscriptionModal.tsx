@@ -26,6 +26,7 @@ import {
   Modal,
   Dimensions,
   Platform,
+  AccessibilityInfo,
 } from "react-native";
 import Reanimated, {
   useSharedValue,
@@ -426,24 +427,74 @@ export function SubscriptionModal({
   // ── Sheet physics ────────────────────────────────────────────────────────
   const translateY = useSharedValue(SHEET_MAX_H);
   const backdropOp = useSharedValue(0);
+  // Pillar 3B.1 hotfix — read AccessibilityInfo at mount so the open
+  // animation respects Reduce Motion. With Reduce Motion enabled we
+  // skip the spring and show the sheet instantly so no user is ever
+  // stuck looking at a backdrop with no sheet.
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled?.()
+      .then((v) => { if (mounted) setReduceMotion(!!v); })
+      .catch(() => {});
+    const sub = AccessibilityInfo.addEventListener?.(
+      "reduceMotionChanged",
+      (v) => { if (mounted) setReduceMotion(!!v); },
+    );
+    return () => {
+      mounted = false;
+      try { sub?.remove?.(); } catch {}
+    };
+  }, []);
 
-  // Mount: spring up
+  // Mount: spring up — Pillar 3B.1 hotfix
+  // The prior implementation set `translateY.value = SHEET_MAX_H`
+  // synchronously then immediately assigned `withSpring(0, ...)` in
+  // the same JS turn. On a freshly-mounted SharedValue (first open
+  // after the parent re-includes the modal subtree) or when re-opening
+  // after a partial close, the spring sometimes failed to fire and
+  // translateY got stuck at SHEET_MAX_H * ~0.85 — backdrop visible,
+  // sheet hanging off-screen at the bottom. Fix:
+  //   1. cancelAnimation() to clear any in-flight animation from a
+  //      prior close/abort.
+  //   2. Reset to SHEET_MAX_H.
+  //   3. Schedule the spring on the next frame via requestAnimationFrame
+  //      so the worklet has committed the reset before the spring kicks.
+  //   4. Reduce Motion path snaps to 0 instantly — no user is ever
+  //      left looking at a backdrop with no sheet.
+  //   5. On hide, reset values so the next open starts clean even if
+  //      the user re-triggers before the close animation completes.
   useEffect(() => {
     if (visible) {
-      // Revenue: track paywall view
       try { EventTracker.trackPaywallView("subscription_modal"); } catch {}
+      cancelAnimation(translateY);
+      cancelAnimation(backdropOp);
       translateY.value = SHEET_MAX_H;
       backdropOp.value = 0;
-      // Spring entrance with bounce
-      translateY.value = withSpring(0, {
-        damping: 24,
-        stiffness: 180,
-        mass: 1.1,
-        overshootClamping: false,
+
+      if (reduceMotion) {
+        translateY.value = 0;
+        backdropOp.value = 1;
+        return;
+      }
+
+      const raf = requestAnimationFrame(() => {
+        translateY.value = withSpring(0, {
+          damping: 24,
+          stiffness: 180,
+          mass: 1.1,
+          overshootClamping: false,
+        });
+        backdropOp.value = withTiming(1, { duration: 320 });
       });
-      backdropOp.value = withTiming(1, { duration: 320 });
+      return () => cancelAnimationFrame(raf);
+    } else {
+      cancelAnimation(translateY);
+      cancelAnimation(backdropOp);
+      translateY.value = SHEET_MAX_H;
+      backdropOp.value = 0;
     }
-  }, [visible]);
+  }, [visible, reduceMotion]);
 
   const dismiss = useCallback(() => {
     // Fast, weighted slide down
