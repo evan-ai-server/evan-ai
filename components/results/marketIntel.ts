@@ -195,7 +195,7 @@ export function evidenceLabelShort(
 
 export function cardActionLabel(
   card: MarketCard | null | undefined,
-): "View listing" | "Market signal" {
+): "View listing" | "Pricing signal" {
   if (
     card &&
     card.clickable !== false &&
@@ -204,7 +204,11 @@ export function cardActionLabel(
   ) {
     return "View listing";
   }
-  return "Market signal";
+  // Pillar 2.1 — was "Market signal". Renamed to "Pricing signal" so the
+  // primary dock CTA reads with distinct vocabulary from the depth-row
+  // badge ("SIGNAL") and the card meta chip ("Signal"). Same concept,
+  // less semantic fatigue. Trust posture (non-clickable) is unchanged.
+  return "Pricing signal";
 }
 
 // ─── Card normalization ─────────────────────────────────────────────────────
@@ -594,11 +598,17 @@ export function deriveEvidenceStripStats(
     out.push({ label: "High", value: fmtCompactMoney(stats.highPrice) });
   }
 
-  out.push({
-    label: "Verified",
-    value: String(stats.verifiedCount),
-    tone: stats.verifiedCount > 0 ? "good" : "warn",
-  });
+  // Pillar 2.1 — only emit the numeric "Verified" cell when there ARE
+  // verified comps. Showing "0 VERIFIED" felt harsh ("then why trust any
+  // of this?"); the trailing "Signal only" pill below carries the same
+  // information honestly without the panic-inducing zero.
+  if (stats.verifiedCount > 0) {
+    out.push({
+      label: "Verified",
+      value: String(stats.verifiedCount),
+      tone: "good",
+    });
+  }
 
   if (stats.verifiedCount === 0 && stats.totalMatches > 0) {
     // Honest trailing pill — no number, just the trust label. Rendered
@@ -650,8 +660,11 @@ export function deriveEvansRead(
         "The resale market sits below your cost. Verified listings exist, but none clear a margin Evan trusts.";
     }
   } else if (verdict.silent || verdict.word === "HOLD") {
+    // Pillar 2.1 — sharpened HOLD voice. Names both the uncertainty
+    // sources (spread + verified depth) and the resulting posture
+    // (caution, not conviction) without sounding indecisive.
     sentence =
-      "The market is mixed. Evan found comparable prices, but the spread is wide or the evidence is too thin to recommend a buy.";
+      "Comparables exist, but the spread is wide and the verified evidence is thin. Treat this as caution, not a confident call.";
   } else {
     if (stats.hasOnlyPricingSignals) {
       sentence =
@@ -667,7 +680,10 @@ export function deriveEvansRead(
 
   const chips: string[] = [];
   if (stats.verifiedCount > 0) chips.push("Verified listings found");
-  if (stats.hasOnlyPricingSignals) chips.push("Market signal only");
+  // Pillar 2.1 — "Market signal only" → "Signal-only evidence". Reads
+  // analytically (Evan's Read is the interpretive layer), and diversifies
+  // the screen's signal vocabulary.
+  if (stats.hasOnlyPricingSignals) chips.push("Signal-only evidence");
   if (stats.priceSpreadLabel === "wide") chips.push("Wide spread");
   if (stats.priceSpreadLabel === "thin" || stats.totalMatches < 4) {
     chips.push("Thin market");
@@ -731,13 +747,15 @@ export function deriveCardBullets(
   }
   if (isLowest) {
     if (isVerifiedListing(card)) out.push("Lowest verified price");
-    else if (isPricingSignal(card)) out.push("Lowest market signal");
+    // Pillar 2.1 — "Lowest market signal" → "Lowest pricing signal".
+    // Avoids the third repetition of "market signal" on the same screen.
+    else if (isPricingSignal(card)) out.push("Lowest pricing signal");
     else if (isOracleEstimate(card)) out.push("AI estimate · lowest");
     else out.push("Lowest in current set");
   } else if (isVerifiedListing(card)) {
     out.push("Direct listing available");
   } else if (isPricingSignal(card)) {
-    out.push("Market signal only");
+    out.push("Pricing signal only");
   } else if (isOracleEstimate(card)) {
     out.push("AI market estimate");
   }

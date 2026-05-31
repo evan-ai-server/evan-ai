@@ -119,7 +119,11 @@ export function AutoListingDrawer({ visible, scanContext, apiBase, onClose }: Au
         setError("Couldn't generate a listing — try again.");
       }
     } catch {
-      setError("Network error — check your connection.");
+      // Pillar 2.1 — feature-specific copy. Prior "Network error — check
+      // your connection" defaulted to blaming the user's connection even
+      // when the actual cause was a server 5xx / timeout / parse failure.
+      // Calmer, scoped to Auto-Listing, no panic.
+      setError("Auto-Listing is temporarily unavailable. Try again in a moment.");
     } finally {
       setLoading(false);
     }

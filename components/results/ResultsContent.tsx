@@ -50,6 +50,7 @@ import {
   deriveEvidenceStripStats,
   deriveMatchPercent,
   evidenceLabel,
+  evidenceLabelShort,
   isVerifiedListing,
   isPricingSignal,
   type MarketCard,
@@ -741,20 +742,26 @@ function deriveSilentReason(args: {
   }
   // Upstream HOLD with enough comps to talk about — explain the pricing
   // context rather than just shrugging.
+  // Pillar 2.1 — HOLD copy refined to read cautious but decisive. Prior
+  // wording ("resale signal isn't strong enough to firmly recommend
+  // passing") whipsawed between BUY and PASS and left the user unsure
+  // what to actually do. New wording names the risk clearly ("price risk
+  // is elevated" / "tracks the market" / "below market") AND tells the
+  // user the call is calm-caution, not indecision.
   if (upstreamHold) {
     if (scanned != null && avg != null) {
       const diffPct = ((scanned - avg) / avg) * 100;
       if (Math.abs(diffPct) < 7) {
-        return "Price tracks the market average. There's no clear edge in either direction right now.";
+        return "Price tracks the market — no clear edge in either direction. Treat this as caution, not conviction.";
       }
       if (diffPct > 0) {
-        return "Above market, but resale signal isn't strong enough to firmly recommend passing.";
+        return "Price risk is elevated, and the evidence is too mixed for a confident call. Treat this as caution.";
       }
       // diffPct < 0 — below market but HOLD
       if (cheaperPct != null && cheaperPct >= 15) {
         return "Strong discount on paper, but the resale data isn't deep enough to lock in the call.";
       }
-      return "Below market, but comp variance is wide — the discount may not be as real as it looks.";
+      return "Below market, but the comp spread is wide — the discount may not be as real as it looks.";
     }
     return "Market pricing is inconsistent across comps. Wait for cleaner signal before committing.";
   }
@@ -1019,9 +1026,15 @@ const compactVerdictStyles = StyleSheet.create({
   },
   // Rim ring — tighter band tucked under the word for the "ring of light"
   // signature without making the card look neon.
+  // Pillar 2.1 — top: 6 → 11 to optically center the verdict word inside
+  // the visible rim capsule. At fontSize 22 / lineHeight 22 the letter's
+  // cap-band visually sits between y=17 and y=33 in card coords; the rim
+  // centered at top:11/height:30 now visually wraps the letter with equal
+  // top/bottom breathing room (was ~13px gap above, ~3px below — the
+  // "HOLD looks low in its capsule" feeling the user flagged).
   haloRim: {
     position: "absolute",
-    top: 6,
+    top: 11,
     left: -10,
     width: 160,
     height: 30,
@@ -1059,13 +1072,20 @@ const compactVerdictStyles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "900",
     letterSpacing: 2.4,
-    lineHeight: 26,
+    // Pillar 2.1 — tighten the line box so the verdict word's cap-band
+    // lines up cleanly with the optically-centered rim above. lineHeight
+    // matching fontSize removes the ~4px extra-leading slop RN inherits
+    // from the platform default and keeps the underline tucked close.
+    lineHeight: 22,
   },
   wordUnderline: {
     width: 22,
     height: 2,
     borderRadius: 1,
-    marginTop: 4,
+    // Tightened lineHeight (22 was 26) eats 4px below the word baseline;
+    // bumping the underline marginTop from 4 → 8 keeps the underline at
+    // its original visible position relative to the rim/card content.
+    marginTop: 8,
     opacity: 0.65,
   },
   reasonTitle: {
@@ -1075,7 +1095,10 @@ const compactVerdictStyles = StyleSheet.create({
     color: "rgba(255,255,255,0.66)",
     letterSpacing: 0.1,
     lineHeight: 16,
-    marginTop: 2,
+    // Pillar 2.1 — was 2; pushed to 6 so the subtitle's cap-band aligns
+    // optically with the verdict word's center (subtitle paired-baseline
+    // rather than clinging to the top of the row).
+    marginTop: 6,
   },
   dollarRow: {
     marginTop: 10,
@@ -1258,16 +1281,24 @@ const evidenceStripStyles = StyleSheet.create({
   // verdict and the card deck below; chips wrap cleanly to two rows on
   // dense scans without truncating labels. Each chip is a discrete glass
   // cell — value over label — so eye-flow lands on the numbers first.
+  // Pillar 2.1 — paddingBottom 4 → 12 to add visible breathing space
+  // between the ticker and the main card below (the user flagged the
+  // card was sitting too close / too high relative to the ticker).
   outer: {
     paddingHorizontal: SP.lg,
     paddingTop: 10,
-    paddingBottom: 4,
+    paddingBottom: 12,
   },
+  // Pillar 2.1 — justifyContent: "center" so the chip cluster reads as an
+  // optically centered ticker rather than a left-stacked dev strip. When
+  // chips wrap, each row centers within its own width — looks balanced
+  // at every iPhone width.
   row: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 6,
     rowGap: 6,
+    justifyContent: "center",
   },
   chip: {
     paddingHorizontal: 10,
@@ -1626,6 +1657,10 @@ function MarketDepthBlock({
   const sentence = `${strongPhrase} from ${checkedPhrase}.`;
 
   // Chip set.
+  // Pillar 2.1 — when verifiedN === 0 we drop the harsh "0 verified" chip
+  // entirely. The "Signal only" pill (warn tone) on the next line already
+  // tells the same trust story honestly, without the screaming zero.
+  // When verifiedN > 0, we surface it positively ("3 verified", good tone).
   const chips: { label: string; tone: "default" | "warn" | "good" | "muted" }[] = [];
   if (filtered > 0) {
     chips.push({
@@ -1633,10 +1668,12 @@ function MarketDepthBlock({
       tone: "muted",
     });
   }
-  chips.push({
-    label: `${verifiedN} verified`,
-    tone: verifiedN > 0 ? "good" : "warn",
-  });
+  if (verifiedN > 0) {
+    chips.push({
+      label: `${verifiedN} verified`,
+      tone: "good",
+    });
+  }
   if (onlySignals) {
     chips.push({ label: "Signal only", tone: "warn" });
   }
@@ -1697,7 +1734,11 @@ function MarketDepthBlock({
           {cards.slice(0, Math.min(6, cards.length)).map((card, i) => {
             const idx = i;
             const isActive = idx === selectedIndex;
-            const labelText = evidenceLabel(card);
+            // Pillar 2.1 — short form ("Verified" / "Signal" / "AI") so a
+            // stack of three rows doesn't read as "MARKET SIGNAL · MARKET
+            // SIGNAL · MARKET SIGNAL" (semantic fatigue). The badge tone
+            // (good/warn/default) still carries the trust state.
+            const labelText = evidenceLabelShort(card);
             const verified = isVerifiedListing(card);
             const signalOnly = isPricingSignal(card);
             const price = Number.isFinite(Number(card.price))
@@ -1803,6 +1844,11 @@ const depthStyles = StyleSheet.create({
     lineHeight: 20,
     letterSpacing: -0.1,
   },
+  // Pillar 2.1 — keep depth chips left-anchored under the sentence header.
+  // The header text "3 strong matches from 13 listings checked." is itself
+  // left-aligned, so the chips reading like a follow-up beat under it
+  // (left edge anchored) is the correct optical pair. Centering here would
+  // make the chips feel detached from the sentence.
   chipRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1954,7 +2000,11 @@ const depthStyles = StyleSheet.create({
 // market", "Wide spread") stay muted. The language never overpromises —
 // weak evidence still reads as weak.
 const _EVANS_READ_GOOD_RE = /verified|hidden gem|strong/i;
-const _EVANS_READ_WARN_RE = /pricing signal|signal only|thin|low confidence|low direct|weak|wide spread|risky/i;
+// Pillar 2.1 — also match "signal-only" (hyphenated) and bare "pricing" /
+// "signal" tokens so the new "Signal-only evidence" / "Pricing signal" /
+// "Pricing-signal evidence" chip variants still resolve to warn tone.
+const _EVANS_READ_WARN_RE =
+  /pricing.?signal|signal.?only|pricing signal|thin|low confidence|low direct|weak|wide spread|risky/i;
 function _evansChipTone(label: string): "good" | "warn" | "muted" {
   if (_EVANS_READ_GOOD_RE.test(label)) return "good";
   if (_EVANS_READ_WARN_RE.test(label)) return "warn";

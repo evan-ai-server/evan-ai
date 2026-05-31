@@ -535,8 +535,12 @@ function _lowestPriceLabel(data: CardData): string {
   // Pillar 1: route through marketIntel so the trust language is
   // consistent across deck + rail + dock + card. NEVER claims "verified"
   // without verification.
+  // Pillar 2.1 — "Lowest market signal" → "Lowest pricing signal" to
+  // diversify the screen's signal vocabulary (depth row badge says
+  // "SIGNAL", dock CTA says "Pricing signal", this bullet now reads
+  // "Lowest pricing signal" — three angles on the same trust state).
   if (_isVerifiedListing(data as MarketCard)) return "Lowest verified price";
-  if (_isPricingSignal(data as MarketCard))   return "Lowest market signal";
+  if (_isPricingSignal(data as MarketCard))   return "Lowest pricing signal";
   if (_isOracleEstimate(data as MarketCard))  return "AI estimate · lowest";
   return "Lowest in current set";
 }

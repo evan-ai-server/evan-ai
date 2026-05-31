@@ -566,9 +566,16 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
       setMessages((prev) => [...prev, { role: "assistant", content: replyTrimmed }]);
     } catch (e: any) {
       console.log("ASK_AI_SEND_ERROR", { error: e?.message || String(e), ms: Date.now() - startedAt });
+      // Pillar 2.1 — feature-specific, non-blamey copy. Prior generic
+      // "Network error — check your connection" made the app feel broken
+      // and blamed the user's connection by default. The actual cause
+      // (timeout, server 5xx, parse error, etc.) is already logged via
+      // ASK_AI_SEND_ERROR for the team. The user-facing surface should
+      // be calm and feature-scoped: AI assistant, temporarily unavailable,
+      // try again.
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Network error — check your connection and try again." },
+        { role: "assistant", content: "AI assistant is temporarily unavailable. Try again in a moment." },
       ]);
     } finally {
       setLoading(false);
