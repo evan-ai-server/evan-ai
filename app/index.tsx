@@ -1836,6 +1836,17 @@ const _showOnlyActiveTab = true;
 
 const tabFade = useRef(new RNAnimated.Value(1)).current; // ✅ never start hidden
 
+// Pillar 2.3 — persist the current tab so a screenshot or brief
+// background that kills the JS context (iOS memory pressure, dev hot
+// reload, etc.) doesn't drop the user back on "camera" when they were
+// reading their results. The hydration useEffect (search for
+// EVAN_CURRENT_TAB_V1) reads this on next mount and restores the tab —
+// gated by whether there's actually a fresh scan to render, so a stale
+// "results" tab never lands the user on an empty screen.
+useEffect(() => {
+  AsyncStorage.setItem("EVAN_CURRENT_TAB_V1", String(tab)).catch(() => {});
+}, [tab]);
+
   const [results, setResults] = useState([]);
   const [loadingResults, setLoadingResults] = useState(false);
   const [loadingPhotoUri, setLoadingPhotoUri] = useState(null);
@@ -6188,7 +6199,15 @@ if (intelRaw) {
       setSavingsTotal(
         Number.isFinite(parsed?.savingsTotal) ? parsed.savingsTotal : 0
       );
-      if (parsed?.activeResult) setActiveResult(parsed.activeResult);
+      // Pillar 2.3 — track whether a real scan was restored from either
+      // persistence path so the tab-restore below knows it's safe to land
+      // the user back on "results" (vs. defaulting to camera when the
+      // saved tab points at an empty screen).
+      let resultRestoredFromCache = false;
+      if (parsed?.activeResult) {
+        setActiveResult(parsed.activeResult);
+        resultRestoredFromCache = true;
+      }
       if (parsed?.lastScan) setLastScan(parsed.lastScan);
 
       // Local-first result cache: restore last scan result (Subway Mode / crash recovery).
@@ -6235,9 +6254,33 @@ if (intelRaw) {
             if (migratedCard) {
               setActiveResult(migratedCard);
               setResults([migratedCard]);
+              resultRestoredFromCache = true;
             }
           }
         }
+      } catch { /* non-fatal */ }
+
+      // Pillar 2.3 — restore the user's last tab. Without this, a brief
+      // background or screenshot that kills the JS context (iOS memory
+      // pressure / dev reload) drops the user back on the camera tab,
+      // discarding the screen they were reading. We gate "results"
+      // restoration behind resultRestoredFromCache so a stale saved tab
+      // can never strand the user on an empty results screen — other
+      // tabs (watchlist, history) restore unconditionally since they
+      // render their own persisted data lists.
+      try {
+        const savedTab = await AsyncStorage.getItem("EVAN_CURRENT_TAB_V1");
+        if (savedTab === "results" && resultRestoredFromCache) {
+          setTab("results");
+          setSpatialZone("results" as ZoneKey);
+        } else if (savedTab === "watchlist") {
+          setTab("watchlist");
+          setSpatialZone("watchlist" as ZoneKey);
+        } else if (savedTab === "history") {
+          setTab("history");
+          setSpatialZone("archive" as ZoneKey);
+        }
+        // Any other value (or "camera", or missing) → leave default.
       } catch { /* non-fatal */ }
 
       // Restore JWT session
