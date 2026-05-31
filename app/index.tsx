@@ -145,6 +145,10 @@ import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-
 import { StatusBar } from "expo-status-bar";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
+// Pillar 3B — hero image prefetch. ExpoImage.prefetch warms the disk +
+// memory cache during the verdict beat so the hero card never "pops in"
+// after the deck has already settled.
+import { Image as ExpoImage } from "expo-image";
 import { Ionicons, FontAwesome } from "@expo/vector-icons";
 
 import Reanimated, {
@@ -3164,44 +3168,15 @@ useEffect(() => {
   // ✅ NEW: animated retry reveal (fade + slight scale)
   const retryReveal = useRef(new RNAnimated.Value(0)).current;
   const retryScale = useRef(new RNAnimated.Value(0.96)).current;
-  // ✅ Animate card entry (main + top3)
-  const resultEntry = useRef(new RNAnimated.Value(0)).current;
-  const resultDepth = useRef(new RNAnimated.Value(0)).current;
-  
-useEffect(() => {
-  if (loadingResults) {
-    resultEntry.setValue(0);
-    resultDepth.setValue(12);
-    return;
-  }
-
-  if (!activeResult) return;
-
-  resultEntry.setValue(0);
-  resultDepth.setValue(12);
-
-  RNAnimated.parallel([
-    RNAnimated.timing(resultEntry, {
-      toValue: 1,
-      duration: 240,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }),
-    RNAnimated.spring(resultDepth, {
-      toValue: 0,
-      damping: 18,
-      stiffness: 170,
-      mass: 0.8,
-      useNativeDriver: true,
-    }),
-  ]).start();
-}, [loadingResults, activeResult, resultEntry, resultDepth]);
-
-  // ✅ AI STAGED REVEAL (investor wow)
-  const [aiRevealActive, setAiRevealActive] = useState(false);
-  const [_aiRevealStep, setAiRevealStep] = useState(0);
-  const aiRevealOpacity = useRef(new RNAnimated.Value(0)).current;
-  const aiRevealScale = useRef(new RNAnimated.Value(0.98)).current;
+  // Pillar 3B — `resultEntry` / `resultDepth` SharedValues + their loadingResults-
+  // gated useEffect removed. They animated values that nothing rendered (the
+  // result tree's actual reveal is owned by ResultsContent's opacity-only
+  // Reanimated cross-fade). Same applies to `aiRevealOpacity` / `aiRevealScale` /
+  // `aiRevealActive` below — they were a parallel RNAnimated timeline that
+  // raced ResultsContent and rendered nothing. The only visible side effect
+  // they produced was a `hapticTick()` at the 1280ms boundary, which is now
+  // owned by the single result-reveal haptic effect further down (search for
+  // PILLAR_3B_REVEAL_HAPTIC).
   // ✅ Confidence badge animation
   const _confPop = useRef(new RNAnimated.Value(0)).current;  // scale
   // ⚡ FINAL ADD #2 — confidence aura
@@ -4924,7 +4899,10 @@ intuitionLine: buildIntuitionLine({
 
     setLastScan({ kind: "barcode", confidence: 0.75, query: q, results: top3 });
 
-    stopLoadingSafely(undefined, { showVerdictBeat: true });
+    stopLoadingSafely(undefined, {
+      showVerdictBeat: true,
+      heroImageUri: card?.image ?? card?.photoUri ?? null,
+    });
   } catch (_e: any) {
     showUiError("Barcode scan failed", "Couldn’t reach marketplaces. Try again.");
     stopLoadingSafely();
@@ -7280,74 +7258,32 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [loadingResults]);
 
-// ✅ AI staged reveal → THEN result entry anim + soft haptic
+// PILLAR_3B_REVEAL_HAPTIC — single result-reveal haptic effect.
+//
+// Replaces the prior 65-line "AI staged reveal" RNAnimated timeline. That
+// timeline ran in parallel with the Reanimated cross-fade inside
+// ResultsContent, animated SharedValues that nothing rendered, and only
+// produced one user-visible side effect: a `hapticTick()` at the 1280ms
+// boundary. Two reveal systems racing the same subtree produced the
+// inconsistent first-frame timing the audit flagged.
+//
+// Now: ResultsContent owns the visual reveal (opacity-only cross-fade
+// + chrome/deck entrance stagger, ~620ms to deck appearance). This effect
+// fires a single tactile beat at the same moment the deck visually lands
+// — no animations driven, no SharedValues touched. One owner.
 useEffect(() => {
   if (!activeResult || loadingResults) return;
 
-  setAiRevealActive(true);
-  setAiRevealStep(0);
+  // Fire haptic at the moment the deck visually enters (matches
+  // ResultsContent's deckEntrance.delay of 620ms). A tighter timing
+  // than the prior 1280ms — the haptic now lands ON arrival, not a
+  // beat after it.
+  const t = setTimeout(() => {
+    try { hapticTick(); } catch {}
+  }, 620);
 
-  aiRevealOpacity.setValue(0);
-  aiRevealScale.setValue(0.98);
-
-  RNAnimated.parallel([
-    RNAnimated.timing(aiRevealOpacity, {
-      toValue: 1,
-      duration: 180,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }),
-    RNAnimated.spring(aiRevealScale, {
-      toValue: 1,
-      friction: 7,
-      tension: 70,
-      useNativeDriver: true,
-    }),
-  ]).start();
-
-  const t1 = setTimeout(() => setAiRevealStep(1), 420);
-  const t2 = setTimeout(() => setAiRevealStep(2), 860);
-
-  const t3 = setTimeout(() => {
-    RNAnimated.timing(aiRevealOpacity, {
-      toValue: 0,
-      duration: 220,
-      easing: Easing.inOut(Easing.cubic),
-      useNativeDriver: true,
-    }).start(() => {
-      setAiRevealActive(false);
-
-      // Now animate the hero card in
-      resultEntry.stopAnimation();
-      resultEntry.setValue(0);
-      resultDepth.setValue(0);
-
-RNAnimated.parallel([
-  RNAnimated.timing(resultEntry, {
-    toValue: 1,
-    duration: 420,
-    easing: Easing.out(Easing.cubic),
-    useNativeDriver: true,
-  }),
-  RNAnimated.spring(resultDepth, {
-    toValue: 1,
-    friction: 7,
-    tension: 80,
-    useNativeDriver: true,
-  }),
-]).start();
-
-      // tiny “result reveal” haptic
-      hapticTick();
-    });
-  }, 1280);
-
-  return () => {
-    clearTimeout(t1);
-    clearTimeout(t2);
-    clearTimeout(t3);
-  };
-}, [activeResult, loadingResults, aiRevealOpacity, aiRevealScale, resultEntry, resultDepth]);
+  return () => clearTimeout(t);
+}, [activeResult, loadingResults]);
 
   // Heal old saved state
   useEffect(() => {
@@ -8064,7 +8000,21 @@ const canTriggerScan = () => {
 // paths keep the old behavior (immediate stop). 280ms is short enough
 // that it doesn't hurt perceived speed, long enough that the eye
 // registers "step 4 lit" as a checkpoint.
-const VERDICT_BEAT_MS = 280;
+//
+// Pillar 3B — `opts.heroImageUri` lets the verdict beat double as a
+// hero-image prefetch window. ExpoImage warms the cache while the
+// "Building verdict" pill is lit; the beat resolves the moment EITHER
+// the prefetch completes OR the hard ceiling (VERDICT_BEAT_MAX_MS)
+// fires — whichever comes first. We still hold the floor
+// (VERDICT_BEAT_MIN_MS) so the pill is visible. Result: on cached or
+// fast networks the user feels a 280ms beat; on slow networks the beat
+// stretches up to ~400ms while the hero photo loads in the background,
+// and the card never "pops in" after the deck has settled.
+const VERDICT_BEAT_MIN_MS = 280;
+const VERDICT_BEAT_MAX_MS = 400;
+
+const _isPrefetchableUri = (u: any): u is string =>
+  typeof u === "string" && /^(https?:|file:|data:image\/)/.test(u.trim());
 
 const _finalizeStopLoading = (reqId?: number) => {
   if (typeof reqId === "number" && !isReqAlive(reqId)) return;
@@ -8095,7 +8045,7 @@ const _finalizeStopLoading = (reqId?: number) => {
 
 const stopLoadingSafely = (
   reqId?: number,
-  opts?: { showVerdictBeat?: boolean },
+  opts?: { showVerdictBeat?: boolean; heroImageUri?: string | null },
 ) => {
   if (typeof reqId === "number" && !isReqAlive(reqId)) return;
   if (!isMountedRef.current) return;
@@ -8105,7 +8055,36 @@ const stopLoadingSafely = (
       setScanStage("verdict");
       setScanStageMeta("Finalizing recommendation");
     } catch {}
-    setTimeout(() => _finalizeStopLoading(reqId), VERDICT_BEAT_MS);
+
+    const startedAt = Date.now();
+    const proceed = () => {
+      if (!isMountedRef.current) return;
+      const elapsed = Date.now() - startedAt;
+      const wait = Math.max(0, VERDICT_BEAT_MIN_MS - elapsed);
+      setTimeout(() => _finalizeStopLoading(reqId), wait);
+    };
+
+    // Pillar 3B — race the hero prefetch against the hard ceiling.
+    // Either path wins → we proceed to _finalizeStopLoading (after
+    // the visible-beat floor of VERDICT_BEAT_MIN_MS has elapsed).
+    // Prefetch never crashes the scan: any rejection is swallowed.
+    if (_isPrefetchableUri(opts.heroImageUri)) {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        proceed();
+      };
+      try {
+        ExpoImage.prefetch(opts.heroImageUri as string)
+          .then(() => settle())
+          .catch(() => settle());
+      } catch { settle(); }
+      setTimeout(settle, VERDICT_BEAT_MAX_MS);
+    } else {
+      // No prefetchable URI — hold the visible-beat floor only.
+      setTimeout(() => _finalizeStopLoading(reqId), VERDICT_BEAT_MIN_MS);
+    }
     return;
   }
 
@@ -8690,7 +8669,10 @@ if (scanCacheRef.current.has(cacheKey)) {
         });
       }
 
-      stopLoadingSafely(reqId, { showVerdictBeat: true });
+      stopLoadingSafely(reqId, {
+        showVerdictBeat: true,
+        heroImageUri: cachedCard?.image ?? cachedCard?.photoUri ?? null,
+      });
       return;
     }
   }
@@ -10099,7 +10081,10 @@ setLastScan({
 });
 
 goTab("results");
-stopLoadingSafely(reqId, { showVerdictBeat: true });
+stopLoadingSafely(reqId, {
+  showVerdictBeat: true,
+  heroImageUri: card?.image ?? card?.photoUri ?? null,
+});
 
 // DS.ts success chime — synchronized with results reveal
 SoundEffect.chime();
@@ -10410,6 +10395,12 @@ const _showMeCheaper = async () => {
 
   const controller = new AbortController();
 
+  // Pillar 3B — captured for the verdict-beat prefetch in `finally`.
+  // `cheapest` is declared inside the inner try block and is out of
+  // scope here, so we lift the URI into a wider variable as soon as
+  // it's known. Stays null on the early-exit / no-result paths.
+  let heroImageUriForBeat: string | null = null;
+
   try {
     let data: any = null;
 
@@ -10530,6 +10521,12 @@ const score =
       stopLoadingSafely(reqId);
       return;
     }
+    // Pillar 3B — capture hero URI for the verdict-beat prefetch.
+    heroImageUriForBeat =
+      (typeof cheapest?.image === "string" && cheapest.image) ||
+      activeResult?.image ||
+      activeResult?.photoUri ||
+      null;
 
     const cheapestPrice = Number(cheapest.numericTotal);
 
@@ -10588,7 +10585,12 @@ const score =
       await new Promise((resolve) => setTimeout(resolve, remaining));
     }
 
-    stopLoadingSafely(reqId, { showVerdictBeat: true });
+    // Pillar 3B — hero URI for the verdict-beat prefetch. Captured
+    // earlier in `heroImageUriForBeat` (out of `cheapest`'s block scope).
+    stopLoadingSafely(reqId, {
+      showVerdictBeat: true,
+      heroImageUri: heroImageUriForBeat,
+    });
   }
 };
 
@@ -13432,9 +13434,6 @@ style={[
   loadingDots={loadingDots}
   retryReveal={retryReveal}
   retryScale={retryScale}
-  resultEntry={resultEntry}
-  neuralPulse={neuralPulse}
-  aiRevealActive={aiRevealActive}
   weaponStats={weaponStats}
   intelLevel={intelLevel}
   lastScan={lastScan}
