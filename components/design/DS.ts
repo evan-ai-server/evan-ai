@@ -275,6 +275,102 @@ export function verdictStyle(verdict: string): {
   return { bg: C.glass, border: C.border, text: C.text2 };
 }
 
+// ─── PILLAR 2 — SIGNAL ROOM TOKENS ───────────────────────────────────────────
+// Premium "billion-dollar resale intelligence cockpit" palette. Each verdict
+// owns a semantic tone (BUY emerald + restrained gold, HOLD icy silver/blue,
+// PASS ember). Glass panels, ticker chips, and active-row glow share a
+// consistent surface vocabulary so the screen reads as one designed system
+// rather than a stack of one-off cards.
+export type VerdictKind = "BUY" | "HOLD" | "PASS";
+
+export function verdictKind(verdict: string | null | undefined): VerdictKind {
+  const v = String(verdict || "").toUpperCase();
+  if (v === "BUY" || v.includes("GREAT") || v.includes("FLIP") || v.includes("GOOD")) return "BUY";
+  if (v === "PASS" || v.includes("RISKY")) return "PASS";
+  return "HOLD";
+}
+
+// Premium verdict instrument — calm, restrained, luxurious.
+// Each tone defines: word color, ambient glow halo (very low alpha), accent line,
+// number tint (used for above/under-market deltas), border + surface for the card.
+export const VERDICT_TONE = {
+  BUY: {
+    word:     "rgba(170,255,205,0.96)",   // emerald, near-luminous
+    halo:     "rgba(60,235,150,0.10)",
+    haloRim:  "rgba(110,255,180,0.18)",
+    accent:   "rgba(190,255,210,0.55)",
+    border:   "rgba(120,235,170,0.22)",
+    surface:  "rgba(20,38,28,0.62)",       // graphite glass with emerald undertone
+    aboveMkt: "rgba(255,200,120,0.92)",    // BUY above-market → warm caution
+    underMkt: "rgba(170,255,205,0.96)",
+    dim:      "rgba(170,255,205,0.50)",
+  },
+  HOLD: {
+    word:     "rgba(220,232,245,0.92)",    // icy silver/blue
+    halo:     "rgba(140,180,220,0.07)",
+    haloRim:  "rgba(180,210,240,0.14)",
+    accent:   "rgba(210,225,245,0.40)",
+    border:   "rgba(190,210,235,0.16)",
+    surface:  "rgba(16,20,28,0.62)",
+    aboveMkt: "rgba(255,200,120,0.92)",    // above-market reads as caution
+    underMkt: "rgba(180,220,255,0.88)",
+    dim:      "rgba(220,232,245,0.50)",
+  },
+  PASS: {
+    word:     "rgba(255,165,140,0.95)",    // ember red
+    halo:     "rgba(255,90,60,0.09)",
+    haloRim:  "rgba(255,140,110,0.18)",
+    accent:   "rgba(255,180,160,0.50)",
+    border:   "rgba(255,120,90,0.22)",
+    surface:  "rgba(28,16,16,0.64)",
+    aboveMkt: "rgba(255,140,120,0.95)",
+    underMkt: "rgba(255,200,160,0.86)",
+    dim:      "rgba(255,165,140,0.48)",
+  },
+} as const;
+
+// Pillar 2 — shared signal-room surface vocabulary. Glass panels for the
+// verdict, evidence ticker, depth rows, and Evan's Read. Active row spotlight
+// uses bright/border combo. All low-alpha so they layer cleanly over the
+// near-black background without crashing into one another.
+export const SIGNAL = {
+  // Section panels
+  panel:        "rgba(255,255,255,0.022)",
+  panelStrong:  "rgba(255,255,255,0.035)",
+  panelBorder:  "rgba(255,255,255,0.055)",
+  panelBorderStrong: "rgba(255,255,255,0.10)",
+  panelTopHighlight: "rgba(255,255,255,0.06)",
+
+  // Ticker (evidence stat) chips
+  chipBg:        "rgba(255,255,255,0.030)",
+  chipBorder:    "rgba(255,255,255,0.065)",
+  chipBgGood:    "rgba(120,255,170,0.045)",
+  chipBorderGood:"rgba(140,255,180,0.20)",
+  chipBgWarn:    "rgba(255,205,130,0.055)",
+  chipBorderWarn:"rgba(255,205,130,0.22)",
+  chipBgDanger:  "rgba(255,130,110,0.055)",
+  chipBorderDanger:"rgba(255,130,110,0.22)",
+
+  // Active row spotlight (Market Depth selected listing)
+  rowBg:         "rgba(255,255,255,0.028)",
+  rowBgActive:   "rgba(255,255,255,0.075)",
+  rowBorder:     "rgba(255,255,255,0.055)",
+  rowBorderActive: "rgba(255,255,255,0.26)",
+  rowGlowActive: "rgba(255,255,255,0.12)",
+
+  // Semantic verdict ring rim glow (per-verdict)
+  ringGlowAlphaBg: 0.10,
+  ringGlowAlphaRim: 0.18,
+
+  // Stat chip text tones
+  textGood:     "rgba(180,255,205,0.92)",
+  textWarn:     "rgba(255,210,140,0.92)",
+  textDanger:   "rgba(255,170,150,0.92)",
+  textMuted:    "rgba(255,255,255,0.50)",
+  textPrimary:  "rgba(255,255,255,0.92)",
+  textLabel:    "rgba(255,255,255,0.42)",
+} as const;
+
 // ─── CONFIDENCE → TEXT ────────────────────────────────────────────────────────
 export function confidenceLabel(c: number): string {
   if (c >= 0.88) return "High confidence";

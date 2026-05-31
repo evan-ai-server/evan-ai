@@ -969,16 +969,16 @@ export function ResultCard({
           </View>
         )}
 
-        {/* Cinematic depth treatment.
-            - imageScrim1/2/3: the 3-band bottom→top darkening already in
-              place (heavy bottom, mid fade, slight top tint)
-            - imageVignetteLeft/Right: thin soft side vignettes that frame
-              the product photo, killing the "pasted flat" feel
-            - imageTopHighlight: 1px ambient light catching the top edge
-              of the image, like a lens framing the object */}
+        {/* Pillar 2 — 5-band gradient ladder. Replaces the prior 3-band
+            scrim that produced a visible dark slab across every product
+            photo. Each band steps from ~0.48 → 0.02 over 130px so the
+            composite reads as a smooth fade. Side vignettes + top
+            highlight unchanged for the "lens-framed product" feel. */}
         <View style={styles.imageScrim1} pointerEvents="none" />
         <View style={styles.imageScrim2} pointerEvents="none" />
         <View style={styles.imageScrim3} pointerEvents="none" />
+        <View style={styles.imageScrim4} pointerEvents="none" />
+        <View style={styles.imageScrim5} pointerEvents="none" />
         <View style={styles.imageVignetteLeft} pointerEvents="none" />
         <View style={styles.imageVignetteRight} pointerEvents="none" />
         <View style={styles.imageTopHighlight} pointerEvents="none" />
@@ -1469,50 +1469,73 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#0e0e0e",
   },
+  // Pillar 2 — gradient ladder. The old 80px solid scrim at 62% black
+  // created a visible horizontal band across every product photo. We
+  // replace it with a 5-step gradient that ramps from ~0.55 at the very
+  // bottom (where the badge anchors live, so readability survives) up to
+  // 0.0 over 130px. Each band is shorter than the eye can distinguish so
+  // the composite reads as a smooth fade instead of a stack of slabs.
+  // Top tint is dropped — the previous 16% darkening at the top muddied
+  // the product photo without adding any text-contrast value, since no
+  // overlay text ever lives in that zone.
   imageScrim1: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    height: 80,
-    backgroundColor: "rgba(0,0,0,0.62)",
+    height: 30,
+    backgroundColor: "rgba(0,0,0,0.48)",
   },
   imageScrim2: {
     position: "absolute",
-    bottom: 80,
+    bottom: 30,
     left: 0,
     right: 0,
-    height: 92,
-    backgroundColor: "rgba(0,0,0,0.22)",
+    height: 28,
+    backgroundColor: "rgba(0,0,0,0.30)",
   },
   imageScrim3: {
     position: "absolute",
-    top: 0,
+    bottom: 58,
     left: 0,
     right: 0,
-    height: 40,
+    height: 26,
     backgroundColor: "rgba(0,0,0,0.16)",
   },
-  // ── Cinematic vignettes & top highlight ───────────────────────────────────
+  imageScrim4: {
+    position: "absolute",
+    bottom: 84,
+    left: 0,
+    right: 0,
+    height: 24,
+    backgroundColor: "rgba(0,0,0,0.07)",
+  },
+  imageScrim5: {
+    position: "absolute",
+    bottom: 108,
+    left: 0,
+    right: 0,
+    height: 22,
+    backgroundColor: "rgba(0,0,0,0.02)",
+  },
   // Thin side bands at low alpha — soft "frame" that draws the eye to the
-  // product photo. The visible delta is small (~10% darken at the very
-  // edge) so the image still reads as full-bleed, but the corners now feel
-  // recessed instead of pasted flat to the card boundary.
+  // product photo. Slightly lighter (8%) so corners feel framed but never
+  // muddy the actual product silhouette.
   imageVignetteLeft: {
     position: "absolute",
     left: 0,
     top: 0,
     bottom: 0,
-    width: 24,
-    backgroundColor: "rgba(0,0,0,0.10)",
+    width: 22,
+    backgroundColor: "rgba(0,0,0,0.07)",
   },
   imageVignetteRight: {
     position: "absolute",
     right: 0,
     top: 0,
     bottom: 0,
-    width: 24,
-    backgroundColor: "rgba(0,0,0,0.10)",
+    width: 22,
+    backgroundColor: "rgba(0,0,0,0.07)",
   },
   // 1px hairline of ambient light at the very top of the image — gives
   // the image a "lens edge" feel where it meets the card's top radius.
@@ -1522,7 +1545,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "rgba(255,255,255,0.10)",
   },
 
   // ── Overlay actions (heart + share) ───────────────────────────────────────
@@ -1827,15 +1850,24 @@ const styles = StyleSheet.create({
   // ── Card label badge ──────────────────────────────────────────────────────
   // overflow:hidden clips the BadgeShimmer overlay so the diagonal sweep
   // stays inside the badge rectangle instead of bleeding across the image.
+  // Pillar 2 — premium badge. Padding bumped + radius rounded so badges
+  // feel integrated as glass capsules rather than bolted-on stickers.
+  // Subtle drop shadow so the badge lifts off the image without needing
+  // a heavy border.
   labelBadge: {
     position: "absolute",
-    top: 11,
-    left: 11,
-    borderRadius: 7,
+    top: 12,
+    left: 12,
+    borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
     overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.30,
+    shadowRadius: 6,
+    elevation: 4,
   },
   labelBadgeHeavy: {
     borderWidth: 1,
@@ -1845,9 +1877,9 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
   },
   labelText: {
-    fontSize: 8.5,
+    fontSize: 9,
     fontWeight: "900",
-    letterSpacing: 1.2,
+    letterSpacing: 1.4,
     textTransform: "uppercase",
   },
 

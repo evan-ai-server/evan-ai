@@ -230,27 +230,34 @@ export function ResultsDock({
         </View>
       ) : null}
 
-      {/* Primary row: View listing / Market signal + New Scan.
-          Pillar 1.5 — the CTA label is derived from cardActionLabel(),
-          which now returns "View listing" ONLY when clickable !== false
-          AND a real directUrl exists. Otherwise it shows "Market signal"
-          and the onPress is dropped, so the user can never tap an open
-          action on a row that has no direct merchant URL. The user-facing
-          string was unified from "Pricing signal" → "Market signal" in
-          Pillar 1.5 so the UI stops bouncing between names. */}
+      {/* Primary row — Pillar 2 honest CTA.
+          Clickable verified listing: white pill with black icon/text +
+          subtle inner top highlight (premium hardware look).
+          Non-clickable (signal-only, no trusted URL): glass pill with a
+          chart icon and "Pricing signal" copy — visually distinct from a
+          tappable buy button so the user reads it as evidence, not a
+          dimmed action. No onPress in either case where the trust layer
+          rejected the URL. */}
       <View style={styles.primaryRow}>
         <PressableScale
           onPress={cardIsClickable ? onOpenListing : undefined}
-          style={[styles.openBtn, !cardIsClickable && { opacity: 0.55 }]}
+          style={cardIsClickable ? styles.openBtn : styles.openBtnSignal}
           scale={cardIsClickable ? 0.96 : 1}
           haptic={cardIsClickable}
         >
+          {cardIsClickable ? (
+            <View pointerEvents="none" style={styles.openBtnHighlight} />
+          ) : null}
           <Ionicons
-            name={cardIsClickable ? "open-outline" : "bar-chart-outline"}
+            name={cardIsClickable ? "open-outline" : "stats-chart"}
             size={16}
-            color="#000"
+            color={cardIsClickable ? "#000" : "rgba(255,215,150,0.95)"}
           />
-          <Text style={styles.openText} allowFontScaling={false} numberOfLines={1}>
+          <Text
+            style={cardIsClickable ? styles.openText : styles.openTextSignal}
+            allowFontScaling={false}
+            numberOfLines={1}
+          >
             {cardIsClickable
               ? (store && String(store).length <= 9 ? `View on ${store}` : cardActionLabel(card))
               : cardActionLabel(card)}
@@ -585,7 +592,7 @@ const styles = StyleSheet.create({
   },
   openBtn: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 46,
     borderRadius: R.lg,
     backgroundColor: "#ffffff",
     flexDirection: "row",
@@ -595,12 +602,48 @@ const styles = StyleSheet.create({
     paddingHorizontal: SP.sm,
     borderTopWidth: 1,
     borderTopColor: "rgba(255,255,255,0.45)",
+    overflow: "hidden",
+  },
+  // Pillar 2 — soft white inner highlight at the top of the primary CTA
+  // so the button reads as polished hardware rather than a flat pill.
+  openBtnHighlight: {
+    position: "absolute",
+    top: 0,
+    left: 6,
+    right: 6,
+    height: 14,
+    backgroundColor: "rgba(255,255,255,0.55)",
+    opacity: 0.45,
+    borderTopLeftRadius: R.lg,
+    borderTopRightRadius: R.lg,
+  },
+  // Pillar 2 — Pricing signal state. Glass amber-tinted pill that reads
+  // as "evidence, not a tappable storefront". Distinct silhouette from
+  // the white BUY CTA so the user never confuses one for the other.
+  openBtnSignal: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: R.lg,
+    backgroundColor: "rgba(255,205,130,0.07)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(255,205,130,0.22)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    paddingHorizontal: SP.sm,
   },
   openText: {
     ...TY.bodyBold,
     color: "#000",
     fontSize: 14,
     fontWeight: "800",
+  },
+  openTextSignal: {
+    color: "rgba(255,225,170,0.95)",
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 0.2,
   },
   newScanBtn: {
     flex: 1,

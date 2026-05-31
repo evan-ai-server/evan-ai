@@ -35,7 +35,11 @@ import { ResultsDock } from "./ResultsDock";
 import { AskAIDrawer, ScanContext } from "./AskAIDrawer";
 import { AutoListingDrawer } from "./AutoListingDrawer";
 import { OfflineBanner } from "./OfflineBanner";
-import { C, SP, R, TY, fmtMoney, EASE_PANTHERE, SINGULARITY } from "../design/DS";
+import {
+  C, SP, R, TY, fmtMoney,
+  EASE_PANTHERE, SINGULARITY,
+  VERDICT_TONE, verdictKind, SIGNAL,
+} from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
 import {
   buildAllMarketCards,
@@ -187,8 +191,13 @@ export const ResultsContent = React.memo(function ResultsContent({
   onLowball,
   onBoughtIt,
 }: ResultsContentProps) {
-  // Track which card is active in the deck (for dock's "Open" button)
-  const [deckIndex, setDeckIndex] = useState(0);
+  // Pillar 2 — single source of truth for the active listing. The deck,
+  // pager dots, Market Depth spotlight, rail selection, and dock primary
+  // CTA all read from this same value, and every input path (swipe,
+  // rail tap, depth row tap) routes through handleSnap so they can never
+  // drift. The legacy `selectedIndex` alias below preserves the prop name
+  // the CardDeck + rail still consume.
+  const [activeIndex, setActiveIndex] = useState(0);
 
   // Ask AI drawer
   const [askAIOpen, setAskAIOpen] = useState(false);
@@ -250,9 +259,9 @@ export const ResultsContent = React.memo(function ResultsContent({
   // only does its entrance animation once)
   const hasShownLoading = useRef(false);
 
-  // Reset deck index when activeResult changes (new scan)
+  // Reset active index when activeResult changes (new scan)
   useEffect(() => {
-    setDeckIndex(0);
+    setActiveIndex(0);
   }, [activeResult]);
 
   // Loading screen entrance: opacity-only Panthere fade.
@@ -311,17 +320,20 @@ export const ResultsContent = React.memo(function ResultsContent({
     opacity: interpolate(deckEntrance.value, [0, 1], [0, 1], Extrapolation.CLAMP),
   }));
 
+  // Pillar 2 — single sync path. Every active-listing change (swipe
+  // landing, rail tap, Market Depth row tap, controlled-snap rebound)
+  // funnels through here, so the deck + spotlight + dock primary card
+  // can never drift. CardDeck fires this via onSnapToIndex from its
+  // velocity-aware handleScrollEndDrag, which means the spotlight moves
+  // the same frame the deck visually centers — no momentum delay.
   const handleSnap = useCallback((idx: number) => {
-    setDeckIndex(idx);
-    // Keep the rail's selectedIndex in sync with user swipe so swiping
-    // also highlights the active mini-card and the rail tap can't fight
-    // the swipe via the controlled-snap effect inside CardDeck.
-    setSelectedIndex(idx);
+    if (!Number.isInteger(idx) || idx < 0) return;
+    setActiveIndex(idx);
   }, []);
 
   const handleRailSelect = useCallback((idx: number) => {
     if (!Number.isInteger(idx) || idx < 0) return;
-    setSelectedIndex(idx);
+    setActiveIndex(idx);
   }, []);
 
   // Build watchlist query set for heart state
@@ -378,18 +390,14 @@ export const ResultsContent = React.memo(function ResultsContent({
     [marketStats, listingsChecked],
   );
 
-  // Rail → deck snap state. The rail and the deck share the same
-  // selectedIndex so tapping a mini card brings that listing to the
-  // front of the deck. Deck swipe still owns the source of truth via
-  // handleSnap below — selectedIndex is just the controlled prop.
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  // Pillar 2 — `selectedIndex` is now just an alias for the single
+  // `activeIndex` source of truth. The CardDeck consumes it as a
+  // controlled prop; the Market Depth + rail use it for the spotlight.
+  // Whichever surface fires onSnapToIndex / onSelect first, every other
+  // surface re-renders against the same value in the same React tick.
+  const selectedIndex = activeIndex;
 
-  // Reset selected index when activeResult changes (matches deckIndex reset).
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [activeResult]);
-
-  const currentCard = allMarketCards[deckIndex] ?? activeResult;
+  const currentCard = allMarketCards[activeIndex] ?? activeResult;
   // Prefer directUrl (backend-vetted) over buyLink/url fallbacks.
   // Do not open when clickable:false — pass the full card so safeOpenListingUrl
   // can enforce the clickable guard and log correctly.
@@ -753,6 +761,12 @@ function deriveSilentReason(args: {
   return "Signal is thin — gather one more comp before committing.";
 }
 
+// Pillar 2 — Verdict Instrument. Replaces the prior thin slab with a
+// premium signal capsule that owns its verdict's semantic tone. The card
+// has three layered glows (outer halo, rim ring, accent line) per kind so
+// BUY feels emerald + restrained, HOLD feels icy/silvery, PASS feels ember.
+// Above-market deltas render in the cautionary tone regardless of verdict
+// so the user never reads an above-market state as celebration.
 function CompactVerdict({
   activeResult,
   results,
@@ -764,15 +778,8 @@ function CompactVerdict({
   verdictCopy: VerdictCopy;
   verdictNumbers: VerdictNumbers;
 }) {
-  // Restrained word tones — match the legacy treatment so the screen's
-  // emotional register stays consistent across this pillar's structural
-  // change. Pillar 2 will revisit color systemically.
-  const wordTone =
-    verdictCopy.word === "BUY"
-      ? { color: "rgba(180,255,200,0.96)", glow: "rgba(80,255,160,0.10)" }
-      : verdictCopy.word === "PASS"
-        ? { color: "rgba(255,170,150,0.94)", glow: "rgba(255,120,100,0.08)" }
-        : { color: "rgba(255,255,255,0.62)", glow: "rgba(255,255,255,0.05)" };
+  const kind = verdictKind(verdictCopy.word);
+  const tone = VERDICT_TONE[kind];
 
   // Enhanced silent sentence — drop in deriveSilentReason output when
   // marketIntel flagged silent. Keeps the smart per-gap copy that the
@@ -803,39 +810,37 @@ function CompactVerdict({
     });
   }
 
-  // Headline number tone — positive delta ($X above market) carries
-  // PASS tint when relevant; negative delta ($X under market) carries
-  // BUY tint when relevant. Matches the legacy hero's color logic so
-  // the user's eye still tracks "what direction is this dollar number"
-  // the same way it did before.
+  // Headline dollar delta. Above-market reads as caution (warm amber) on
+  // every verdict — never green/celebratory — because the user is asking
+  // "should I buy" and above-market is a risk regardless of verdict math.
   let headline: { sign: string; amount: string; tone: string } | null = null;
   if (verdictNumbers.delta != null) {
     const dollarStr = fmtMoney(Math.abs(verdictNumbers.delta));
     if (verdictNumbers.delta < 0) {
-      headline = {
-        sign: "−",
-        amount: dollarStr,
-        tone: verdictCopy.word === "BUY" ? "rgba(140,255,180,0.92)" : C.text2,
-      };
+      headline = { sign: "−", amount: dollarStr, tone: tone.underMkt };
     } else if (verdictNumbers.delta > 0) {
-      headline = {
-        sign: "+",
-        amount: dollarStr,
-        tone: verdictCopy.word === "PASS" ? "rgba(255,140,120,0.90)" : C.text2,
-      };
+      headline = { sign: "+", amount: dollarStr, tone: tone.aboveMkt };
     } else {
       headline = { sign: "", amount: dollarStr, tone: C.text2 };
     }
   }
 
   let directionLine = "";
+  let directionTone: string = SIGNAL.textLabel;
   if (verdictNumbers.deltaPct != null) {
     const pct = Math.round(Math.abs(verdictNumbers.deltaPct));
-    if (verdictNumbers.deltaPct < -2) directionLine = `${pct}% UNDER MARKET`;
-    else if (verdictNumbers.deltaPct > 2) directionLine = `${pct}% ABOVE MARKET`;
-    else directionLine = "MATCHES MARKET";
-    if (verdictCopy.word === "PASS" && directionLine.includes("UNDER MARKET")) {
+    if (verdictNumbers.deltaPct < -2) {
+      directionLine = `${pct}% UNDER MARKET`;
+      directionTone = tone.underMkt;
+    } else if (verdictNumbers.deltaPct > 2) {
+      directionLine = `${pct}% ABOVE MARKET`;
+      directionTone = tone.aboveMkt;
+    } else {
+      directionLine = "MATCHES MARKET";
+    }
+    if (kind === "PASS" && directionLine.includes("UNDER MARKET")) {
       directionLine = "NOT ENOUGH EDGE";
+      directionTone = tone.dim;
     }
   }
 
@@ -862,58 +867,77 @@ function CompactVerdict({
       <Reanimated.View
         style={[
           compactVerdictStyles.card,
-          verdictCopy.silent && compactVerdictStyles.cardSilent,
+          { borderColor: tone.border },
           cardStyle as any,
         ]}
         renderToHardwareTextureAndroid={IS_ANDROID}
         shouldRasterizeIOS={!IS_ANDROID}
       >
+        {/* Layered semantic glow — outer halo + rim ring + accent line.
+            All pointerEvents: none so they never block taps. */}
         <View
           pointerEvents="none"
-          style={[compactVerdictStyles.glow, { backgroundColor: wordTone.glow }]}
+          style={[compactVerdictStyles.haloOuter, { backgroundColor: tone.halo }]}
         />
+        <View
+          pointerEvents="none"
+          style={[compactVerdictStyles.haloRim, { backgroundColor: tone.haloRim }]}
+        />
+        <View
+          pointerEvents="none"
+          style={[compactVerdictStyles.accentLine, { backgroundColor: tone.accent }]}
+        />
+        <View pointerEvents="none" style={compactVerdictStyles.topHighlight} />
 
-        {/* Verdict word + reason title — side by side, baseline-aligned. */}
+        {/* Verdict word + reason title — premium stamp with semantic tone. */}
         <View style={compactVerdictStyles.headerRow}>
+          <View style={compactVerdictStyles.wordStack}>
+            <Text
+              allowFontScaling={false}
+              style={[compactVerdictStyles.word, { color: tone.word }]}
+            >
+              {verdictCopy.word}
+            </Text>
+            <View style={[compactVerdictStyles.wordUnderline, { backgroundColor: tone.accent }]} />
+          </View>
           <Text
             allowFontScaling={false}
-            style={[compactVerdictStyles.word, { color: wordTone.color }]}
-          >
-            {verdictCopy.word}
-          </Text>
-          <Text
-            allowFontScaling={false}
-            numberOfLines={1}
+            numberOfLines={2}
             style={compactVerdictStyles.reasonTitle}
           >
             {verdictCopy.title}
           </Text>
         </View>
 
-        {/* Main delta number + direction caption. */}
+        {/* Main delta number + direction caption — the screen's primary
+            number eye-stop. Caution coloring on above-market regardless
+            of verdict prevents misreading "above" as profit. */}
         {headline ? (
           <Reanimated.View
             style={[compactVerdictStyles.dollarRow, numbersStyle as any]}
             renderToHardwareTextureAndroid={IS_ANDROID}
             shouldRasterizeIOS={!IS_ANDROID}
           >
-            <Text allowFontScaling={false} style={compactVerdictStyles.dollar}>
+            <Text allowFontScaling={false} style={[compactVerdictStyles.dollar, { color: headline.tone }]}>
               <Text style={[compactVerdictStyles.dollarSign, { color: headline.tone }]}>
                 {headline.sign}
               </Text>
               {headline.amount}
             </Text>
             {directionLine ? (
-              <Text allowFontScaling={false} style={compactVerdictStyles.direction}>
-                {directionLine}
-              </Text>
+              <View style={compactVerdictStyles.directionWrap}>
+                <Text
+                  allowFontScaling={false}
+                  style={[compactVerdictStyles.direction, { color: directionTone }]}
+                >
+                  {directionLine}
+                </Text>
+              </View>
             ) : null}
           </Reanimated.View>
         ) : null}
 
-        {/* Cost / Market mini strip — same shape as the legacy hero
-            but inline-baseline instead of stacked cells, since the
-            compact layout has less vertical space to give. */}
+        {/* Cost / Market split — premium label + value with hairline divider. */}
         {verdictNumbers.cost != null || verdictNumbers.market != null ? (
           <Reanimated.View
             style={[compactVerdictStyles.strip, numbersStyle as any]}
@@ -930,6 +954,9 @@ function CompactVerdict({
                 </Text>
               </View>
             ) : null}
+            {verdictNumbers.cost != null && verdictNumbers.market != null ? (
+              <View style={compactVerdictStyles.stripDivider} />
+            ) : null}
             {verdictNumbers.market != null ? (
               <View style={compactVerdictStyles.stripCell}>
                 <Text style={compactVerdictStyles.stripLabel} allowFontScaling={false}>
@@ -943,9 +970,7 @@ function CompactVerdict({
           </Reanimated.View>
         ) : null}
 
-        {/* One-sentence explanation. Compact body copy, restrained tone.
-            Capped at 2 lines so the verdict never paragraph-blooms — Pillar
-            1.5 explicitly trades exhaustive context for a cockpit feel. */}
+        {/* One-sentence explanation — body copy at readable contrast. */}
         <Reanimated.View style={sentenceStyle as any}>
           <Text
             allowFontScaling={false}
@@ -962,117 +987,161 @@ function CompactVerdict({
 }
 
 const compactVerdictStyles = StyleSheet.create({
-  // Pillar 1.8.6 — another ~17% compression on top of 1.8.5. Word 20→18pt,
-  // headline dollar 26→23pt, lineHeights trimmed everywhere, sentence
-  // 11→10.5pt @ 14 lh, strip marginTop/paddingTop dropped, card padding
-  // 8→6. The verdict still leads (BUY stamp + headline are still the
-  // brightest type on screen) but it no longer matches the card in mass —
-  // the eye-flow chain now reads as verdict → card → evidence, not
-  // verdict → evidence → card.
+  // Pillar 2 — verdict signal instrument. The card has real weight (premium
+  // glass surface + semantic border + layered glow halo) so the verdict
+  // reads as a designed instrument, not a thin status slab. Spacing is
+  // generous but the overall footprint stays disciplined (~120-145pt) so
+  // the verdict, card, and dock all fit on iPhone without overlap.
   outer: {
     paddingHorizontal: SP.lg,
-    paddingTop: 3,
+    paddingTop: SP.sm,
     paddingBottom: 0,
   },
   card: {
-    paddingHorizontal: 14,
-    paddingTop: 6,
-    paddingBottom: 6,
-    borderRadius: R.lg,
-    backgroundColor: "rgba(255,255,255,0.020)",
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 13,
+    borderRadius: R.xl,
+    backgroundColor: "rgba(14,14,16,0.55)",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.045)",
+    borderColor: "rgba(255,255,255,0.10)",
     overflow: "hidden",
   },
-  cardSilent: {
-    backgroundColor: "rgba(255,255,255,0.012)",
-    borderColor: "rgba(255,255,255,0.035)",
-  },
-  glow: {
+  // Outer halo — wide soft puddle behind the word, semantic-toned.
+  haloOuter: {
     position: "absolute",
-    top: -4,
-    left: "50%",
-    marginLeft: -140,
-    width: 280,
-    height: 50,
-    borderRadius: 140,
-    opacity: 0.68,
+    top: -28,
+    left: -40,
+    right: -40,
+    height: 120,
+    borderRadius: 80,
+    opacity: 1,
+  },
+  // Rim ring — tighter band tucked under the word for the "ring of light"
+  // signature without making the card look neon.
+  haloRim: {
+    position: "absolute",
+    top: 6,
+    left: -10,
+    width: 160,
+    height: 30,
+    borderRadius: 80,
+    opacity: 0.9,
+  },
+  // Accent line — luminous hairline at the bottom edge of the card. Reads
+  // as the verdict's "signature" stripe.
+  accentLine: {
+    position: "absolute",
+    bottom: 0,
+    left: 14,
+    width: 36,
+    height: 1.5,
+    borderRadius: 1,
+    opacity: 0.55,
+  },
+  topHighlight: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: SIGNAL.panelTopHighlight,
   },
   headerRow: {
     flexDirection: "row",
-    alignItems: "baseline",
-    gap: SP.sm,
+    alignItems: "flex-start",
+    gap: SP.md,
+  },
+  wordStack: {
+    alignItems: "flex-start",
   },
   word: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: "900",
-    letterSpacing: 1.8,
-    lineHeight: 21,
+    letterSpacing: 2.4,
+    lineHeight: 26,
+  },
+  wordUnderline: {
+    width: 22,
+    height: 2,
+    borderRadius: 1,
+    marginTop: 4,
+    opacity: 0.65,
   },
   reasonTitle: {
     flex: 1,
-    fontSize: 11.5,
+    fontSize: 12,
     fontWeight: "600",
-    color: "rgba(255,255,255,0.62)",
-    letterSpacing: 0.15,
-    lineHeight: 15,
+    color: "rgba(255,255,255,0.66)",
+    letterSpacing: 0.1,
+    lineHeight: 16,
+    marginTop: 2,
   },
   dollarRow: {
-    marginTop: 2,
+    marginTop: 10,
     flexDirection: "row",
-    alignItems: "baseline",
+    alignItems: "flex-end",
     gap: SP.sm,
   },
   dollar: {
-    fontSize: 23,
+    fontSize: 30,
     fontWeight: "900",
     color: C.text,
-    letterSpacing: -0.6,
-    lineHeight: 26,
+    letterSpacing: -0.8,
+    lineHeight: 32,
   },
   dollarSign: {
-    fontSize: 23,
+    fontSize: 30,
     fontWeight: "900",
-    letterSpacing: -0.6,
+    letterSpacing: -0.8,
+  },
+  directionWrap: {
+    paddingBottom: 4,
   },
   direction: {
-    fontSize: 8.5,
+    fontSize: 9.5,
     fontWeight: "900",
-    letterSpacing: 1.5,
-    color: "rgba(255,255,255,0.40)",
+    letterSpacing: 1.6,
+    color: SIGNAL.textLabel,
   },
   strip: {
     flexDirection: "row",
-    gap: SP.lg,
-    marginTop: 5,
-    paddingTop: 5,
+    alignItems: "center",
+    gap: SP.md,
+    marginTop: 10,
+    paddingTop: 9,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.05)",
+    borderTopColor: "rgba(255,255,255,0.07)",
   },
   stripCell: {
     flexDirection: "row",
     alignItems: "baseline",
-    gap: 6,
+    gap: 7,
+  },
+  stripDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 12,
+    backgroundColor: "rgba(255,255,255,0.10)",
   },
   stripLabel: {
-    fontSize: 8.5,
+    fontSize: 9,
     fontWeight: "900",
     letterSpacing: 1.5,
-    color: "rgba(255,255,255,0.22)",
+    color: "rgba(255,255,255,0.34)",
   },
   stripValue: {
-    fontSize: 11.5,
+    fontSize: 13,
     fontWeight: "800",
-    color: "rgba(255,255,255,0.72)",
+    color: "rgba(255,255,255,0.85)",
     letterSpacing: -0.2,
   },
   sentence: {
-    marginTop: 4,
-    fontSize: 10.5,
+    marginTop: 9,
+    fontSize: 11.5,
     fontWeight: "500",
-    color: "rgba(255,255,255,0.52)",
-    lineHeight: 14,
-    letterSpacing: 0.1,
+    color: "rgba(255,255,255,0.62)",
+    lineHeight: 16,
+    letterSpacing: 0.05,
   },
 });
 
@@ -1086,36 +1155,77 @@ const compactVerdictStyles = StyleSheet.create({
 // good/warn tone so the user can instantly tell whether the market has
 // real direct links or only pricing signals.
 // ─────────────────────────────────────────────────────────────────────────────
+// Pillar 2 — premium evidence ticker. Each stat is a glass chip with
+// value above label (Bloomberg/Robinhood vocabulary). Value-only stats
+// ("Signal only", "Wide spread") render as semantic-toned trust pills.
+// Wrap-safe at every iPhone width: each chip is a discrete cell, so a
+// long stat never pushes its neighbors off-screen.
 function MarketEvidenceStrip({ stats }: { stats: EvidenceStripStat[] }) {
-  // Pillar 1.6 — flow the proof as a single wrapping sentence instead of
-  // a cell-grid. The cell layout was killing the labels at iPhone width
-  // (CHEC…, MATC…, VERIFI…, SIGN…); a single Text node wraps cleanly to
-  // two lines without truncation and reads as proof rather than as a
-  // spreadsheet. Tone styling is preserved per-segment via nested <Text>.
   if (!stats || stats.length === 0) return null;
   return (
     <View style={evidenceStripStyles.outer}>
       <View style={evidenceStripStyles.row}>
-        <Text
-          style={evidenceStripStyles.proofText}
-          allowFontScaling={false}
-          numberOfLines={3}
-          ellipsizeMode="tail"
-        >
-          {stats.map((s, i) => {
-            const isLabelOnly = !s.value || s.value.length === 0;
-            const isLast = i === stats.length - 1;
-            const valueStyle = [
-              evidenceStripStyles.proofValue,
-              s.tone === "warn" && evidenceStripStyles.proofValueWarn,
-              s.tone === "good" && evidenceStripStyles.proofValueGood,
-              s.tone === "muted" && evidenceStripStyles.proofValueMuted,
-            ];
-            const labelStyle = [
-              evidenceStripStyles.proofLabel,
-              s.tone === "warn" && evidenceStripStyles.proofLabelWarn,
-              s.tone === "good" && evidenceStripStyles.proofLabelGood,
-            ];
+        {stats.map((s, i) => {
+          const isLabelOnly = !s.value || s.value.length === 0;
+          const toneChipStyle =
+            s.tone === "warn"  ? evidenceStripStyles.chipWarn :
+            s.tone === "good"  ? evidenceStripStyles.chipGood :
+            s.tone === "muted" ? evidenceStripStyles.chipMuted :
+            null;
+          const toneValueStyle =
+            s.tone === "warn"  ? evidenceStripStyles.valueWarn :
+            s.tone === "good"  ? evidenceStripStyles.valueGood :
+            s.tone === "muted" ? evidenceStripStyles.valueMuted :
+            null;
+          const toneLabelStyle =
+            s.tone === "warn"  ? evidenceStripStyles.labelWarn :
+            s.tone === "good"  ? evidenceStripStyles.labelGood :
+            null;
+          return (
+            <View
+              key={`${s.label}-${i}`}
+              style={[evidenceStripStyles.chip, toneChipStyle]}
+            >
+              {isLabelOnly ? (
+                <Text
+                  allowFontScaling={false}
+                  numberOfLines={1}
+                  style={[evidenceStripStyles.labelOnly, toneLabelStyle]}
+                >
+                  {s.label}
+                </Text>
+              ) : (
+                <View style={evidenceStripStyles.chipInner}>
+                  <Text
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    style={[evidenceStripStyles.value, toneValueStyle]}
+                  >
+                    {s.value}
+                  </Text>
+                  <Text
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                    style={[evidenceStripStyles.label, toneLabelStyle]}
+                  >
+                    {s.label}
+                  </Text>
+                </View>
+              )}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+// Pillar 2 — legacy single-sentence renderer removed; replaced by the
+// chip-row ticker above which renders the same data set.
+/* LEGACY_BODY_REMOVED_START
+function _legacyBodyRemoved(stats: any[]) {
+  return stats.map((s: any) => {
+    const valueStyle = [];
+    const labelStyle = [];
             // Non-breaking space between value and label so "13 checked"
             // never wraps with the value alone at the end of a line.
             const NB = " ";
@@ -1141,63 +1251,73 @@ function MarketEvidenceStrip({ stats }: { stats: EvidenceStripStat[] }) {
                 ) : null}
               </React.Fragment>
             );
-          })}
-        </Text>
-      </View>
-    </View>
-  );
-}
+LEGACY_BODY_REMOVED_END */
 
 const evidenceStripStyles = StyleSheet.create({
-  // Pillar 1.8.5 — strip weight reduced ~12% so evidence supports the
-  // card instead of competing with it. proofValue 900 → 800, full white
-  // → 0.82 white. proofText 12.5 → 11.5, lineHeight 18 → 16. Row paddingY
-  // 9 → 7, bg fill 0.025 → 0.018. Green/amber accent values toned down a
-  // half-step so the chip color still reads as trust state, not alarm.
-  // The strip remains fully readable — it just no longer outranks the
-  // card in the eye-flow chain.
+  // Pillar 2 — premium ticker readout. Tight breathing space between the
+  // verdict and the card deck below; chips wrap cleanly to two rows on
+  // dense scans without truncating labels. Each chip is a discrete glass
+  // cell — value over label — so eye-flow lands on the numbers first.
   outer: {
-    paddingHorizontal: 18,
-    paddingTop: 6,
-    paddingBottom: 6,
+    paddingHorizontal: SP.lg,
+    paddingTop: 10,
+    paddingBottom: 4,
   },
   row: {
-    // Pillar 1.8.6 — bg 0.018 → 0.014 (~22% less fill), border 0.04 → 0.035.
-    // Strip recedes a little further so the active card is unambiguously
-    // the heaviest element below the verdict.
-    backgroundColor: "rgba(255,255,255,0.014)",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    rowGap: 6,
+  },
+  chip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: R.sm,
+    backgroundColor: SIGNAL.chipBg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.035)",
-    borderRadius: R.md,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderColor: SIGNAL.chipBorder,
   },
-  proofText: {
-    fontSize: 11.5,
-    lineHeight: 16,
-    color: "rgba(255,255,255,0.66)",
-    letterSpacing: 0.05,
+  chipInner: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 5,
   },
-  proofValue: {
-    fontWeight: "800",
-    color: "rgba(255,255,255,0.82)",
-    letterSpacing: -0.05,
+  chipGood: {
+    backgroundColor: SIGNAL.chipBgGood,
+    borderColor: SIGNAL.chipBorderGood,
   },
-  proofValueGood: { color: "rgba(180,255,200,0.78)" },
-  proofValueWarn: { color: "rgba(255,210,140,0.72)" },
-  proofValueMuted: { color: "rgba(255,255,255,0.62)" },
-  proofLabel: {
-    fontWeight: "600",
-    color: "rgba(255,255,255,0.44)",
-    letterSpacing: 0.1,
+  chipWarn: {
+    backgroundColor: SIGNAL.chipBgWarn,
+    borderColor: SIGNAL.chipBorderWarn,
   },
-  proofLabelGood: { color: "rgba(180,255,200,0.66)" },
-  proofLabelWarn: { color: "rgba(255,210,140,0.80)" },
-  proofSep: {
-    // Pillar 1.8.6 — separator alpha 0.18 → 0.13 so the inter-segment dots
-    // float as quiet rhythm marks instead of reading as bullet bookends.
-    color: "rgba(255,255,255,0.13)",
+  chipMuted: {
+    backgroundColor: SIGNAL.chipBg,
+    borderColor: "rgba(255,255,255,0.045)",
+  },
+  value: {
+    fontSize: 12.5,
+    fontWeight: "900",
+    color: SIGNAL.textPrimary,
+    letterSpacing: -0.1,
+  },
+  valueGood:  { color: SIGNAL.textGood },
+  valueWarn:  { color: SIGNAL.textWarn },
+  valueMuted: { color: "rgba(255,255,255,0.66)" },
+  label: {
+    fontSize: 10,
     fontWeight: "700",
+    color: SIGNAL.textLabel,
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  labelGood: { color: SIGNAL.textGood, opacity: 0.78 },
+  labelWarn: { color: SIGNAL.textWarn, opacity: 0.86 },
+  labelOnly: {
+    fontSize: 10.5,
+    fontWeight: "800",
+    color: SIGNAL.textLabel,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
   },
 });
 
@@ -1399,25 +1519,29 @@ const railStyles = StyleSheet.create({
     paddingRight: SP.lg,
     gap: SP.sm,
   },
+  // Pillar 2 — rail mini-card aligned with the SIGNAL token vocabulary.
+  // Active state uses the same row-spotlight palette as Market Depth so
+  // the two surfaces feel like one connected market view.
   mini: {
-    width: 130,
-    backgroundColor: "rgba(255,255,255,0.025)",
+    width: 134,
+    backgroundColor: SIGNAL.rowBg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.06)",
+    borderColor: SIGNAL.rowBorder,
     borderRadius: R.md,
-    padding: SP.sm,
+    padding: 10,
   },
   miniActive: {
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: SIGNAL.rowBgActive,
+    borderColor: SIGNAL.rowBorderActive,
+    borderWidth: 1,
   },
   miniThumbWrap: {
     width: "100%",
-    height: 70,
+    height: 74,
     borderRadius: R.sm,
     overflow: "hidden",
-    backgroundColor: "rgba(255,255,255,0.04)",
-    marginBottom: SP.xs,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    marginBottom: 6,
   },
   miniThumb: { width: "100%", height: "100%" },
   miniThumbPlaceholder: {
@@ -1426,27 +1550,28 @@ const railStyles = StyleSheet.create({
     justifyContent: "center",
   },
   miniPrice: {
-    fontSize: 15,
+    fontSize: 15.5,
     fontWeight: "900",
-    color: C.text,
-    letterSpacing: -0.2,
+    color: SIGNAL.textPrimary,
+    letterSpacing: -0.25,
   },
   miniSource: {
     fontSize: 10,
     fontWeight: "700",
-    color: C.text3,
+    color: SIGNAL.textLabel,
     marginTop: 1,
-    letterSpacing: 0.1,
+    letterSpacing: 0.15,
   },
   miniSubtitle: {
     fontSize: 9,
-    fontWeight: "700",
-    marginTop: 4,
-    letterSpacing: 0.2,
+    fontWeight: "800",
+    marginTop: 5,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
-  miniSubVerified: { color: "rgba(180,255,200,0.85)" },
-  miniSubPricing: { color: "rgba(255,210,140,0.78)" },
-  miniSubDefault: { color: C.text3 },
+  miniSubVerified: { color: SIGNAL.textGood },
+  miniSubPricing:  { color: SIGNAL.textWarn },
+  miniSubDefault:  { color: SIGNAL.textLabel },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1561,26 +1686,38 @@ function MarketDepthBlock({
         </View>
       ) : null}
 
-      {/* Inline mini-rail of the strong cards. Stays inside the depth
-          block so the user can still tap to re-snap the deck — but
-          presented as a tight row of evidence rather than a fake rail. */}
+      {/* Pillar 2 — premium market tape. Each strong card renders as a
+          glass row with thumbnail · price · source · badge. The active
+          row gets a brighter fill + border + ambient glow so swiping the
+          deck instantly spotlights the matching depth row. Tapping any
+          row routes through onSelect (same handleSnap path) so the deck
+          updates in the same React tick. */}
       {strongN > 1 ? (
         <View style={depthStyles.evidenceRow}>
-          {cards.slice(0, Math.min(3, cards.length)).map((card, i) => {
+          {cards.slice(0, Math.min(6, cards.length)).map((card, i) => {
             const idx = i;
             const isActive = idx === selectedIndex;
             const labelText = evidenceLabel(card);
+            const verified = isVerifiedListing(card);
+            const signalOnly = isPricingSignal(card);
             const price = Number.isFinite(Number(card.price))
               ? Number(card.price)
               : null;
+            const source =
+              (typeof card.store === "string" && card.store) ||
+              (typeof card.source === "string" && card.source) ||
+              "Marketplace";
             return (
               <PressableScale
                 key={`depth-mini-${idx}`}
                 onPress={() => onSelect(idx)}
                 style={[depthStyles.miniRow, isActive && depthStyles.miniRowActive]}
-                scale={0.97}
+                scale={0.98}
                 haptic
               >
+                {isActive ? (
+                  <View pointerEvents="none" style={depthStyles.miniRowGlow} />
+                ) : null}
                 {card.image ? (
                   <Image
                     source={{ uri: String(card.image) }}
@@ -1589,22 +1726,37 @@ function MarketDepthBlock({
                   />
                 ) : (
                   <View style={depthStyles.miniRowThumbPlaceholder}>
-                    <Ionicons name="image-outline" size={12} color="rgba(255,255,255,0.22)" />
+                    <Ionicons name="image-outline" size={14} color="rgba(255,255,255,0.28)" />
                   </View>
                 )}
-                <View style={depthStyles.miniRowText}>
+                <View style={depthStyles.miniRowBody}>
                   <Text
-                    style={depthStyles.miniRowPrice}
+                    style={[depthStyles.miniRowPrice, isActive && depthStyles.miniRowPriceActive]}
                     allowFontScaling={false}
                     numberOfLines={1}
                   >
                     {price != null ? fmtMoney(price) : "—"}
                   </Text>
                   <Text
+                    style={depthStyles.miniRowSource}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                  >
+                    {source}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    depthStyles.miniRowBadge,
+                    verified && depthStyles.miniRowBadgeGood,
+                    signalOnly && depthStyles.miniRowBadgeWarn,
+                  ]}
+                >
+                  <Text
                     style={[
-                      depthStyles.miniRowLabel,
-                      isVerifiedListing(card) && depthStyles.miniRowLabelGood,
-                      isPricingSignal(card) && depthStyles.miniRowLabelWarn,
+                      depthStyles.miniRowBadgeText,
+                      verified && depthStyles.miniRowBadgeTextGood,
+                      signalOnly && depthStyles.miniRowBadgeTextWarn,
                     ]}
                     allowFontScaling={false}
                     numberOfLines={1}
@@ -1622,123 +1774,167 @@ function MarketDepthBlock({
 }
 
 const depthStyles = StyleSheet.create({
-  // Pillar 1.8.6 — outer marginTop SP.lg (16) → 22 so the depth block
-  // (thin-market replacement for the rail) lands with the same gap
-  // below the pager as the rail does. Keeps section rhythm consistent
-  // whether the user has 3 alternates (depth block) or 4+ (rail).
+  // Pillar 2 — Market Depth panel. Tighter margin alignment with verdict
+  // + ticker so the screen reads as one designed system rather than a
+  // stack of one-off sections.
   outer: {
-    marginTop: 22,
-    marginHorizontal: 18,
+    marginTop: 26,
+    marginHorizontal: SP.lg,
     paddingTop: SP.sm,
     paddingBottom: 4,
   },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    marginBottom: 8,
+    gap: 7,
+    marginBottom: 10,
   },
   header: {
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: "900",
-    color: "rgba(255,255,255,0.78)",
-    letterSpacing: 1.3,
+    color: "rgba(255,255,255,0.86)",
+    letterSpacing: 1.5,
     textTransform: "uppercase",
   },
   sentence: {
-    fontSize: 13.5,
-    fontWeight: "600",
-    color: "rgba(255,255,255,0.88)",
-    lineHeight: 19,
-    letterSpacing: 0,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.92)",
+    lineHeight: 20,
+    letterSpacing: -0.1,
   },
   chipRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 6,
     rowGap: 6,
-    marginTop: 10,
+    marginTop: 12,
   },
   chip: {
-    paddingVertical: 4,
-    paddingHorizontal: 9,
-    backgroundColor: "rgba(255,255,255,0.045)",
-    borderRadius: R.pill,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    backgroundColor: SIGNAL.chipBg,
+    borderRadius: R.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.08)",
+    borderColor: SIGNAL.chipBorder,
   },
   chipWarn: {
-    backgroundColor: "rgba(255,210,140,0.07)",
-    borderColor: "rgba(255,210,140,0.22)",
+    backgroundColor: SIGNAL.chipBgWarn,
+    borderColor: SIGNAL.chipBorderWarn,
   },
   chipGood: {
-    backgroundColor: "rgba(180,255,200,0.06)",
-    borderColor: "rgba(180,255,200,0.22)",
+    backgroundColor: SIGNAL.chipBgGood,
+    borderColor: SIGNAL.chipBorderGood,
   },
   chipText: {
-    fontSize: 10,
+    fontSize: 10.5,
     fontWeight: "800",
-    color: "rgba(255,255,255,0.62)",
-    letterSpacing: 0.3,
+    color: SIGNAL.textLabel,
+    letterSpacing: 0.4,
   },
-  chipTextWarn: { color: "rgba(255,215,150,0.92)" },
-  chipTextGood: { color: "rgba(195,255,210,0.92)" },
+  chipTextWarn: { color: SIGNAL.textWarn },
+  chipTextGood: { color: SIGNAL.textGood },
   evidenceRow: {
     flexDirection: "column",
-    gap: 6,
-    marginTop: 10,
+    gap: 8,
+    marginTop: 14,
   },
+  // Pillar 2 — premium market tape row. Each row is a glass pill with a
+  // 36px thumbnail + price/source stack + tone-aware badge. Selected row
+  // gets a wider border + brighter fill + soft inner glow plate so the
+  // spotlight is unmistakable against the inactive rows. Inactive rows
+  // are intentionally restrained — the eye locks on the active one.
   miniRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: SP.sm,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    backgroundColor: "rgba(255,255,255,0.025)",
-    borderRadius: R.sm,
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: SIGNAL.rowBg,
+    borderRadius: R.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.05)",
+    borderColor: SIGNAL.rowBorder,
+    overflow: "hidden",
   },
   miniRowActive: {
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderColor: "rgba(255,255,255,0.16)",
+    backgroundColor: SIGNAL.rowBgActive,
+    borderColor: SIGNAL.rowBorderActive,
+    borderWidth: 1,
+  },
+  // Pillar 2 — active-row spotlight. Soft inner light that sits behind
+  // the content so the row feels lit-from-within rather than outlined.
+  // Sized to span the row without bleeding outside the rounded border.
+  miniRowGlow: {
+    position: "absolute",
+    top: -8,
+    left: -8,
+    right: -8,
+    bottom: -8,
+    backgroundColor: SIGNAL.rowGlowActive,
+    opacity: 0.55,
   },
   miniRowThumb: {
-    width: 28,
-    height: 28,
+    width: 36,
+    height: 36,
     borderRadius: R.sm,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: "rgba(255,255,255,0.05)",
   },
   miniRowThumbPlaceholder: {
-    width: 28,
-    height: 28,
+    width: 36,
+    height: 36,
     borderRadius: R.sm,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: "rgba(255,255,255,0.05)",
     alignItems: "center",
     justifyContent: "center",
   },
-  miniRowText: {
+  miniRowBody: {
     flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: SP.sm,
+    flexDirection: "column",
+    justifyContent: "center",
+    gap: 1,
   },
   miniRowPrice: {
-    fontSize: 12,
+    fontSize: 14.5,
     fontWeight: "900",
-    color: C.text,
+    color: SIGNAL.textPrimary,
     letterSpacing: -0.2,
   },
-  miniRowLabel: {
-    fontSize: 9,
+  miniRowPriceActive: {
+    color: "#ffffff",
+  },
+  miniRowSource: {
+    fontSize: 10.5,
     fontWeight: "700",
-    color: C.text3,
-    letterSpacing: 0.2,
+    color: SIGNAL.textLabel,
+    letterSpacing: 0.15,
+  },
+  // Pillar 2 — badge replaces the inline uppercase label. Verified → soft
+  // emerald pill; pricing signal → restrained amber; default → muted glass.
+  miniRowBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: R.pill,
+    backgroundColor: SIGNAL.chipBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: SIGNAL.chipBorder,
+  },
+  miniRowBadgeGood: {
+    backgroundColor: SIGNAL.chipBgGood,
+    borderColor: SIGNAL.chipBorderGood,
+  },
+  miniRowBadgeWarn: {
+    backgroundColor: SIGNAL.chipBgWarn,
+    borderColor: SIGNAL.chipBorderWarn,
+  },
+  miniRowBadgeText: {
+    fontSize: 9.5,
+    fontWeight: "900",
+    color: SIGNAL.textLabel,
+    letterSpacing: 0.6,
     textTransform: "uppercase",
   },
-  miniRowLabelGood: { color: "rgba(180,255,200,0.82)" },
-  miniRowLabelWarn: { color: "rgba(255,210,140,0.78)" },
+  miniRowBadgeTextGood: { color: SIGNAL.textGood },
+  miniRowBadgeTextWarn: { color: SIGNAL.textWarn },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1750,76 +1946,132 @@ const depthStyles = StyleSheet.create({
 // which knows about verified vs pricing-signal evidence, spread label,
 // and visual-match strength — so it never claims certainty it doesn't have.
 // ─────────────────────────────────────────────────────────────────────────────
+// Pillar 2 — Evan's Read premium AI panel. Glass surface + sparkle icon
+// header + readable explanation + semantic-toned chips. Chips that name
+// trust signals ("Verified listings found") read as good; chips that
+// name market weakness ("Pricing signal only", "Thin market", "Weak
+// resale") read as warning. Chips that just describe state ("Mixed
+// market", "Wide spread") stay muted. The language never overpromises —
+// weak evidence still reads as weak.
+const _EVANS_READ_GOOD_RE = /verified|hidden gem|strong/i;
+const _EVANS_READ_WARN_RE = /pricing signal|signal only|thin|low confidence|low direct|weak|wide spread|risky/i;
+function _evansChipTone(label: string): "good" | "warn" | "muted" {
+  if (_EVANS_READ_GOOD_RE.test(label)) return "good";
+  if (_EVANS_READ_WARN_RE.test(label)) return "warn";
+  return "muted";
+}
+
 function EvansReadBlock({ read }: { read: EvansReadData }) {
   if (!read || !read.sentence) return null;
   return (
     <View style={evansReadStyles.outer}>
-      <View style={evansReadStyles.headerRow}>
-        <Ionicons name="sparkles" size={10} color={C.text3} />
-        <Text style={evansReadStyles.header} allowFontScaling={false}>
-          Evan&apos;s Read
-        </Text>
-      </View>
-      {/* Pillar 1.5 — capped at 3 lines so the read stays a scout note,
-          not a paragraph. The chip row carries the structured judgement. */}
-      <Text
-        style={evansReadStyles.sentence}
-        allowFontScaling={false}
-        numberOfLines={3}
-        ellipsizeMode="tail"
-      >
-        {read.sentence}
-      </Text>
-      {read.chips.length > 0 ? (
-        <View style={evansReadStyles.chipRow}>
-          {read.chips.map((c, i) => (
-            <View key={`chip-${i}-${c}`} style={evansReadStyles.chip}>
-              <Text
-                style={evansReadStyles.chipText}
-                allowFontScaling={false}
-                numberOfLines={1}
-              >
-                {c}
-              </Text>
-            </View>
-          ))}
+      <View style={evansReadStyles.panel}>
+        <View pointerEvents="none" style={evansReadStyles.panelTopHighlight} />
+        <View style={evansReadStyles.headerRow}>
+          <View style={evansReadStyles.iconWrap}>
+            <Ionicons name="sparkles" size={11} color="rgba(180,210,255,0.92)" />
+          </View>
+          <Text style={evansReadStyles.header} allowFontScaling={false}>
+            Evan&apos;s Read
+          </Text>
         </View>
-      ) : null}
+        <Text
+          style={evansReadStyles.sentence}
+          allowFontScaling={false}
+          numberOfLines={4}
+          ellipsizeMode="tail"
+        >
+          {read.sentence}
+        </Text>
+        {read.chips.length > 0 ? (
+          <View style={evansReadStyles.chipRow}>
+            {read.chips.map((c, i) => {
+              const tone = _evansChipTone(c);
+              return (
+                <View
+                  key={`chip-${i}-${c}`}
+                  style={[
+                    evansReadStyles.chip,
+                    tone === "good" && evansReadStyles.chipGood,
+                    tone === "warn" && evansReadStyles.chipWarn,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      evansReadStyles.chipText,
+                      tone === "good" && evansReadStyles.chipTextGood,
+                      tone === "warn" && evansReadStyles.chipTextWarn,
+                    ]}
+                    allowFontScaling={false}
+                    numberOfLines={1}
+                  >
+                    {c}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
 
 const evansReadStyles = StyleSheet.create({
-  // Pillar 1.8 — marginTop SP.sm → SP.md so Evan's Read lands as a
-  // discrete beat below Market Depth, not as a continuation of it.
-  // marginX SP.lg → 18 aligns with the new section rhythm; paddingTop
-  // bumps to SP.md for a more confident header strip.
+  // Pillar 2 — Evan's Read is now a glass intelligence panel rather than
+  // a free-floating text block under a hairline rule. Same content,
+  // higher production value.
   outer: {
-    marginTop: SP.md,
-    marginHorizontal: 18,
-    paddingTop: SP.md,
+    marginTop: 18,
+    marginHorizontal: SP.lg,
     paddingBottom: SP.xs,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.06)",
+  },
+  panel: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 12,
+    backgroundColor: "rgba(14,14,18,0.62)",
+    borderRadius: R.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: SIGNAL.panelBorder,
+    overflow: "hidden",
+  },
+  panelTopHighlight: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: SIGNAL.panelTopHighlight,
   },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    marginBottom: 4,
+    gap: 7,
+    marginBottom: 7,
+  },
+  iconWrap: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(140,180,220,0.10)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(180,210,240,0.20)",
   },
   header: {
-    fontSize: 9,
+    fontSize: 10.5,
     fontWeight: "900",
-    letterSpacing: 1.5,
-    color: C.text3,
+    letterSpacing: 1.6,
+    color: "rgba(255,255,255,0.86)",
     textTransform: "uppercase",
   },
   sentence: {
-    fontSize: 12,
-    fontWeight: "500",
-    color: C.text2,
-    lineHeight: 16.5,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.84)",
+    lineHeight: 18.5,
     letterSpacing: 0.05,
   },
   chipRow: {
@@ -1827,22 +2079,32 @@ const evansReadStyles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 6,
     rowGap: 6,
-    marginTop: 8,
+    marginTop: 11,
   },
   chip: {
-    paddingVertical: 3,
-    paddingHorizontal: 7,
-    backgroundColor: "rgba(255,255,255,0.04)",
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    backgroundColor: SIGNAL.chipBg,
     borderRadius: R.pill,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(255,255,255,0.07)",
+    borderColor: SIGNAL.chipBorder,
+  },
+  chipGood: {
+    backgroundColor: SIGNAL.chipBgGood,
+    borderColor: SIGNAL.chipBorderGood,
+  },
+  chipWarn: {
+    backgroundColor: SIGNAL.chipBgWarn,
+    borderColor: SIGNAL.chipBorderWarn,
   },
   chipText: {
-    fontSize: 9,
-    fontWeight: "700",
-    color: C.text3,
-    letterSpacing: 0.15,
+    fontSize: 10,
+    fontWeight: "800",
+    color: SIGNAL.textLabel,
+    letterSpacing: 0.3,
   },
+  chipTextGood: { color: SIGNAL.textGood },
+  chipTextWarn: { color: SIGNAL.textWarn },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
