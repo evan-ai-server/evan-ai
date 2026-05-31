@@ -1290,14 +1290,14 @@ const evidenceStripStyles = StyleSheet.create({
   // Pillar 2.1 — paddingBottom 4 → 12 to add visible breathing space
   // between the ticker and the main card below (the user flagged the
   // card was sitting too close / too high relative to the ticker).
-  // Pillar 2.2 — bumped further to 24. After Pillar 2.1, the user said
-  // the deck still felt visually attached to the ticker — eye perceived
-  // them as one block. +12px more separation lets the Verdict / Ticker /
-  // Deck read as three distinct layers without feeling distant.
+  // Pillar 2.3 — 24 → 32. Screenshots still showed the deck sitting
+  // slightly attached to the chips at their bottom edge. +8px completes
+  // the three-layer breathing rhythm: Verdict / Chips / Deck each own
+  // their own visual zone.
   outer: {
     paddingHorizontal: SP.lg,
     paddingTop: 10,
-    paddingBottom: 24,
+    paddingBottom: 32,
   },
   // Pillar 2.1 — justifyContent: "center" so the chip cluster reads as an
   // optically centered ticker rather than a left-stacked dev strip. When
@@ -1828,13 +1828,13 @@ const depthStyles = StyleSheet.create({
   // Pillar 2 — Market Depth panel. Tighter margin alignment with verdict
   // + ticker so the screen reads as one designed system rather than a
   // stack of one-off sections.
-  // Pillar 2.2 — marginTop 26 → 14 so the Market Depth header sits closer
-  // to the bottom of the deck, becoming discoverable sooner on the first
-  // viewport. The user said it was "arriving too late" — barely visible
-  // at the bottom of multiple screenshots. -12px brings the section header
-  // into the deck's natural eye-flow without crowding the page indicator.
+  // Pillar 2.3 — 14 → 20. The ticker padding bump (+8) pushed the deck
+  // down, so Market Depth had gained effective tightness from above.
+  // Adding 6px here restores the intended "intentionally introduced"
+  // rhythm so the section header feels like it breathes into view rather
+  // than snapping directly against the pager dots.
   outer: {
-    marginTop: 14,
+    marginTop: 20,
     marginHorizontal: SP.lg,
     paddingTop: SP.sm,
     paddingBottom: 4,
