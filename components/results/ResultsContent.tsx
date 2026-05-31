@@ -255,6 +255,13 @@ export const ResultsContent = React.memo(function ResultsContent({
   // the surrounding chrome (identity breadcrumb, deck) into the scene.
   const chromeEntrance = useSharedValue(0);
   const deckEntrance   = useSharedValue(0);
+  // Pillar 3C — "Market assembles" stagger. After the deck lands at
+  // ~620ms, Market Depth (or the BestMarketMatchesRail when comps are
+  // thick) drifts up next at 700ms, then Evan's Read at 770ms. Each is
+  // a one-shot opacity + tiny translateY. Stays GPU-only, settles to
+  // (1, 0) and never animates again. No perpetual loops.
+  const depthEntrance      = useSharedValue(0);
+  const evansReadEntrance  = useSharedValue(0);
 
   // Track whether we have ever shown results (so loading container
   // only does its entrance animation once)
@@ -296,6 +303,18 @@ export const ResultsContent = React.memo(function ResultsContent({
       deckEntrance.value   = 0;
       chromeEntrance.value = withDelay(160, withTiming(1, { duration: 320, easing: panthere }));
       deckEntrance.value   = withDelay(620, withTiming(1, { duration: 340, easing: panthere }));
+
+      // 4. Pillar 3C — section stagger. Market Depth lands 80ms after
+      //    the deck starts entering, Evan's Read lands 150ms after.
+      //    Tiny 6–8px upward drift + opacity-only. The translateY runs
+      //    against the page's solid black background and the sections
+      //    have no background of their own, so the entrance reads as
+      //    the section "rising into place" without any flicker — same
+      //    safety bet as the verdict's opacity-only entrance.
+      depthEntrance.value     = 0;
+      evansReadEntrance.value = 0;
+      depthEntrance.value     = withDelay(700, withTiming(1, { duration: 260, easing: panthere }));
+      evansReadEntrance.value = withDelay(770, withTiming(1, { duration: 280, easing: panthere }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingResults, activeResult]);
@@ -319,6 +338,29 @@ export const ResultsContent = React.memo(function ResultsContent({
 
   const deckAnimStyle = useAnimatedStyle(() => ({
     opacity: interpolate(deckEntrance.value, [0, 1], [0, 1], Extrapolation.CLAMP),
+  }));
+
+  // Pillar 3C — Market Depth / rail entrance. Opacity + 6px upward
+  // drift. translateY uses `interpolate` with Extrapolation.CLAMP so a
+  // stale value at the boundary can never push the section past 0
+  // (the rest position). When the animation settles to value=1, the
+  // style resolves to opacity=1, translateY=0 and stays there — no
+  // perpetual recomputation since the SharedValue stops mutating.
+  const depthAnimStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(depthEntrance.value, [0, 1], [0, 1], Extrapolation.CLAMP),
+    transform: [
+      { translateY: interpolate(depthEntrance.value, [0, 1], [6, 0], Extrapolation.CLAMP) },
+    ],
+  }));
+
+  // Pillar 3C — Evan's Read entrance. 8px upward drift (slightly
+  // deeper than depth to read as "settling in after" rather than
+  // "appearing with"). Same safety pattern.
+  const evansReadAnimStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(evansReadEntrance.value, [0, 1], [0, 1], Extrapolation.CLAMP),
+    transform: [
+      { translateY: interpolate(evansReadEntrance.value, [0, 1], [8, 0], Extrapolation.CLAMP) },
+    ],
   }));
 
   // Pillar 2 — single sync path. Every active-listing change (swipe
@@ -564,16 +606,32 @@ export const ResultsContent = React.memo(function ResultsContent({
                   through to bring a specific listing into the deck. The
                   read is Evan's interpretation — a short data-driven
                   sentence + 2–4 chips so the screen reads as analysis,
-                  not a search results page. */}
-              <BestMarketMatchesRail
-                cards={allMarketCards}
-                selectedIndex={selectedIndex}
-                onSelect={handleRailSelect}
-                listingsChecked={listingsChecked}
-                marketStats={marketStats}
-              />
+                  not a search results page.
+                  Pillar 3C — both sections wrapped in entrance Reanimated
+                  views so they stagger into place after the deck instead
+                  of appearing all-at-once. Pure transform + opacity, no
+                  layout mutation, no scale, no perpetual loop. */}
+              <Reanimated.View
+                style={depthAnimStyle as any}
+                renderToHardwareTextureAndroid={IS_ANDROID}
+                shouldRasterizeIOS={!IS_ANDROID}
+              >
+                <BestMarketMatchesRail
+                  cards={allMarketCards}
+                  selectedIndex={selectedIndex}
+                  onSelect={handleRailSelect}
+                  listingsChecked={listingsChecked}
+                  marketStats={marketStats}
+                />
+              </Reanimated.View>
 
-              <EvansReadBlock read={evansRead} />
+              <Reanimated.View
+                style={evansReadAnimStyle as any}
+                renderToHardwareTextureAndroid={IS_ANDROID}
+                shouldRasterizeIOS={!IS_ANDROID}
+              >
+                <EvansReadBlock read={evansRead} />
+              </Reanimated.View>
             </>
           ) : null}
 
@@ -856,18 +914,48 @@ function CompactVerdict({
   const cardOpacity = useSharedValue(0);
   const numbersOpacity = useSharedValue(0);
   const sentenceOpacity = useSharedValue(0);
+  // Pillar 3C — one-shot luminous sweep across the verdict capsule.
+  // sweepProgress goes 0 → 1 once per fresh activeResult; the sweep
+  // renders an absolutely-positioned `pointerEvents: none` slab that
+  // translateX-es across the card from off-left to off-right, opacity
+  // peaking at 0.5 and feathering to 0 at the edges. Card has
+  // `overflow: hidden` so the slab is clipped to the capsule. No
+  // perpetual loop — when the timing finishes, the slab sits off-screen
+  // and the worklet stops. Same one-shot pattern the existing
+  // BadgeShimmer in ResultCard uses on label badges.
+  const sweepProgress = useSharedValue(0);
   useEffect(() => {
     cardOpacity.value = 0;
     numbersOpacity.value = 0;
     sentenceOpacity.value = 0;
+    sweepProgress.value = 0;
     cardOpacity.value = withTiming(1, { duration: 320, easing: panthere });
     numbersOpacity.value = withDelay(180, withTiming(1, { duration: 280, easing: panthere }));
     sentenceOpacity.value = withDelay(360, withTiming(1, { duration: 280, easing: panthere }));
+    // Sweep waits until the card is fully visible, then runs once.
+    sweepProgress.value = withDelay(440, withTiming(1, { duration: 600, easing: Easing.inOut(Easing.cubic) }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeResult]);
   const cardStyle = useAnimatedStyle(() => ({ opacity: cardOpacity.value }));
   const numbersStyle = useAnimatedStyle(() => ({ opacity: numbersOpacity.value }));
   const sentenceStyle = useAnimatedStyle(() => ({ opacity: sentenceOpacity.value }));
+  const sweepStyle = useAnimatedStyle(() => ({
+    // translateX: -160 → screen width-ish. The card width on iPhone 14
+    // is roughly 360pt; we sweep from off-left (-160) to off-right
+    // (+440) so the band fully crosses regardless of card width.
+    transform: [
+      { translateX: interpolate(sweepProgress.value, [0, 1], [-160, 440], Extrapolation.CLAMP) },
+      { rotate: "8deg" },
+    ] as any,
+    // Triangle opacity envelope: 0 → 0.5 → 0 across the sweep so the
+    // band feathers in and out cleanly. Settles at 0.
+    opacity: interpolate(
+      sweepProgress.value,
+      [0, 0.15, 0.5, 0.85, 1],
+      [0, 0.32, 0.5, 0.18, 0],
+      Extrapolation.CLAMP,
+    ),
+  }));
 
   return (
     <View style={compactVerdictStyles.outer}>
@@ -895,6 +983,14 @@ function CompactVerdict({
           style={[compactVerdictStyles.accentLine, { backgroundColor: tone.accent }]}
         />
         <View pointerEvents="none" style={compactVerdictStyles.topHighlight} />
+        {/* Pillar 3C — one-shot luminous sweep. Absolute, clipped by
+            the card's overflow:hidden, never blocks gestures. Runs once
+            per fresh scan ~440ms after the card opacity-fade starts,
+            takes ~600ms to cross, then sits off-screen with opacity 0. */}
+        <Reanimated.View
+          pointerEvents="none"
+          style={[compactVerdictStyles.sweep, sweepStyle as any]}
+        />
 
         {/* Verdict word + reason title — premium stamp with semantic tone. */}
         <View style={compactVerdictStyles.headerRow}>
@@ -1059,6 +1155,21 @@ const compactVerdictStyles = StyleSheet.create({
     right: 0,
     height: 1,
     backgroundColor: SIGNAL.panelTopHighlight,
+  },
+  // Pillar 3C — diagonal luminous band for the one-shot reveal sweep.
+  // Thin (60px wide) and slightly rotated so it reads as a moving
+  // highlight across glass rather than a horizontal bar. Card's
+  // overflow:hidden clips it; pointerEvents:none on the parent View
+  // keeps it gesture-inert. White-on-translucent so it works against
+  // all three verdict tone backgrounds (BUY emerald, HOLD silver,
+  // PASS ember) without re-tinting.
+  sweep: {
+    position: "absolute",
+    top: -40,
+    bottom: -40,
+    width: 60,
+    left: 0,
+    backgroundColor: "rgba(255,255,255,0.10)",
   },
   headerRow: {
     flexDirection: "row",
