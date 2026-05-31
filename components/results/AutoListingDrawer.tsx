@@ -17,7 +17,12 @@ import {
   Platform,
   ActivityIndicator,
   Share,
+  Dimensions,
 } from "react-native";
+
+const { height: SCREEN_H } = Dimensions.get("window");
+const DRAWER_MAX_H = Math.min(Math.round(SCREEN_H * 0.58), 560);
+const DRAWER_MIN_H = Math.max(Math.round(SCREEN_H * 0.48), 300);
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
@@ -106,12 +111,20 @@ export function AutoListingDrawer({ visible, scanContext, apiBase, onClose }: Au
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch(`${apiBase}/api/listing/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scanContext }),
-        signal: AbortSignal.timeout(25000),
-      });
+      // AbortSignal.timeout is not available on Hermes / React Native.
+      const _listCtrl = new AbortController();
+      const _listTimer = setTimeout(() => _listCtrl.abort(), 25000);
+      let resp: Response;
+      try {
+        resp = await fetch(`${apiBase}/api/listing/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scanContext }),
+          signal: _listCtrl.signal,
+        });
+      } finally {
+        clearTimeout(_listTimer);
+      }
       const json = await resp.json();
       if (json?.ok && json.listing) {
         setListing(json.listing);
@@ -463,8 +476,8 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: R.xxl,
     borderTopRightRadius: R.xxl,
     overflow: "hidden",
-    maxHeight: "90%",
-    minHeight: 340,
+    maxHeight: DRAWER_MAX_H,
+    minHeight: DRAWER_MIN_H,
     backgroundColor: "rgba(10,10,10,0.96)",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "rgba(255,255,255,0.12)",

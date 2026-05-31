@@ -19,7 +19,14 @@ import {
   Keyboard,
   Platform,
   ActivityIndicator,
+  Dimensions,
 } from "react-native";
+
+const { height: SCREEN_H } = Dimensions.get("window");
+// ~52% of the screen. Max clamps on very short phones; min ensures
+// there is always enough room for header + a couple of messages + input.
+const DRAWER_MAX_H = Math.min(Math.round(SCREEN_H * 0.58), 560);
+const DRAWER_MIN_H = Math.max(Math.round(SCREEN_H * 0.48), 320);
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
@@ -484,12 +491,21 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
     };
 
     try {
-      const resp = await fetch(`${apiBase}/api/ask`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(20000),
-      });
+      // AbortSignal.timeout is not available on Hermes / React Native.
+      // Use a manual controller + setTimeout instead.
+      const _askCtrl = new AbortController();
+      const _askTimer = setTimeout(() => _askCtrl.abort(), 20000);
+      let resp: Response;
+      try {
+        resp = await fetch(`${apiBase}/api/ask`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+          signal: _askCtrl.signal,
+        });
+      } finally {
+        clearTimeout(_askTimer);
+      }
       console.log("ASK_AI_SEND_HTTP_STATUS", { status: resp.status, ok: resp.ok });
       const rawText = await resp.text();
       // Spec-required raw log — before JSON.parse so we see exactly what
@@ -673,7 +689,7 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
             ref={scrollRef}
             style={[
               styles.messageList,
-              { maxHeight: kbVisible ? 240 : 360 },
+              { maxHeight: kbVisible ? Math.round(DRAWER_MAX_H * 0.42) : DRAWER_MAX_H - 160 },
             ]}
             contentContainerStyle={styles.messageContent}
             keyboardShouldPersistTaps="handled"
@@ -876,7 +892,8 @@ const styles = StyleSheet.create({
   drawer: {
     borderRadius: R.xxl,
     overflow: "hidden",
-    maxHeight: 520,
+    maxHeight: DRAWER_MAX_H,
+    minHeight: DRAWER_MIN_H,
     backgroundColor: "rgba(10,10,10,0.96)",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.12)",
@@ -952,14 +969,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  // Messages — bounded scroll area instead of flex:1. With flex:1 the
-  // ScrollView demanded all available drawer space, which forced the
-  // drawer's `maxHeight: 78%` to actually materialize even when only the
-  // suggested-questions strip was on screen. Hard 320px cap means the
-  // panel stays compact when empty and only grows the visible chat
-  // window once messages exist.
+  // Messages — bounded scroll area. Cap is sized relative to the new
+  // half-screen drawer so the list never consumes all the space and
+  // leaves no room for the input. Inline kbVisible override in JSX
+  // tightens this further when the keyboard is up.
   messageList: {
-    maxHeight: 320,
+    maxHeight: DRAWER_MAX_H - 160,   // header ~56 + input row ~52 + breathing ~52
   },
   messageContent: {
     padding: SP.lg,
