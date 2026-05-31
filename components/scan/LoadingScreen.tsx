@@ -42,7 +42,21 @@ const panthereRN = RNEasing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANT
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type LoadingStage = "idle" | "vision" | "market" | "analysis" | "collector";
+// Pillar 3A — 4-step taxonomy. The user-facing pipeline is now:
+//   1. Identifying item        ← vision
+//   2. Searching market        ← market
+//   3. Filtering bad matches   ← analysis  (and "collector" sub-phase)
+//   4. Building verdict        ← verdict   (new, always fires at the end)
+// "collector" maps to step 3 because it's a junk-filter / hidden-value
+// pass — same conceptual zone as analysis. "verdict" is a new stage
+// the parent fires explicitly before flipping loadingResults=false.
+export type LoadingStage =
+  | "idle"
+  | "vision"
+  | "market"
+  | "analysis"
+  | "collector"
+  | "verdict";
 
 interface LoadingScreenProps {
   photoUri?: string | null;
@@ -62,15 +76,25 @@ interface LoadingScreenProps {
 }
 
 const STAGE_COPY: Record<LoadingStage, { primary: string; sub: string }> = {
-  idle:      { primary: "Initializing",      sub: "Preparing analysis pipeline" },
-  vision:    { primary: "Analyzing item",    sub: "Building visual identity" },
-  market:    { primary: "Searching market",  sub: "Scanning listings in real time" },
-  analysis:  { primary: "Ranking best deals", sub: "Calculating resale intelligence" },
-  collector: { primary: "Detecting value",   sub: "Searching for hidden gems" },
+  idle:      { primary: "Initializing",        sub: "Preparing analysis pipeline" },
+  vision:    { primary: "Identifying item",    sub: "Building visual identity" },
+  market:    { primary: "Searching market",    sub: "Scanning listings in real time" },
+  analysis:  { primary: "Filtering bad matches", sub: "Removing junk · ranking real comps" },
+  collector: { primary: "Filtering bad matches", sub: "Checking for hidden value" },
+  verdict:   { primary: "Building verdict",    sub: "Finalizing recommendation" },
 };
 
-const STAGE_ORDER: LoadingStage[] = ["idle", "vision", "market", "analysis", "collector"];
-const PILL_STAGES: LoadingStage[] = ["vision", "market", "analysis"];
+// Step pills: 4-step user-facing taxonomy.
+// "collector" intentionally omitted from the pill order — it's an
+// analysis sub-phase, so when scanStage === "collector" the analysis
+// pill stays active (no regression in step progress).
+const STAGE_ORDER: LoadingStage[] = ["idle", "vision", "market", "analysis", "verdict"];
+const PILL_STAGES: LoadingStage[] = ["vision", "market", "analysis", "verdict"];
+
+// Map any incoming stage to the pill it should highlight. "collector"
+// is a sub-phase of analysis — keep the analysis pill lit instead of
+// rolling back the indicator.
+const stageToPill = (s: LoadingStage): LoadingStage => (s === "collector" ? "analysis" : s);
 
 // Pre-compute static orbit dot positions (angles only, radius applied at render)
 const OUTER_DOT_ANGLES = Array.from({ length: 8 }, (_, i) => (i / 8) * Math.PI * 2);
@@ -287,7 +311,10 @@ export function LoadingScreen({
   // ── Render helpers ────────────────────────────────────────────────────────
 
   const stageCopy = STAGE_COPY[renderStage];
-  const stageIdx  = STAGE_ORDER.indexOf(renderStage);
+  // Pill index uses the mapped stage so "collector" keeps the analysis
+  // pill active (instead of falling off the pill order entirely).
+  const pillStage = stageToPill(renderStage);
+  const stageIdx  = STAGE_ORDER.indexOf(pillStage);
 
   return (
     <View style={styles.container}>

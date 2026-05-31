@@ -1912,33 +1912,11 @@ useEffect(() => {
 }, [savedToast, toastAnim]);
 
   const _confidenceBreath = useRef(new RNAnimated.Value(0)).current;
-  const uiDepth = useRef(new RNAnimated.Value(0)).current;
-  const cameraGlassDepth = useRef(new RNAnimated.Value(0)).current;
-  const uiBreath = useRef(new RNAnimated.Value(0)).current;
-
-useEffect(() => {
-  const loop = RNAnimated.loop(
-    RNAnimated.sequence([
-      RNAnimated.timing(uiBreath, {
-        toValue: 1,
-        duration: 2600,
-        easing: Easing.inOut(Easing.sin),
-        useNativeDriver: true,
-      }),
-      RNAnimated.timing(uiBreath, {
-        toValue: 0,
-        duration: 2600,
-        easing: Easing.inOut(Easing.sin),
-        useNativeDriver: true,
-      }),
-    ])
-  );
-
-  loop.start();
-  return () => loop.stop();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
-  const neuralAura = useRef(new RNAnimated.Value(0)).current;
+  // Pillar 3A — uiDepth / cameraGlassDepth / uiBreath / neuralAura
+  // removed. They drove perpetual transforms on the root app wrapper
+  // (re-rasterizing every text glyph on every frame) and chrome loops
+  // whose values were never read for rendering. Net battery + crispness
+  // win with zero visual change.
 const [showOnboard, setShowOnboard] = useState(false);
 const onboardOpacity = useRef(new RNAnimated.Value(0)).current;
 const [showSurvey, setShowSurvey] = useState(false);
@@ -2079,11 +2057,20 @@ const [moreDetailsOpen, setMoreDetailsOpen] = useState(false);
 const [showSplash, setShowSplash] = useState(true);
 // ✅ Keep splash visible minimum time
 const _splashStartRef = useRef(Date.now());
-const SPLASH_MIN_MS = 4500;
+// Pillar 3A — splash min duration cut 4500 → 2200ms. First-launch still
+// gets the premium "brand beat" without forcing returning users to wait
+// through a marketing reel on every cold open.
+const SPLASH_MIN_MS = 2200;
 const [loadingDots, setLoadingDots] = useState(".");
 const [splashLoadingDots, setSplashLoadingDots] = useState(".");
-const splashOpacity = useRef(new RNAnimated.Value(1)).current; 
-const logoScale = useRef(new RNAnimated.Value(0.9)).current;
+const splashOpacity = useRef(new RNAnimated.Value(1)).current;
+// Pillar 3A — logoScale repurposed to drive WORDMARK OPACITY, not scale.
+// The prior `transform: [{ scale: logoScale }]` on a wrapper with
+// `overflow: "hidden"` caused iOS to rasterize the 52pt EVAN glyph at
+// 0.9× and stretch it to 1.0× — visible aliasing on the curves of E/V/A/N.
+// Starts at 0 (invisible) and animates opacity → 1 on entrance, → 0 on
+// exit. No more rasterized-text-scale pixelation.
+const logoScale = useRef(new RNAnimated.Value(0)).current;
 const dotY = useRef(new RNAnimated.Value(0)).current;
 const splashDots = useRef(new RNAnimated.Value(0)).current;
 const [_splashDotCount, setSplashDotCount] = useState(1);
@@ -2098,87 +2085,20 @@ const splashProgressAnim = useRef(new RNAnimated.Value(0)).current;
 const appStateRef = useRef(AppState.currentState);
     
   
-// 🔥 APPLE MICRO-PHYSICS (PHASE 1)
-const breathingGlow = useRef(new RNAnimated.Value(0)).current;
+// Pillar 3A — perpetual chrome loops removed.
+//
+// neuralAura, cameraGlassDepth, breathingGlow were perpetually looping
+// but their values were never read for rendering — pure CPU/battery
+// drain with zero visible effect. They've been deleted along with
+// their declarations.
+//
+// neuralPulse is kept because the shutter (takePhoto, below) drives a
+// short 0→1→0 pulse on it for the scan moment. The always-on loop
+// that previously fought the shutter's animation is gone — the value
+// rests at 0 and only animates when the shutter fires.
 const neuralPulse = useRef(new RNAnimated.Value(0)).current;
 const _glassShift = useRef(new RNAnimated.Value(0)).current;
 const _cameraPointerEvents = tab === "camera" ? "auto" : "none";
-
-  useEffect(() => {
-  
-RNAnimated.loop(
-  RNAnimated.sequence([
-    RNAnimated.timing(neuralAura, {
-      toValue: 1,
-      duration: 1800,
-      useNativeDriver: true,
-    }),
-    RNAnimated.timing(neuralAura, {
-      toValue: 0,
-      duration: 1800,
-      useNativeDriver: true,
-    }),
-  ])
-).start();
- 
-RNAnimated.loop(
-  RNAnimated.sequence([
-    RNAnimated.timing(cameraGlassDepth, {
-      toValue: 1,
-      duration: 3200,
-      useNativeDriver: true,
-    }),
-    RNAnimated.timing(cameraGlassDepth, {
-      toValue: 0,
-      duration: 3200,
-      useNativeDriver: true,
-    }),
-  ])
-).start();
-
-  // 🔥 APPLE BREATHING SURFACE
-  RNAnimated.loop(
-    RNAnimated.sequence([
-      RNAnimated.timing(breathingGlow, {
-        toValue: 1,
-        duration: 2600,
-        useNativeDriver: true,
-      }),
-      RNAnimated.timing(breathingGlow, {
-        toValue: 0,
-        duration: 2600,
-        useNativeDriver: true,
-      }),
-    ])
-  ).start();
-
-  // 🔥 NEURAL PULSE
-  RNAnimated.loop(
-    RNAnimated.sequence([
-      RNAnimated.timing(neuralPulse, {
-        toValue: 1,
-        duration: 1800,
-        useNativeDriver: true,
-      }),
-      RNAnimated.timing(neuralPulse, {
-        toValue: 0,
-        duration: 1800,
-        useNativeDriver: true,
-      }),
-    ])
-  ).start();
-
-
-return () => {
-  try {
-    breathingGlow.stopAnimation();
-    neuralPulse.stopAnimation();
-    cameraGlassDepth.stopAnimation();
-    neuralAura.stopAnimation();
-  } catch {}
-};
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
 
 
 // ===== TOP HUD ENTRANCE (no jump) =====
@@ -4031,7 +3951,9 @@ useEffect(() => {
 }, [loadingResults]);
   const buttonsY = useRef(new RNAnimated.Value(0)).current; // NO SLIDE
   const buttonsOpacity = useRef(new RNAnimated.Value(0)).current;
-  const sway = useRef(new RNAnimated.Value(0)).current;
+  // Pillar 3A — `sway` removed. Was a perpetual ±2° rotation loop whose
+  // value was only consumed by an unused `_swayRotate` interpolation.
+  // Pure CPU drain with zero rendered effect.
   // ✅ tabFade is declared ONCE earlier near the tab state — DO NOT redeclare it here.
   
   useEffect(() => {
@@ -4199,7 +4121,10 @@ RNAnimated.sequence([
     splashDotsListenerIdRef.current = id;
   } catch {}
 
-// Liquid Glass exit — spring-driven scale-down + fade instead of linear timing
+// Pillar 3A — exit: pure opacity fade. The prior spring-to-0.92 on
+// logoScale rasterized the wordmark again on the way out. logoScale
+// now drives opacity, so fading it to 0 cleanly retires the wordmark
+// without ever scaling a rasterized glyph.
 const timer = setTimeout(() => {
   RNAnimated.parallel([
     RNAnimated.timing(splashOpacity, {
@@ -4208,11 +4133,10 @@ const timer = setTimeout(() => {
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }),
-    RNAnimated.spring(logoScale, {
-      toValue: 0.92,
-      damping: 20,
-      stiffness: 90,
-      mass: 1.0,
+    RNAnimated.timing(logoScale, {
+      toValue: 0,
+      duration: reduceMotion ? 0 : 320,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }),
   ]).start(() => {
@@ -4623,6 +4547,18 @@ useEffect(() => {
           clearTimeout(scanAnimTimerRef.current);
         scanAnimTimerRef.current = null;
       } catch {}
+
+      // Pillar 3A — pause remaining in-flight chrome animations. The
+      // dead perpetual loops (neuralAura / cameraGlassDepth / breathing
+      // Glow / uiBreath) were removed entirely, so there's nothing
+      // background-burning at the shell level. neuralPulse may still
+      // be mid-cycle from a shutter tap, and barcodeLine may be
+      // running if the user backgrounded mid-barcode-scan — stop both
+      // so iOS can suspend cleanly without leaving a native-driver
+      // animation on the GPU.
+      try { neuralPulse?.stopAnimation?.(); } catch {}
+      try { neuralPulse?.setValue?.(0); } catch {}
+      try { barcodeLine?.stopAnimation?.(); } catch {}
     }
 
     // When app comes back to foreground, flush queued offline scans
@@ -4988,7 +4924,7 @@ intuitionLine: buildIntuitionLine({
 
     setLastScan({ kind: "barcode", confidence: 0.75, query: q, results: top3 });
 
-    stopLoadingSafely();
+    stopLoadingSafely(undefined, { showVerdictBeat: true });
   } catch (_e: any) {
     showUiError("Barcode scan failed", "Couldn’t reach marketplaces. Try again.");
     stopLoadingSafely();
@@ -7447,32 +7383,10 @@ try {
     activeResult,
     lastScan,
   ]);
-  // Instruction sway loop
-  useEffect(() => {
-    const loop = RNAnimated.loop(
-      RNAnimated.sequence([
-        RNAnimated.timing(sway, {
-          toValue: 1,
-          duration: 1400,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-        RNAnimated.timing(sway, {
-          toValue: 0,
-          duration: 1400,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [sway]);
-  const _swayRotate = sway.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["-2deg", "2deg"],
-  });
-  
+  // Pillar 3A — instruction sway loop removed. The `_swayRotate`
+  // interpolation it drove was unused (underscore prefix); the loop
+  // was a perpetual background animation with no consumer.
+
 
 // ✅ HUD RECOVERY: make sure camera HUD always reappears after loading/tab switches
 useEffect(() => {
@@ -8073,7 +7987,10 @@ const showUiError = (title, msg) => {
   setUiError({ title, msg });
 };
 
-const [scanStage, setScanStage] = useState<"idle" | "vision" | "market" | "analysis" | "collector">("idle");
+// Pillar 3A — "verdict" added as the final 4th-step beat. Fires
+// briefly inside stopLoadingSafely({ showVerdictBeat: true }) before
+// the loading container retires.
+const [scanStage, setScanStage] = useState<"idle" | "vision" | "market" | "analysis" | "collector" | "verdict">("idle");
 const [scanStageMeta, setScanStageMeta] = useState("");
 
 // ===============================
@@ -8140,7 +8057,16 @@ const canTriggerScan = () => {
   return true;
 };
 
-const stopLoadingSafely = (reqId?: number) => {
+// Pillar 3A — `opts.showVerdictBeat` flips on the 4th step pill
+// ("Building verdict") for a brief 280ms before the loading container
+// fades out. Success paths opt in so the user sees the full
+// Identify → Search → Filter → Verdict beat sequence. Abort / error
+// paths keep the old behavior (immediate stop). 280ms is short enough
+// that it doesn't hurt perceived speed, long enough that the eye
+// registers "step 4 lit" as a checkpoint.
+const VERDICT_BEAT_MS = 280;
+
+const _finalizeStopLoading = (reqId?: number) => {
   if (typeof reqId === "number" && !isReqAlive(reqId)) return;
   if (!isMountedRef.current) return;
 
@@ -8165,6 +8091,25 @@ const stopLoadingSafely = (reqId?: number) => {
   try { vignetteOpacity?.setValue?.(0); } catch {}
 
   try { retryReveal.setValue(0); } catch {}
+};
+
+const stopLoadingSafely = (
+  reqId?: number,
+  opts?: { showVerdictBeat?: boolean },
+) => {
+  if (typeof reqId === "number" && !isReqAlive(reqId)) return;
+  if (!isMountedRef.current) return;
+
+  if (opts?.showVerdictBeat) {
+    try {
+      setScanStage("verdict");
+      setScanStageMeta("Finalizing recommendation");
+    } catch {}
+    setTimeout(() => _finalizeStopLoading(reqId), VERDICT_BEAT_MS);
+    return;
+  }
+
+  _finalizeStopLoading(reqId);
 };
 
 const _shippingCost = (item) => {
@@ -8745,7 +8690,7 @@ if (scanCacheRef.current.has(cacheKey)) {
         });
       }
 
-      stopLoadingSafely(reqId);
+      stopLoadingSafely(reqId, { showVerdictBeat: true });
       return;
     }
   }
@@ -10154,7 +10099,7 @@ setLastScan({
 });
 
 goTab("results");
-stopLoadingSafely(reqId);
+stopLoadingSafely(reqId, { showVerdictBeat: true });
 
 // DS.ts success chime — synchronized with results reveal
 SoundEffect.chime();
@@ -10643,7 +10588,7 @@ const score =
       await new Promise((resolve) => setTimeout(resolve, remaining));
     }
 
-    stopLoadingSafely(reqId);
+    stopLoadingSafely(reqId, { showVerdictBeat: true });
   }
 };
 
@@ -11506,30 +11451,16 @@ const _pulseOpacity = loadingPulse.interpolate({
 
 return (
 <GestureHandlerRootView style={{ flex: 1, backgroundColor: "transparent" }}>
-<RNAnimated.View
+{/* Pillar 3A — root perpetual transforms removed. The prior wrapper
+    stacked three transforms on the whole app tree (uiBreath scale
+    1↔1.003, cameraGlassDepth translateY 0↔-2, dead uiDepth) which
+    re-rasterized every text glyph on every frame and prevented the
+    UI from ever settling on whole-pixel positions. Plain View now;
+    the app is physically still when nothing is interacting. */}
+<View
 style={{
   flex: 1,
   backgroundColor: "transparent",
-transform: [
-  {
-    scale: uiDepth.interpolate({
-      inputRange: [0, 1],
-      outputRange: [1, 0.995],
-    }),
-  },
-  {
-    translateY: cameraGlassDepth.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0, -2],
-    }),
-  },
-  {
-    scale: uiBreath.interpolate({
-      inputRange: [0, 1],
-      outputRange: [1, 1.003],
-    }),
-  },
-],
 }}
 >
     <View style={{ flex: 1, backgroundColor: "transparent" }}>
@@ -11598,12 +11529,16 @@ transform: [
             }}
           />
 
-          {/* Wordmark — overflow hidden prevents safe-area-inset sub-pixel crack */}
+          {/* Wordmark — Pillar 3A: opacity-only reveal.
+              `overflow: "hidden"` + `transform: scale(...)` were the
+              splash pixelation root cause — iOS rasterized the 52pt
+              glyph at the scaled-down bitmap and stretched it. Now we
+              opacity-fade the wordmark in (logoScale drives opacity,
+              not scale) and the text stays at native render scale. */}
           <RNAnimated.View style={{
             alignItems: "center",
             justifyContent: "center",
-            overflow: "hidden",
-            transform: [{ scale: logoScale }],
+            opacity: logoScale,
           }}>
             <View style={{
               flexDirection: "row",
@@ -17939,7 +17874,7 @@ const snapshot = {
   </View>
 </Modal>
 </View>
-  </RNAnimated.View>
+  </View>
   {/* ── Hot Deal Dopamine Layer (overlay, no layout shift) ────────────── */}
   <DopamineLayer hotDeal={brainHotSignal} />
   </GestureHandlerRootView>
