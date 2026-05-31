@@ -1482,13 +1482,22 @@ const styles = StyleSheet.create({
   // Top tint is dropped — the previous 16% darkening at the top muddied
   // the product photo without adding any text-contrast value, since no
   // overlay text ever lives in that zone.
+  // Pillar 2.2 — scrim alphas reduced ~17-50% per band so the overlay
+  // feels like premium photography again, not "image under UI glass".
+  // scrim1 (bottom-most) keeps a strong 0.42 alpha for badge/text
+  // readability on the dock CTA edge. Mid bands (3-5) were the source of
+  // the visible horizontal banding the user flagged in screenshots — those
+  // were the bands where the eye could perceive the step between layers.
+  // New ladder: 0.42 → 0.22 → 0.09 → 0.04 → 0.01 (was 0.48 → 0.30 → 0.16
+  // → 0.07 → 0.02). Total darkening reduced ~22%, weighted toward the
+  // bottom so the product photo dominates and the UI scrim disappears.
   imageScrim1: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
     height: 30,
-    backgroundColor: "rgba(0,0,0,0.48)",
+    backgroundColor: "rgba(0,0,0,0.42)",
   },
   imageScrim2: {
     position: "absolute",
@@ -1496,7 +1505,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 28,
-    backgroundColor: "rgba(0,0,0,0.30)",
+    backgroundColor: "rgba(0,0,0,0.22)",
   },
   imageScrim3: {
     position: "absolute",
@@ -1504,7 +1513,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 26,
-    backgroundColor: "rgba(0,0,0,0.16)",
+    backgroundColor: "rgba(0,0,0,0.09)",
   },
   imageScrim4: {
     position: "absolute",
@@ -1512,7 +1521,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 24,
-    backgroundColor: "rgba(0,0,0,0.07)",
+    backgroundColor: "rgba(0,0,0,0.04)",
   },
   imageScrim5: {
     position: "absolute",
@@ -1520,7 +1529,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 22,
-    backgroundColor: "rgba(0,0,0,0.02)",
+    backgroundColor: "rgba(0,0,0,0.01)",
   },
   // Thin side bands at low alpha — soft "frame" that draws the eye to the
   // product photo. Slightly lighter (8%) so corners feel framed but never

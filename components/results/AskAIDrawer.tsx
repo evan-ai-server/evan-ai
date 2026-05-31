@@ -573,10 +573,21 @@ export function AskAIDrawer({ visible, scanContext, apiBase, onClose, scanId }: 
       // ASK_AI_SEND_ERROR for the team. The user-facing surface should
       // be calm and feature-scoped: AI assistant, temporarily unavailable,
       // try again.
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "AI assistant is temporarily unavailable. Try again in a moment." },
-      ]);
+      // Pillar 2.2 — dedupe consecutive identical AI error bubbles. The
+      // user flagged: two failed sends in a row stack as two identical
+      // bubbles, which reads as a broken UI bug rather than a real
+      // service issue. We find the most-recent assistant message (across
+      // any intervening user retries) and skip the append if it's already
+      // this exact error. The user retried — they know the error is still
+      // active without seeing a second copy of the bubble.
+      const errorMsg = "AI assistant is temporarily unavailable. Try again in a moment.";
+      setMessages((prev) => {
+        const lastAssistant = [...prev].reverse().find((m) => m.role === "assistant");
+        if (lastAssistant && lastAssistant.content === errorMsg) {
+          return prev;
+        }
+        return [...prev, { role: "assistant", content: errorMsg }];
+      });
     } finally {
       setLoading(false);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);

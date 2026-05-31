@@ -1065,8 +1065,14 @@ const compactVerdictStyles = StyleSheet.create({
     alignItems: "flex-start",
     gap: SP.md,
   },
+  // Pillar 2.2 — wordStack marginTop: 3 shifts the verdict word down so
+  // it sits at the optical center of its rim capsule. The font's cap-band
+  // (HOLD/BUY/PASS visual letter top→bottom) sat ~3px above the rim's
+  // geometric center; this offset pulls the letter center onto the rim
+  // center for equal top/bottom breathing room inside the gray capsule.
   wordStack: {
     alignItems: "flex-start",
+    marginTop: 3,
   },
   word: {
     fontSize: 22,
@@ -1284,10 +1290,14 @@ const evidenceStripStyles = StyleSheet.create({
   // Pillar 2.1 — paddingBottom 4 → 12 to add visible breathing space
   // between the ticker and the main card below (the user flagged the
   // card was sitting too close / too high relative to the ticker).
+  // Pillar 2.2 — bumped further to 24. After Pillar 2.1, the user said
+  // the deck still felt visually attached to the ticker — eye perceived
+  // them as one block. +12px more separation lets the Verdict / Ticker /
+  // Deck read as three distinct layers without feeling distant.
   outer: {
     paddingHorizontal: SP.lg,
     paddingTop: 10,
-    paddingBottom: 12,
+    paddingBottom: 24,
   },
   // Pillar 2.1 — justifyContent: "center" so the chip cluster reads as an
   // optically centered ticker rather than a left-stacked dev strip. When
@@ -1818,8 +1828,13 @@ const depthStyles = StyleSheet.create({
   // Pillar 2 — Market Depth panel. Tighter margin alignment with verdict
   // + ticker so the screen reads as one designed system rather than a
   // stack of one-off sections.
+  // Pillar 2.2 — marginTop 26 → 14 so the Market Depth header sits closer
+  // to the bottom of the deck, becoming discoverable sooner on the first
+  // viewport. The user said it was "arriving too late" — barely visible
+  // at the bottom of multiple screenshots. -12px brings the section header
+  // into the deck's natural eye-flow without crowding the page indicator.
   outer: {
-    marginTop: 26,
+    marginTop: 14,
     marginHorizontal: SP.lg,
     paddingTop: SP.sm,
     paddingBottom: 4,
