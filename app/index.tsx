@@ -2621,6 +2621,53 @@ const factoryReset = useCallback(async () => {
   try { tutorialOpenLockRef.current = false; } catch {}
 }, [userId, guestId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+// Scan-limit-only reset — sibling to factoryReset. Calls the server
+// /api/debug/reset-quota for the current identity, then zeros the
+// local `scansUsed` counter. Does NOT wipe onboarding / history /
+// cache / survey state, and does NOT reload the bundle — the user
+// stays exactly where they were, just with 0/3 scans used. Same
+// quota-reset path the full factory reset uses, just isolated.
+const resetScanLimitOnly = useCallback(async () => {
+  // Server-side quota reset. Uses a manual AbortController instead
+  // of AbortSignal.timeout (not available on Hermes — see the
+  // AskAIDrawer / AutoListingDrawer fix). 4s ceiling; failure is
+  // non-fatal (local state still resets below).
+  try {
+    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
+      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const iid = await AsyncStorage.getItem("EVAN_INSTALL_ID_V1").catch(() => null);
+    const body: Record<string, string> = {};
+    if (userId)  body.userId      = userId;
+    if (guestId) body.guestId     = guestId;
+    if (iid)     body.installId   = iid;
+    if (iid)     body.fingerprint = iid;
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (iid)    headers["x-install-id"] = iid;
+    if (iid)    headers["x-device-id"]  = iid;
+    if (userId) headers["x-user-id"]    = userId;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    try {
+      await fetch(`${apiBase}/api/debug/reset-quota`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      }).catch(() => null);
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {}
+
+  // Local state — zero the counter so the very next shutter tap
+  // sees a clean budget. No reload; user stays in place.
+  try { setScansUsed(0); } catch {}
+  try { setBonusScans(0); } catch {}
+  try { scanLockRef.current = false; } catch {}
+  try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+  try { setSavedToast("Scan limit reset"); } catch {}
+}, [userId, guestId]);
+
 const surveyCompleteLockRef = useRef(false);
 const handleSurveyComplete = useCallback(async (ans: SurveyAnswers, goTutorial: boolean) => {
   if (surveyCompleteLockRef.current) return;
@@ -9702,6 +9749,12 @@ const card = {
   })(),
   // Server-generated scan ID — used by outcome tracking (DecisionSheet, OutcomeEditorSheet)
   scanId: (marketMeta as any)?.scanId ?? null,
+
+  // Phase 4A.1 / 4A.3 — canonical verdict + calibration object.
+  // buyOrPass.verdict is the highest-priority verdict source; deriveVerdictCopy
+  // in marketIntel.ts reads it before falling back to the heuristic buyVerdict.
+  buyOrPass: (marketMeta as any)?.buyOrPass || marketData?.buyOrPass || null,
+  confidenceCalibration: marketData?.confidenceCalibration || null,
 };
 
 // ── Deal Engine: orchestrator-driven pipeline ────────────────────────────────
@@ -15238,16 +15291,24 @@ ${shareLink}`
   </View>
 </View>
 
-{/* Temporary debug — long-press to wipe local Evan state and re-run survey + tutorial. */}
+{/* Temporary debug — long-press for reset options. Offers a quick
+    scan-limit-only reset (server quota + local counter, no reload)
+    and a full factory reset (wipes onboarding / history / cache and
+    reloads the bundle). The scan-limit option is the daily-use
+    button while testing; full reset is rarer. */}
 <Pressable
   onLongPress={() => {
     Alert.alert(
-      "Reset app state?",
-      "Clears onboarding, survey, history, and local cache, then reloads the app. Use this to re-run the questionnaire / tutorial.",
+      "Reset options",
+      "Pick what to clear.\n\n• Scan limit only — resets the free-scan counter (you stay logged in, keep your history).\n• Full reset — wipes onboarding, survey, history, and local cache, then reloads the app.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Reset",
+          text: "Reset scan limit",
+          onPress: () => { resetScanLimitOnly(); },
+        },
+        {
+          text: "Full reset",
           style: "destructive",
           onPress: () => { factoryReset(); },
         },

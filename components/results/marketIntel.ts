@@ -163,6 +163,23 @@ const _devLog = typeof __DEV__ !== "undefined" && __DEV__
   ? (tag: string, data: Record<string, unknown>) => { console.log(tag, data); }
   : () => undefined;
 
+/**
+ * Phase 4A.3 — canonical verdict resolver.
+ *
+ * Priority:
+ *   1. activeResult.buyOrPass.verdict  — server-calibrated canonical (Phase 4A.1)
+ *   2. activeResult.buyVerdict         — heuristic mirror / legacy
+ *
+ * buyOrPass.verdict wins whenever present and canonical (BUY | HOLD | PASS).
+ * This ensures a backend PASS from pricing_signal_against_high_scan_price is
+ * displayed as PASS even if the local deal engine set buyVerdict = "HOLD".
+ */
+function getCanonicalBuyVerdict(activeResult: any): string {
+  const bop = String(activeResult?.buyOrPass?.verdict || "").toUpperCase();
+  if (bop === "BUY" || bop === "HOLD" || bop === "PASS") return bop;
+  return String(activeResult?.buyVerdict || "").toUpperCase();
+}
+
 export interface MarketCard {
   itemName?: string | null;
   title?: string | null;
@@ -565,7 +582,8 @@ export function deriveVerdictCopy(
   activeResult: any,
   stats: MarketStats,
 ): VerdictCopy {
-  const rawVerdict = String(activeResult?.buyVerdict || "").toUpperCase();
+  // Phase 4A.3 — prefer buyOrPass.verdict over heuristic buyVerdict.
+  const rawVerdict = getCanonicalBuyVerdict(activeResult);
   const scanned = safeNum(activeResult?.scannedPrice);
   const avg = safeNum(activeResult?.avgMarket);
   const saved = safeNum(activeResult?.savedAmount);
@@ -619,7 +637,15 @@ export function deriveVerdictCopy(
     ? " Most evidence here is market signal only, not verified direct listings."
     : "";
 
-  // Dev log — fires once per new scan result (inside useMemo)
+  // Dev logs — fire once per new scan result (inside useMemo)
+  _devLog("FRONTEND_CANONICAL_VERDICT_READ", {
+    buyOrPassVerdict:       activeResult?.buyOrPass?.verdict ?? null,
+    mirroredBuyVerdict:     activeResult?.buyVerdict ?? null,
+    finalCanonicalVerdict:  rawVerdict || null,
+    evidenceTier:           calib.evidenceTier,
+    verdictStrength:        calib.verdictStrength,
+    capReasons:             calib.capReasons,
+  });
   _devLog("FRONTEND_CALIBRATION_READ", {
     evidenceTier: calib.evidenceTier,
     verdictStrength: calib.verdictStrength,
