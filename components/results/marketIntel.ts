@@ -39,6 +39,128 @@ export type EvidenceQuality =
   | null
   | undefined;
 
+// ─── Phase 4A.2: Evidence calibration reader ────────────────────────────────
+// Normalized view of the backend's confidenceCalibration object. Used by
+// deriveVerdictCopy and deriveEvansRead to gate language strength.
+
+/** Evidence tiers that carry insufficient certainty for strong positive claims. */
+const WEAK_EVIDENCE_TIERS = new Set([
+  "pricing_signal_only",
+  "thin_pricing_signal",
+  "estimate_only",
+  "no_evidence",
+  "unknown",
+]);
+
+export interface CalibrationRead {
+  evidenceTier: string;
+  verdictStrength: string;
+  capReasons: string[];
+  canShowStrongLanguage: boolean;
+  canShowVerifiedLanguage: boolean;
+  canShowMedianAsAuthoritative: boolean;
+  verifiedListingCount: number;
+  pricingSignalCount: number;
+  calibratedConfidence: number | null;
+  confidenceCap: number | null;
+  explanationForUI: string | null;
+  hasCalibration: boolean;
+}
+
+/**
+ * Safely extract Phase 4A.1 confidence calibration from the active scan result.
+ * Priority: confidenceCalibration object → buyOrPass mirrors → legacy card fields.
+ * Missing data always resolves conservatively, never confidently.
+ */
+export function readCalibration(activeResult: any): CalibrationRead {
+  // 1. Full confidenceCalibration object (Phase 4A.1+)
+  const cal = activeResult?.confidenceCalibration;
+  if (cal && typeof cal === "object") {
+    return {
+      evidenceTier:                String(cal.evidenceTier ?? "unknown"),
+      verdictStrength:             String(cal.verdictStrengthCap ?? cal.verdictStrength ?? "soft"),
+      capReasons:                  Array.isArray(cal.capReasons) ? cal.capReasons : [],
+      canShowStrongLanguage:       cal.canShowStrongLanguage === true,
+      canShowVerifiedLanguage:     cal.canShowVerifiedLanguage === true,
+      canShowMedianAsAuthoritative: cal.canShowMedianAsAuthoritative === true,
+      verifiedListingCount:        Number(cal.evidence?.verifiedListingCount ?? 0),
+      pricingSignalCount:          Number(cal.evidence?.pricingSignalCount ?? 0),
+      calibratedConfidence:        safeNum(cal.calibratedConfidence),
+      confidenceCap:               safeNum(cal.confidenceCap),
+      explanationForUI:            typeof cal.explanationForUI === "string" ? cal.explanationForUI : null,
+      hasCalibration:              true,
+    };
+  }
+
+  // 2. buyOrPass mirror fields (Phase 4A.1 convenience mirrors)
+  const bop = activeResult?.buyOrPass;
+  if (bop && (bop.evidenceTier || bop.verdictStrength)) {
+    const tier = String(bop.evidenceTier ?? "unknown");
+    const strength = String(bop.verdictStrength ?? "soft");
+    const isVerifiedTier = tier === "verified_strong" || tier === "verified_moderate" || tier === "verified_thin";
+    return {
+      evidenceTier:                tier,
+      verdictStrength:             strength,
+      capReasons:                  Array.isArray(bop.capReasons) ? bop.capReasons : [],
+      canShowStrongLanguage:       strength === "strong",
+      canShowVerifiedLanguage:     isVerifiedTier && strength !== "evidence_limited",
+      canShowMedianAsAuthoritative: strength !== "evidence_limited" && !WEAK_EVIDENCE_TIERS.has(tier),
+      verifiedListingCount:        0,
+      pricingSignalCount:          0,
+      calibratedConfidence:        null,
+      confidenceCap:               null,
+      explanationForUI:            null,
+      hasCalibration:              true,
+    };
+  }
+
+  // 3. Legacy fallback: infer from hero-card evidenceQuality / clickable flags.
+  const eq = activeResult?.evidenceQuality;
+  const isVerifiedLegacy =
+    eq === "verified_listing" ||
+    activeResult?.isVerifiedListing === true ||
+    activeResult?.clickable === true;
+  const isPricingLegacy =
+    eq === "pricing_signal" || activeResult?.clickable === false;
+
+  if (isVerifiedLegacy) {
+    return {
+      evidenceTier: "verified_thin", verdictStrength: "soft",
+      capReasons: [], canShowStrongLanguage: false,
+      canShowVerifiedLanguage: true, canShowMedianAsAuthoritative: false,
+      verifiedListingCount: 1, pricingSignalCount: 0,
+      calibratedConfidence: null, confidenceCap: null,
+      explanationForUI: null, hasCalibration: false,
+    };
+  }
+  if (isPricingLegacy) {
+    return {
+      evidenceTier: "pricing_signal_only", verdictStrength: "evidence_limited",
+      capReasons: ["no_verified_listings"], canShowStrongLanguage: false,
+      canShowVerifiedLanguage: false, canShowMedianAsAuthoritative: false,
+      verifiedListingCount: 0, pricingSignalCount: 0,
+      calibratedConfidence: null, confidenceCap: null,
+      explanationForUI: null, hasCalibration: false,
+    };
+  }
+
+  // Unknown — conservative defaults
+  return {
+    evidenceTier: "unknown", verdictStrength: "soft",
+    capReasons: [], canShowStrongLanguage: false,
+    canShowVerifiedLanguage: false, canShowMedianAsAuthoritative: false,
+    verifiedListingCount: 0, pricingSignalCount: 0,
+    calibratedConfidence: null, confidenceCap: null,
+    explanationForUI: null, hasCalibration: false,
+  };
+}
+
+// Dev-only logging — fires at most once per new scan (called from inside useMemo deps).
+// Declared at module level so it's tree-shaken in production builds.
+const _devLog = typeof __DEV__ !== "undefined" && __DEV__
+  ? (tag: string, data: Record<string, unknown>) => { console.log(tag, data); }
+  : () => undefined;
+
 export interface MarketCard {
   itemName?: string | null;
   title?: string | null;
@@ -449,33 +571,20 @@ export function deriveVerdictCopy(
   const conf = safeNum(activeResult?.visionConfidence) ?? 0;
   const upstreamTotalMatches = safeNum(activeResult?.totalMatches) ?? 0;
 
-  // Silent / HOLD branch: triggered by upstream HOLD, thin comp signal,
-  // or low visual confidence. Mirrors the existing resolveVerdictTone
-  // logic from ResultsContent so the new compact verdict module
-  // preserves the "Bloomberg-calm declines to call it" UX.
-  const tooFewComps =
-    stats.totalMatches < 2 && upstreamTotalMatches < 3;
-  const lowVision = conf > 0 && conf < 0.45;
-  const upstreamHold = rawVerdict === "HOLD";
-  const silent = upstreamHold || tooFewComps || lowVision;
+  // Phase 4A.2: read calibration before computing silence so we can apply
+  // the evidence-limited BUY→HOLD frontend defense before any early return.
+  const calib = readCalibration(activeResult);
+  const isWeakEvidence = WEAK_EVIDENCE_TIERS.has(calib.evidenceTier);
+  const isEvidenceLimited = calib.verdictStrength === "evidence_limited";
 
-  const onlySignals =
-    stats.verifiedCount === 0 && stats.totalMatches > 0;
-  const onlySignalsAppend = onlySignals
-    ? " Most evidence here is market signal only, not verified direct listings."
-    : "";
+  // A PASS that came from the calibration layer (scanned price far above
+  // pricing signals) is a valid PASS — keep it, don't silence it.
+  const isSignalPass =
+    calib.capReasons.includes("pricing_signal_against_high_scan_price") ||
+    calib.capReasons.includes("pass_on_pricing_signal_above_market");
 
-  if (silent) {
-    return {
-      word: "HOLD",
-      title: "Mixed resale signal",
-      sentence:
-        "Evan found market evidence, but the spread or direct-link confidence is not strong enough for a clean buy." +
-        onlySignalsAppend,
-      silent: true,
-    };
-  }
-
+  // Compute isBuy before the silent check so forceSilentByCalibration can
+  // reference it (evidence_limited BUY → display as HOLD).
   const isBuy =
     rawVerdict === "BUY" ||
     (rawVerdict === "" &&
@@ -483,25 +592,104 @@ export function deriveVerdictCopy(
         (cheaperPct != null && cheaperPct > 5) ||
         (avg != null && scanned != null && avg > scanned)));
 
-  if (isBuy) {
-    return {
-      word: "BUY",
-      title: "Market edge found",
-      sentence:
-        "Evan found resale evidence above your cost with enough signal to justify a closer look." +
-        onlySignalsAppend,
-      silent: false,
+  // Silent / HOLD branch: triggered by upstream HOLD, thin comp signal,
+  // low visual confidence, OR calibration showing evidence_limited on a BUY.
+  // Mirrors the existing resolveVerdictTone logic from ResultsContent.
+  const tooFewComps = stats.totalMatches < 2 && upstreamTotalMatches < 3;
+  const lowVision = conf > 0 && conf < 0.45;
+  const upstreamHold = rawVerdict === "HOLD";
+  // Defense-in-depth: backend may have let a BUY through on evidence_limited
+  // evidence (e.g., pricing signals with high rejection ratio). Display as
+  // HOLD so the UI never claims "Market edge found" on unverified signals.
+  const forceSilentByCalibration = isBuy && isEvidenceLimited && !isSignalPass;
+  const silent = upstreamHold || tooFewComps || lowVision || forceSilentByCalibration;
+
+  const onlySignals = stats.verifiedCount === 0 && stats.totalMatches > 0;
+  const onlySignalsAppend = onlySignals
+    ? " Most evidence here is market signal only, not verified direct listings."
+    : "";
+
+  // Dev log — fires once per new scan result (inside useMemo)
+  _devLog("FRONTEND_CALIBRATION_READ", {
+    evidenceTier: calib.evidenceTier,
+    verdictStrength: calib.verdictStrength,
+    canShowStrongLanguage: calib.canShowStrongLanguage,
+    canShowVerifiedLanguage: calib.canShowVerifiedLanguage,
+    canShowMedianAsAuthoritative: calib.canShowMedianAsAuthoritative,
+    verifiedListingCount: calib.verifiedListingCount,
+    pricingSignalCount: calib.pricingSignalCount,
+    hasCalibration: calib.hasCalibration,
+  });
+
+  if (silent) {
+    // Evidence-limited silence gets its own copy that names the evidence gap
+    // rather than the generic "spread not strong enough" fallback.
+    const title = forceSilentByCalibration ? "Limited evidence" : "Mixed resale signal";
+    const baseSentence = forceSilentByCalibration
+      ? "Evan found pricing signals, but no verified direct listings. Treat this as caution — check the market yourself before buying."
+      : "Evan found market evidence, but the spread or direct-link confidence is not strong enough for a clean buy.";
+    const result: VerdictCopy = {
+      word: "HOLD",
+      title,
+      sentence: baseSentence + onlySignalsAppend,
+      silent: true,
     };
+    _devLog("FRONTEND_VERDICT_COPY_CALIBRATED", {
+      rawVerdict,
+      displayVerdict: result.word,
+      evidenceTier: calib.evidenceTier,
+      verdictStrength: calib.verdictStrength,
+      strongLanguageAllowed: calib.canShowStrongLanguage,
+      verifiedLanguageAllowed: calib.canShowVerifiedLanguage,
+      reason: forceSilentByCalibration ? "evidence_limited_buy_silenced" : "existing_silent_trigger",
+    });
+    return result;
   }
 
-  return {
-    word: "PASS",
-    title: "Not enough edge",
-    sentence:
-      "This looks above the current resale market. Evan found price evidence, but not enough upside to recommend buying." +
-      onlySignalsAppend,
-    silent: false,
-  };
+  if (isBuy) {
+    // canShowStrongLanguage requires verified_strong or verified_moderate
+    // with all conditions met. Only then do we say "Market edge found."
+    // On pricing-signal-only evidence, soften the title.
+    const title = calib.canShowStrongLanguage
+      ? "Market edge found"
+      : isWeakEvidence
+        ? "Pricing signal edge"
+        : "Potential edge found";
+    const sentence = calib.canShowVerifiedLanguage
+      ? "Evan found verified listings above your cost. Check the best one before buying." + onlySignalsAppend
+      : isWeakEvidence
+        ? "There's upside in the pricing signals, but no verified direct listings. Treat this as a signal, not a contract." + onlySignalsAppend
+        : "Evan found resale evidence above your cost with enough signal to justify a closer look." + onlySignalsAppend;
+    const result: VerdictCopy = { word: "BUY", title, sentence, silent: false };
+    _devLog("FRONTEND_VERDICT_COPY_CALIBRATED", {
+      rawVerdict,
+      displayVerdict: result.word,
+      evidenceTier: calib.evidenceTier,
+      verdictStrength: calib.verdictStrength,
+      strongLanguageAllowed: calib.canShowStrongLanguage,
+      verifiedLanguageAllowed: calib.canShowVerifiedLanguage,
+      reason: "buy_path",
+    });
+    return result;
+  }
+
+  // PASS — may be a pricing-signal PASS (price clearly above market signals)
+  const passTitle = isSignalPass ? "Above pricing signals" : "Not enough edge";
+  const passSentence = isSignalPass
+    ? "This looks above the active pricing signal range. There are no verified listings — this is a signal-based call, not confirmed resale data."
+    : "This looks above the current resale market. Evan found price evidence, but not enough upside to recommend buying." + onlySignalsAppend;
+
+  const result: VerdictCopy = { word: "PASS", title: passTitle, sentence: passSentence, silent: false };
+  _devLog("FRONTEND_VERDICT_COPY_CALIBRATED", {
+    rawVerdict,
+    displayVerdict: result.word,
+    evidenceTier: calib.evidenceTier,
+    verdictStrength: calib.verdictStrength,
+    strongLanguageAllowed: calib.canShowStrongLanguage,
+    verifiedLanguageAllowed: calib.canShowVerifiedLanguage,
+    reason: isSignalPass ? "signal_pass" : "pass_path",
+  });
+  return result;
 }
 
 // ─── Headline numbers for the compact verdict ───────────────────────────────
@@ -647,9 +835,21 @@ export function deriveEvansRead(
 ): EvansRead {
   const cheaperPct = safeNum(activeResult?.cheaperPct);
 
+  // Phase 4A.2: read calibration to sharpen Evan's sentence when evidence tier
+  // is weak. If the backend gave us an explanationForUI, prefer it in HOLD path.
+  const calib = readCalibration(activeResult);
+  const isWeakEvidence = WEAK_EVIDENCE_TIERS.has(calib.evidenceTier);
+  const isEvidenceLimited = calib.verdictStrength === "evidence_limited";
+
   let sentence = "";
   if (verdict.word === "PASS") {
-    if (stats.hasOnlyPricingSignals) {
+    const isSignalPass =
+      calib.capReasons.includes("pricing_signal_against_high_scan_price") ||
+      calib.capReasons.includes("pass_on_pricing_signal_above_market");
+    if (isSignalPass) {
+      sentence =
+        "Pricing signals place this above the current resale range. Evan hasn't found verified direct listings — treat this as a signal-based assessment.";
+    } else if (stats.hasOnlyPricingSignals) {
       sentence =
         "This is a risky buy. Evan found price evidence below your entered cost, but no verified direct listing from this source. Treat this as a market signal, not a guaranteed sell-through price.";
     } else if (stats.totalMatches <= 2) {
@@ -660,15 +860,24 @@ export function deriveEvansRead(
         "The resale market sits below your cost. Verified listings exist, but none clear a margin Evan trusts.";
     }
   } else if (verdict.silent || verdict.word === "HOLD") {
-    // Pillar 2.1 — sharpened HOLD voice. Names both the uncertainty
-    // sources (spread + verified depth) and the resulting posture
-    // (caution, not conviction) without sounding indecisive.
-    sentence =
-      "Comparables exist, but the spread is wide and the verified evidence is thin. Treat this as caution, not a confident call.";
-  } else {
-    if (stats.hasOnlyPricingSignals) {
+    // Pillar 2.1 — sharpened HOLD voice. Phase 4A.2: when calibration gave us
+    // an explanationForUI (e.g. "Pricing signal only — no verified direct
+    // listings"), prefer it over the generic spread/evidence sentence so Evan
+    // names the actual reason rather than a generic caution.
+    if (isEvidenceLimited && calib.explanationForUI) {
+      sentence = calib.explanationForUI + " Verify the market yourself before committing.";
+    } else if (isEvidenceLimited) {
       sentence =
-        "There's upside on paper, but no verified direct listings backing it. Treat the resale price as a signal, not a contract.";
+        "Evan found pricing signals but no verified direct listings. This is caution, not a call — verify the market before buying.";
+    } else {
+      sentence =
+        "Comparables exist, but the spread is wide and the verified evidence is thin. Treat this as caution, not a confident call.";
+    }
+  } else {
+    // BUY path — use calibration to pick the right confidence level in copy.
+    if (isWeakEvidence || stats.hasOnlyPricingSignals) {
+      sentence =
+        "There's upside in the pricing signals, but no verified direct listings back it. Treat the resale price as a signal, not a contract.";
     } else if (stats.totalMatches >= 4) {
       sentence =
         "This has real market edge. Evan found multiple comparable listings above your cost with enough signal to justify checking the best one.";
@@ -680,10 +889,13 @@ export function deriveEvansRead(
 
   const chips: string[] = [];
   if (stats.verifiedCount > 0) chips.push("Verified listings found");
-  // Pillar 2.1 — "Market signal only" → "Signal-only evidence". Reads
-  // analytically (Evan's Read is the interpretive layer), and diversifies
-  // the screen's signal vocabulary.
+  // Pillar 2.1 — "Market signal only" → "Signal-only evidence".
   if (stats.hasOnlyPricingSignals) chips.push("Signal-only evidence");
+  // Phase 4A.2: add calibration-tier chip when evidence is weak AND we don't
+  // already have a signal-only chip (avoid duplication).
+  if (isEvidenceLimited && !stats.hasOnlyPricingSignals && stats.totalMatches > 0) {
+    chips.push("Evidence limited");
+  }
   if (stats.priceSpreadLabel === "wide") chips.push("Wide spread");
   if (stats.priceSpreadLabel === "thin" || stats.totalMatches < 4) {
     chips.push("Thin market");
@@ -703,7 +915,8 @@ export function deriveEvansRead(
     verdict.word === "BUY" &&
     cheaperPct != null &&
     cheaperPct >= 15 &&
-    !stats.hasOnlyPricingSignals
+    !stats.hasOnlyPricingSignals &&
+    !isWeakEvidence
   ) {
     chips.push("Good upside");
   }
