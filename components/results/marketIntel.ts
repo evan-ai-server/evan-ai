@@ -103,7 +103,9 @@ export function readCalibration(activeResult: any): CalibrationRead {
       verdictStrength:             strength,
       capReasons:                  Array.isArray(bop.capReasons) ? bop.capReasons : [],
       canShowStrongLanguage:       strength === "strong",
-      canShowVerifiedLanguage:     isVerifiedTier && strength !== "evidence_limited",
+      // verifiedListingCount is unknown from mirrors alone — default false.
+      // The full confidenceCalibration path (priority 1) provides the real count.
+      canShowVerifiedLanguage:     false,
       canShowMedianAsAuthoritative: strength !== "evidence_limited" && !WEAK_EVIDENCE_TIERS.has(tier),
       verifiedListingCount:        0,
       pricingSignalCount:          0,
@@ -577,6 +579,14 @@ export function deriveVerdictCopy(
   const isWeakEvidence = WEAK_EVIDENCE_TIERS.has(calib.evidenceTier);
   const isEvidenceLimited = calib.verdictStrength === "evidence_limited";
 
+  // Strict local gates — both raw flags AND count must pass.
+  // verifiedLanguageAllowed: canShowVerifiedLanguage is only true when count > 0.
+  // strongLanguageAllowed:   canShowStrongLanguage is only true when strength === "strong".
+  const verifiedLanguageAllowed =
+    calib.canShowVerifiedLanguage && calib.verifiedListingCount > 0;
+  const strongLanguageAllowed =
+    calib.canShowStrongLanguage && calib.verdictStrength === "strong";
+
   // A PASS that came from the calibration layer (scanned price far above
   // pricing signals) is a valid PASS — keep it, don't silence it.
   const isSignalPass =
@@ -613,8 +623,8 @@ export function deriveVerdictCopy(
   _devLog("FRONTEND_CALIBRATION_READ", {
     evidenceTier: calib.evidenceTier,
     verdictStrength: calib.verdictStrength,
-    canShowStrongLanguage: calib.canShowStrongLanguage,
-    canShowVerifiedLanguage: calib.canShowVerifiedLanguage,
+    canShowStrongLanguage: strongLanguageAllowed,
+    canShowVerifiedLanguage: verifiedLanguageAllowed,
     canShowMedianAsAuthoritative: calib.canShowMedianAsAuthoritative,
     verifiedListingCount: calib.verifiedListingCount,
     pricingSignalCount: calib.pricingSignalCount,
@@ -639,23 +649,24 @@ export function deriveVerdictCopy(
       displayVerdict: result.word,
       evidenceTier: calib.evidenceTier,
       verdictStrength: calib.verdictStrength,
-      strongLanguageAllowed: calib.canShowStrongLanguage,
-      verifiedLanguageAllowed: calib.canShowVerifiedLanguage,
+      strongLanguageAllowed,
+      verifiedLanguageAllowed,
       reason: forceSilentByCalibration ? "evidence_limited_buy_silenced" : "existing_silent_trigger",
     });
     return result;
   }
 
   if (isBuy) {
-    // canShowStrongLanguage requires verified_strong or verified_moderate
-    // with all conditions met. Only then do we say "Market edge found."
-    // On pricing-signal-only evidence, soften the title.
-    const title = calib.canShowStrongLanguage
+    // strongLanguageAllowed requires verified_strong or verified_moderate with
+    // all gates met AND verdictStrength === "strong". Only then do we say
+    // "Market edge found." On pricing-signal-only evidence, soften the title.
+    const title = strongLanguageAllowed
       ? "Market edge found"
       : isWeakEvidence
         ? "Pricing signal edge"
         : "Potential edge found";
-    const sentence = calib.canShowVerifiedLanguage
+    // verifiedLanguageAllowed requires canShowVerifiedLanguage AND count > 0.
+    const sentence = verifiedLanguageAllowed
       ? "Evan found verified listings above your cost. Check the best one before buying." + onlySignalsAppend
       : isWeakEvidence
         ? "There's upside in the pricing signals, but no verified direct listings. Treat this as a signal, not a contract." + onlySignalsAppend
@@ -666,8 +677,8 @@ export function deriveVerdictCopy(
       displayVerdict: result.word,
       evidenceTier: calib.evidenceTier,
       verdictStrength: calib.verdictStrength,
-      strongLanguageAllowed: calib.canShowStrongLanguage,
-      verifiedLanguageAllowed: calib.canShowVerifiedLanguage,
+      strongLanguageAllowed,
+      verifiedLanguageAllowed,
       reason: "buy_path",
     });
     return result;
@@ -685,8 +696,8 @@ export function deriveVerdictCopy(
     displayVerdict: result.word,
     evidenceTier: calib.evidenceTier,
     verdictStrength: calib.verdictStrength,
-    strongLanguageAllowed: calib.canShowStrongLanguage,
-    verifiedLanguageAllowed: calib.canShowVerifiedLanguage,
+    strongLanguageAllowed,
+    verifiedLanguageAllowed,
     reason: isSignalPass ? "signal_pass" : "pass_path",
   });
   return result;
