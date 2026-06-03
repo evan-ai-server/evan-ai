@@ -9060,6 +9060,7 @@ try {
       seasonalFlip: marketData?.seasonalFlip || null,
       authenticityIntel: marketData?.authenticityIntel || null,
       buyOrPass: marketData?.buyOrPass || null,
+      confidenceCalibration: marketData?.confidenceCalibration || null,
       scanId: marketData?.scanId ?? null,
     });
   }
@@ -9753,9 +9754,21 @@ const card = {
   // Phase 4A.1 / 4A.3 — canonical verdict + calibration object.
   // buyOrPass.verdict is the highest-priority verdict source; deriveVerdictCopy
   // in marketIntel.ts reads it before falling back to the heuristic buyVerdict.
-  buyOrPass: (marketMeta as any)?.buyOrPass || marketData?.buyOrPass || null,
-  confidenceCalibration: marketData?.confidenceCalibration || null,
+  // Both fields are read from marketMeta (populated from MARKET_CACHE after the
+  // stream try block closes). marketData is block-scoped to the try block and
+  // is not accessible here.
+  buyOrPass: (marketMeta as any)?.buyOrPass ?? null,
+  confidenceCalibration: (marketMeta as any)?.confidenceCalibration ?? null,
 };
+
+if (__DEV__) {
+  console.log("FRONTEND_CARD_CANONICAL_BINDING", {
+    hasBuyOrPass: !!(marketMeta as any)?.buyOrPass,
+    buyOrPassVerdict: (marketMeta as any)?.buyOrPass?.verdict ?? null,
+    hasConfidenceCalibration: !!(marketMeta as any)?.confidenceCalibration,
+    evidenceTier: (marketMeta as any)?.confidenceCalibration?.evidenceTier ?? null,
+  });
+}
 
 // ── Deal Engine: orchestrator-driven pipeline ────────────────────────────────
 // All business logic (deal engine, paywall, momentum, phase transitions)
