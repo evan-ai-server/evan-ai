@@ -875,16 +875,21 @@ function CompactVerdict({
     });
   }
 
-  // Headline dollar delta. Above-market reads as caution (warm amber) on
-  // every verdict — never green/celebratory — because the user is asking
-  // "should I buy" and above-market is a risk regardless of verdict math.
+  // Headline dollar delta. delta = scanned − market, so delta > 0 means the
+  // item costs MORE than market (overpaying) — that must never render with a
+  // "+" (which reads as profit). We use buyer-benefit polarity: below market is
+  // a saving (+, amber→green underMkt tone), above market is a cost (−, warm
+  // amber aboveMkt tone). Above-market is caution on every verdict because the
+  // user is asking "should I buy" and overpaying is a risk regardless of math.
   let headline: { sign: string; amount: string; tone: string } | null = null;
   if (verdictNumbers.delta != null) {
     const dollarStr = fmtMoney(Math.abs(verdictNumbers.delta));
     if (verdictNumbers.delta < 0) {
-      headline = { sign: "−", amount: dollarStr, tone: tone.underMkt };
+      // Under market → you save → positive for the buyer.
+      headline = { sign: "+", amount: dollarStr, tone: tone.underMkt };
     } else if (verdictNumbers.delta > 0) {
-      headline = { sign: "+", amount: dollarStr, tone: tone.aboveMkt };
+      // Above market → you overpay → a cost, never profit.
+      headline = { sign: "−", amount: dollarStr, tone: tone.aboveMkt };
     } else {
       headline = { sign: "", amount: dollarStr, tone: C.text2 };
     }
