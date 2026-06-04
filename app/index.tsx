@@ -947,118 +947,6 @@ class _ErrorBoundary extends React.Component<
   }
 }
 
-// ── Live Activity Ticker — module-level constants ────────────────────────────
-const TICKER_MSGS = [
-  "🔥 Sarah in Chicago saved $84 using Evan AI!",
-  "💰 Mike flipped a PS5 for $120 profit",
-  "✅ James found AirPods Pro 2 for $87 less",
-  "💰 Taylor sold vintage Levi's for $210 — bought for $35",
-  "🎯 Emma saved $62 on a Coach bag today",
-  "⚡ Ryan spotted a $200 flip on Jordan 4s",
-  "🛍️ Priya saved $110 on a MacBook Air deal",
-  "✅ Alex verified authentic Supreme hoodie — avoided $90 fake",
-  "🔔 Jordan saved $47 using Evan AI price alert",
-  "📈 Kayla flipped vintage Nike Dunks for $180 profit",
-  "🎉 Devon in Brooklyn saved $93 this week",
-  "🔔 Price alert — AirPods Max dropped to $389",
-  "✨ Sophia saved $55 on Ray-Ban sunglasses",
-  "🚀 Marcus flipped 3 items for $340 total profit",
-  "💡 Aiden caught a $150 underpriced vintage leather jacket",
-  "🛍️ Isabella saved $38 on Bose headphones",
-  "🔥 Noah in LA flipped a vintage Rolex for $800 profit",
-  "📸 Olivia avoided overpaying $65 — condition mismatch caught",
-  "💎 Liam saved $200 on a camera lens using Evan AI",
-  "⚡ Ava found same PS4 for $49 less nearby",
-  "🎯 Ethan saved $74 on a gaming chair today",
-  "🌟 Mia flipped thrifted Prada bag for $340 profit",
-  "💰 Owen spotted AJ1 Retro for $95 below market",
-  "📱 Zoe saved $130 on an iPhone 14 Pro Max",
-  "🔥 Lucas in Miami saved $58 on Yeezy 350s",
-  "🔥 Tyler flipped AirPods Pro for $88 profit",
-  "💰 Mason saved $67 on a Nike hoodie",
-  "🎯 Ethan found a $320 camera for $140",
-  "📈 Logan flipped Jordans for $135 profit",
-  "🛍️ Ava saved $58 on Lululemon shorts",
-  "⚡ Noah spotted a $210 underpriced iPad",
-  "💎 Emma flipped a Gucci belt for $175",
-  "🎉 Ryan saved $42 on Beats Studio",
-  "🚀 Lucas flipped a PS5 for $105 profit",
-  "💵 Olivia saved $79 on a North Face jacket",
-  "🔥 Dylan flipped Yeezys for $155 profit",
-  "💰 Sophia saved $63 on Ray-Bans",
-  "🎯 Carter found a $450 laptop for $190",
-  "📈 Aiden flipped Dunks for $128 profit",
-  "🛍️ Chloe saved $71 on Nike Tech",
-  "⚡ Benjamin spotted a $280 flip",
-  "💎 Lily flipped a Prada bag for $240",
-  "🎉 Owen saved $36 on Vans",
-  "🚀 Elijah flipped a MacBook for $290",
-  "💵 Harper saved $102 on a Dyson",
-  "🔥 Jack flipped a gaming chair for $85",
-  "💰 Grace saved $77 on sneakers",
-  "🎯 Wyatt found a $380 deal on headphones",
-  "📈 Luke flipped Jordans for $142",
-  "🛍️ Victoria saved $64 on Alo leggings",
-  "⚡ David spotted a $310 flip",
-  "💎 Sofia flipped a Rolex for $900",
-  "🎉 Joseph saved $47 on Adidas",
-  "🚀 Matthew flipped a drone for $165",
-  "💵 Aria saved $88 on a handbag",
-  "🔥 Samuel flipped a bike for $120",
-  "💰 Zoe saved $69 on Crocs",
-  "🎯 Andrew found a $500 camera for $230",
-  "📈 Joshua flipped Yeezys for $175",
-  "🛍️ Natalie saved $54 on Gymshark",
-  "⚡ Christian spotted a $240 flip",
-  "💎 Layla flipped a Louis Vuitton wallet",
-  "🎉 Aaron saved $39 on Converse",
-  "🚀 Thomas flipped a TV for $180",
-  "💵 Brooklyn saved $95 on a coat",
-  "🔥 Isaac flipped headphones for $110",
-  "💰 Hannah saved $83 on leggings",
-  "🎯 Gabriel found a $420 deal",
-  "📈 Julian flipped Jordans for $138",
-  "🛍️ Violet saved $62 on Nike",
-  "⚡ Levi spotted a $260 flip",
-  "💎 Nora flipped a Cartier bracelet",
-  "🎉 Adam saved $44 on slides",
-  "🚀 Eli flipped a console for $98",
-  "💵 Hazel saved $72 on a bag",
-  "🔥 Connor flipped a monitor for $95",
-  "💰 Aurora saved $101 on a jacket",
-  "🎯 Hunter found a $360 flip",
-  "📈 Dominic flipped Dunks for $120",
-  "🛍️ Bella saved $75 on sneakers",
-  "⚡ Jaxon spotted a $230 flip",
-  "💎 Lucy flipped a designer purse",
-  "🎉 Evan saved $50 on Nike",
-  "🚀 Miles flipped a MacBook for $270",
-  "💵 Ellie saved $84 on headphones",
-  "🔥 Leo flipped Jordans for $150",
-  "💰 Stella saved $68 on UGGs",
-  "🎯 Anthony found a $410 deal",
-  "📈 Isaiah flipped Yeezys for $185",
-  "🛍️ Ruby saved $59 on leggings",
-  "⚡ Caleb spotted a $250 flip",
-  "💎 Alice flipped a Chanel bag",
-  "🎉 Jordan saved $41 on Air Max",
-  "🚀 Cooper flipped a PS4 for $90",
-  "💵 Sadie saved $78 on a hoodie",
-  "🔥 Nolan flipped a bike for $135",
-  "💰 Peyton saved $66 on Crocs",
-  "🎯 Jason found a $390 deal",
-  "📈 Wesley flipped Jordans for $145",
-  "🛍️ Clara saved $82 on Nike",
-  "⚡ Ryder spotted a $220 flip",
-  "💎 Eva flipped a luxury watch",
-  "🎉 Carson saved $37 on Vans",
-  "🚀 Axel flipped a TV for $175",
-  "💵 Lila saved $92 on a jacket",
-];
-const TICKER_SINGLE = TICKER_MSGS.join("     ");
-const TICKER_TEXT = TICKER_SINGLE + "     " + TICKER_SINGLE;
-const TICKER_CHAR_W = 8.4;
-const TICKER_TOTAL_W = TICKER_SINGLE.length * TICKER_CHAR_W;
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TUTORIAL_STEPS = [
@@ -3686,8 +3574,6 @@ const [_enrich, _setEnrich] = useState(null);
  // Feature 3: Local Radar
  const [radarData, setRadarData] = useState<RadarData | null>(null);
  const [radarLoading, setRadarLoading] = useState(false);
- // Live Activity Ticker
- const tickerX = useRef(new RNAnimated.Value(0)).current;
 
 // -------------------------
 // ✅ Verdict + confidence copy (UI-safe)
@@ -3729,26 +3615,6 @@ useEffect(() => {
   resultModalOpenRef.current = resultModalOpen;
 }, [resultModalOpen]);
 
-// ── Live Activity Ticker animation ───────────────────────────────────────────
-useEffect(() => {
-  let cancelled = false;
-  const runTicker = () => {
-    if (cancelled) return;
-    tickerX.setValue(0);
-    RNAnimated.timing(tickerX, {
-      toValue: -TICKER_TOTAL_W,
-      duration: TICKER_TOTAL_W * 32,
-      easing: Easing.linear,
-      useNativeDriver: true,
-      isInteraction: false,
-    }).start(({ finished }) => {
-      if (finished && !cancelled) runTicker();
-    });
-  };
-  runTicker();
-  return () => { cancelled = true; tickerX.stopAnimation(); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
 
 // ── Camera delayed-active: keep camera live 350ms after leaving tab to avoid flash ──
 useEffect(() => {
@@ -13155,43 +13021,6 @@ onBarcodeScanned={(d) => {
   ) : null}
 
 
-{/* Live Activity Ticker — always mounted so the tickerX animation chain never breaks on unmount */}
-<RNAnimated.View
-    pointerEvents="none"
-    style={{
-      position: "absolute",
-      bottom: CAMERA_CONTROLS_BOTTOM + 200,
-      left: 0,
-      right: 0,
-      height: 28,
-      overflow: "hidden",
-      opacity: cameraUiOpacity,
-    }}
-  >
-    <View style={{
-      flex: 1,
-      backgroundColor: "rgba(0,0,0,0.38)",
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderColor: "rgba(255,255,255,0.08)",
-      justifyContent: "center",
-      overflow: "hidden",
-    }}>
-      <RNAnimated.Text
-        style={{
-          color: "rgba(255,255,255,0.75)",
-          fontSize: 11,
-          fontWeight: "600",
-          letterSpacing: 0.3,
-          transform: [{ translateX: tickerX }],
-          paddingLeft: 16,
-          width: TICKER_TOTAL_W * 2 + 300,
-        }}
-      >
-        {TICKER_TEXT}
-      </RNAnimated.Text>
-    </View>
-  </RNAnimated.View>
 
 {/* BOTTOM CAMERA CONTROLS (ABOVE TAB BAR, NO OVERLAY) */}
 {tab === "camera" && !photo && !loadingResults ? (
