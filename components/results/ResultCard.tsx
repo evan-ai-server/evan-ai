@@ -222,7 +222,10 @@ function HeartButton({
       withSpring(1.42, { damping: 8,  stiffness: 500, mass: 0.4 }),
       withSpring(1.0,  { damping: 16, stiffness: 300, mass: 0.8 }),
     );
-    fill.value = withSpring(isWatchlisted ? 0 : 1, { damping: 14, stiffness: 320 });
+    // fill is driven by the useEffect below which reacts to the updated
+    // isWatchlisted prop — do NOT read isWatchlisted here as the Gesture
+    // worklet captures a stale closure and always animates the wrong direction
+    // on the second tap (un-track).
     runOnJS(fireHaptic)();
     runOnJS(safeToggle)();
   });
