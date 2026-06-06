@@ -1004,7 +1004,8 @@ function CompactVerdict({
               allowFontScaling={false}
               style={[compactVerdictStyles.word, { color: tone.word }]}
             >
-              {verdictCopy.word}
+              {/* Display label only — tone/kind still derive from canonical word above. */}
+              {verdictCopy.displayWord ?? verdictCopy.word}
             </Text>
             <View style={[compactVerdictStyles.wordUnderline, { backgroundColor: tone.accent }]} />
           </View>

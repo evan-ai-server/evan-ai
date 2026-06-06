@@ -47,6 +47,19 @@ test("verdictPresentation returns a frozen row with every dimension", () => {
   assert.equal(Object.isFrozen(row), true);
 });
 
+test("display labels: HOLD reads as 'Verify First'; BUY/PASS unchanged", () => {
+  // Canonical keys stay BUY/HOLD/PASS; only the user-facing label differs.
+  assert.equal(verdictPresentation("HOLD").label, "Verify First");
+  assert.equal(verdictPresentation("BUY").label,  "BUY");
+  assert.equal(verdictPresentation("PASS").label, "PASS");
+  // Relabel must not touch the sensory/colour dimensions of HOLD.
+  assert.equal(verdictPresentation("HOLD").color,    "neutral");
+  assert.equal(verdictPresentation("HOLD").colorHex, "#9E9E9E");
+  assert.equal(verdictPresentation("HOLD").haptics,  "warning");
+  assert.equal(verdictPresentation("HOLD").sound,    "hold_neutral");
+  assert.equal(verdictPresentation("HOLD").lighting, "soft_amber");
+});
+
 test("every presentation function refuses legacy verdicts", () => {
   for (const fn of [verdictHaptics, verdictSound, verdictLighting, verdictColorHex, verdictPresentation]) {
     assert.throws(() => fn("STRONG_BUY"),  VerdictLeakError, `${fn.name} on STRONG_BUY`);

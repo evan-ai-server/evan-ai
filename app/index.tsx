@@ -541,7 +541,16 @@ const _buildShareCardText = (card) => {
   lines.push("EVAN AI");
   lines.push("—");
   lines.push(card.itemName || "Scan");
-  if (Number.isFinite(card.buyScore)) lines.push(`Buy Score: ${Math.round(card.buyScore)}/100 · ${card.buyVerdict || ""}`.trim());
+  if (Number.isFinite(card.buyScore)) {
+    // Share text uses the user-facing label (HOLD → "Verify First"); canonical
+    // card.buyVerdict is left untouched. Inline (not verdictDisplayLabel) because
+    // this builder is module-scoped — it can't see the component-scoped helper —
+    // but the module-level verdictPresentation/isCanonicalVerdict imports are in
+    // scope. Guarded: verdictPresentation throws on non-canonical input.
+    const _bv = String(card.buyVerdict || "").toUpperCase();
+    const _bvLabel = isCanonicalVerdict(_bv) ? verdictPresentation(_bv).label : (card.buyVerdict || "");
+    lines.push(`Buy Score: ${Math.round(card.buyScore)}/100 · ${_bvLabel}`.trim());
+  }
   if (Number.isFinite(card.price)) lines.push(`Cheapest: ${money(card.price)} · ${card.store || "Marketplace"}`);
   if (Number.isFinite(card.scannedPrice) && Number.isFinite(card.savedAmount)) {
     lines.push(`You paid: ${money(card.scannedPrice)} · Saved: ${money(card.savedAmount)} (${percent(card.cheaperPct)})`);
@@ -1504,6 +1513,15 @@ const getVerdict = ({ scannedPrice, cheapestPrice }) => {
                  : "PASS";
   const p = verdictPresentation(verdict);
   return { verdict, label: p.label, tone: p.color, colorHex: p.colorHex };
+};
+
+// Canonical verdict → user-facing label (HOLD → "Verify First"). Guarded:
+// verdictPresentation throws on non-canonical input, so fall back to the raw
+// string. This is display-only — never feed the result back into canonical
+// logic, assertVerdict, or any backend payload.
+const verdictDisplayLabel = (v: any): string => {
+  const c = String(v ?? "").toUpperCase();
+  return isCanonicalVerdict(c) ? verdictPresentation(c).label : String(v ?? "");
 };
 
 const copyText = async (text: string) => {
@@ -15449,7 +15467,7 @@ ${shareLink}`
                   {activeResult.buyVerdict ? (
                     <View style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.10)" }}>
                       <Text style={{ color: "rgba(255,255,255,0.92)", fontWeight: "900", fontSize: 12 }}>
-                        {activeResult.buyVerdict}
+                        {verdictDisplayLabel(activeResult.buyVerdict)}
                       </Text>
                     </View>
                   ) : null}
@@ -15479,7 +15497,7 @@ ${shareLink}`
       : styles.verdict_yellow,
   ]}
 >
-  {String(activeResult?.buyVerdict || "HOLD").toUpperCase()}
+  {verdictDisplayLabel(activeResult?.buyVerdict || "HOLD")}
 </Text>
 {brainHotSignal && brainHotSignal.tier !== "COLD" ? (
   <View style={{

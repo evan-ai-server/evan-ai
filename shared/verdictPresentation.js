@@ -43,7 +43,10 @@ const PRESENTATION = Object.freeze({
     lighting: "bright_green", // ambient lighting cue
   }),
   HOLD: Object.freeze({
-    label:    "HOLD",
+    // Canonical key stays HOLD; user-facing label reads as an action, not a
+    // backend state. "HOLD" felt like a shrug in-store — "Verify First" tells
+    // the user what to do on evidence-limited / pricing-signal-only scans.
+    label:    "Verify First",
     color:    "neutral",
     colorHex: "#9E9E9E",
     haptics:  "warning",      // NotificationFeedbackType.Warning

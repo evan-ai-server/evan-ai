@@ -222,7 +222,12 @@ export interface MarketStats {
 export type VerdictWord = "BUY" | "HOLD" | "PASS";
 
 export interface VerdictCopy {
+  // `word` stays canonical (BUY | HOLD | PASS) — all tone, logic, and
+  // telemetry derive from it. `displayWord` is the user-facing label only:
+  // HOLD renders as "Verify First". Never feed displayWord into assertVerdict
+  // or any canonical path.
   word: VerdictWord;
+  displayWord?: string;
   title: string;
   sentence: string;
   silent: boolean;
@@ -666,6 +671,7 @@ export function deriveVerdictCopy(
       : "Evan found market evidence, but the spread or direct-link confidence is not strong enough for a clean buy.";
     const result: VerdictCopy = {
       word: "HOLD",
+      displayWord: "Verify First",
       title,
       sentence: baseSentence + onlySignalsAppend,
       silent: true,
@@ -697,7 +703,7 @@ export function deriveVerdictCopy(
       : isWeakEvidence
         ? "There's upside in the pricing signals, but no verified direct listings. Treat this as a signal, not a contract." + onlySignalsAppend
         : "Evan found resale evidence above your cost with enough signal to justify a closer look." + onlySignalsAppend;
-    const result: VerdictCopy = { word: "BUY", title, sentence, silent: false };
+    const result: VerdictCopy = { word: "BUY", displayWord: "BUY", title, sentence, silent: false };
     _devLog("FRONTEND_VERDICT_COPY_CALIBRATED", {
       rawVerdict,
       displayVerdict: result.word,
@@ -716,7 +722,7 @@ export function deriveVerdictCopy(
     ? "This looks above the active pricing signal range. There are no verified listings — this is a signal-based call, not confirmed resale data."
     : "This looks above the current resale market. Evan found price evidence, but not enough upside to recommend buying." + onlySignalsAppend;
 
-  const result: VerdictCopy = { word: "PASS", title: passTitle, sentence: passSentence, silent: false };
+  const result: VerdictCopy = { word: "PASS", displayWord: "PASS", title: passTitle, sentence: passSentence, silent: false };
   _devLog("FRONTEND_VERDICT_COPY_CALIBRATED", {
     rawVerdict,
     displayVerdict: result.word,
