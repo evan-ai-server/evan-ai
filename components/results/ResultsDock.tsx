@@ -18,6 +18,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C, SP, R, TY, SH, fmtMoney, EASE_PANTHERE, SINGULARITY } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
+import { getApiBase } from "../../utils/apiBase";
 import { DecisionSheet } from "./DecisionSheet";
 import { OutcomeEditorSheet } from "./OutcomeEditorSheet";
 import { cardActionLabel } from "./marketIntel";
@@ -79,7 +80,7 @@ export function ResultsDock({
   activeResult,
   currentCard,
   userId,
-  apiBase = "http://192.168.1.227:3001",
+  apiBase = getApiBase(),
   onOpenListing,
   onNewScan,
   onTrack,

@@ -7,12 +7,9 @@ import React, {
   ReactNode,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getApiBase } from "../../utils/apiBase";
 
-// Use env-driven API base — same pattern as app/index.tsx
-const API_BASE =
-  process.env.EXPO_PUBLIC_API_URL ||
-  process.env.EXPO_PUBLIC_DEV_API_URL ||
-  "http://192.168.1.227:3001";
+const API_BASE = getApiBase();
 
 const STORAGE_KEY = "evan_auth_token";
 const LOCKOUT_KEY = "evan_auth_lockout";

@@ -6,13 +6,11 @@
  * API_BASE resolves the same way as app/index.tsx.
  */
 import React from "react";
-import { Platform } from "react-native";
 import { DealHunterDashboard } from "../../components/dealhunter/DealHunterDashboard";
 import { useAuth } from "../../components/auth/AuthContext";
+import { getApiBase } from "../../utils/apiBase";
 
-const API_BASE =
-  process.env.EXPO_PUBLIC_API_URL ??
-  (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+const API_BASE = getApiBase();
 
 export default function ExploreScreen() {
   const { userId } = useAuth();

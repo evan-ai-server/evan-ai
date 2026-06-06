@@ -41,6 +41,7 @@ import {
   VERDICT_TONE, verdictKind, SIGNAL,
 } from "../design/DS";
 import { PressableScale } from "../primitives/PressableScale";
+import { getApiBase } from "../../utils/apiBase";
 import {
   buildAllMarketCards,
   computeMarketStats,
@@ -237,9 +238,7 @@ export const ResultsContent = React.memo(function ResultsContent({
     // didn't wire a confetti hook, fall back to legacy onBoughtIt only.
     if (onBoughtIt) onBoughtIt();
   }, [onBoughtIt, activeResult]);
-  const resolvedApiBase = (apiBase
-    ?? (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_API_URL))
-    || (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+  const resolvedApiBase = apiBase ?? getApiBase();
 
   // ── Transition shared values ──────────────────────────────────────────────
   // Opacity-only fade for both containers. Previously the loading→results

@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useEffect, useRef, useState } from "react";
+import { getApiBase } from "../utils/apiBase";
 import { sanitizeHint, sanitizePropContext, devLog, devWarn } from "../lib/security";
 import { SubscriptionModal } from "../components/subscription/SubscriptionModal";
 import { ResultsContent } from "../components/results/ResultsContent";
@@ -2476,8 +2477,7 @@ const factoryReset = useCallback(async () => {
   // server can't match the row, and the user looks reset on the
   // client but stays at 3/3 on the next real scan).
   try {
-    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const apiBase = getApiBase();
     // Read installId directly from storage — the React state variable
     // isn't declared until later in the component and TS flags the
     // closure reference. The disk value is the source of truth anyway.
@@ -2539,8 +2539,7 @@ const resetScanLimitOnly = useCallback(async () => {
   // AskAIDrawer / AutoListingDrawer fix). 4s ceiling; failure is
   // non-fatal (local state still resets below).
   try {
-    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const apiBase = getApiBase();
     const iid = await AsyncStorage.getItem("EVAN_INSTALL_ID_V1").catch(() => null);
     const body: Record<string, string> = {};
     if (userId)  body.userId      = userId;
@@ -3746,8 +3745,7 @@ useEffect(() => {
 useEffect(() => {
   if (!savingsTotal && !scansUsed) return;
   const uid = installId || effectiveReferralCode || "anon";
-  const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-    (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+  const apiBase = getApiBase();
   fetch(`${apiBase}/api/profile/savings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -4223,8 +4221,7 @@ const loadRelistSuggestions = async () => {
   if (!watchlist?.length || relistLoading) return;
   setRelistLoading(true);
   try {
-    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const apiBase = getApiBase();
     const payload = (watchlist || [])
       .filter((w: any) => w?.query && w?.lastBest)
       .slice(0, 10)
@@ -4263,8 +4260,7 @@ const runFlipScanner = async (category: string) => {
   setFlipScanResults([]);
   setFlipScanOpen(true);
   try {
-    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const apiBase = getApiBase();
     const resp = await fetch(`${apiBase}/api/arbitrage/flip-scanner`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4386,8 +4382,7 @@ const loadRadar = async () => {
       targetPrices[w.query] = toNumber(w.lastBest);
     }
   });
-  const _apiBase = process.env.EXPO_PUBLIC_API_URL ??
-    (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+  const _apiBase = getApiBase();
   setRadarLoading(true);
   try {
     const resp = await fetch(`${_apiBase}/api/radar/local`, {
@@ -4904,8 +4899,7 @@ const consumeFreeScan = (origin: string) => {
   });
   if (isPro) return;
   try {
-    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const apiBase = getApiBase();
     const effectiveId = userId || guestId || installId;
     fetch(`${apiBase}/api/scan/consume`, {
       method: "POST",
@@ -5066,8 +5060,7 @@ if (receiptMode) {
     );
     const b64 = compressed.base64;
     if (!b64) throw new Error("no base64");
-    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const apiBase = getApiBase();
     const resp = await fetch(`${apiBase}/api/receipt/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -8144,8 +8137,7 @@ if (!isPro) {
   // no, kill any half-started UI and show the paywall.
   if (!internalRetry) {
     try {
-      const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-        (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+      const apiBase = getApiBase();
       const effectiveId = userId || guestId || installId;
       const qs = effectiveId ? (userId ? `userId=${userId}` : `guestId=${effectiveId}`) : "";
       const checkRes = await fetch(`${apiBase}/api/scan/status${qs ? `?${qs}` : ""}`, { signal: AbortSignal.timeout(3000) })
@@ -9714,8 +9706,7 @@ if (countScan && !scanLockRef.current) {
 
   // Server-side consume — dedup by imageHash prevents double-counting same photo
   if (!isPro) {
-    const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+    const apiBase = getApiBase();
     const effectiveId = userId || guestId || installId;
     const imgHash = await getImageCacheKey(photoUri).catch(() => "");
     fetch(`${apiBase}/api/scan/consume`, {
@@ -9920,8 +9911,7 @@ if (photoUri && (card?.category || (card as any)?.visionIdentity?.brand || (card
       const b64 = compressed.base64;
       if (!b64) return;
 
-      const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-        (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+      const apiBase = getApiBase();
 
       // Feature 11: deep auth (only for brand items — not worth it for generic)
       if (_brand || ["sneakers","luxury","bag","watch","eyewear"].includes(_category)) {
@@ -10946,8 +10936,7 @@ useEffect(() => {
       // Server-issued guest identity — persistent across reinstalls via fingerprint
       try {
         const cachedGid = await AsyncStorage.getItem("EVAN_GUEST_ID_V1");
-        const apiBase = process.env.EXPO_PUBLIC_API_URL ??
-          (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001");
+        const apiBase = getApiBase();
         const gidRes = await fetch(`${apiBase}/api/guest/identify`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -13500,8 +13489,7 @@ style={[
     data={communityComps}
     loading={communityCompsLoading}
     query={activeResult?.visionQuery || activeResult?.itemName || null}
-    apiBase={process.env.EXPO_PUBLIC_API_URL ??
-      (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001")}
+    apiBase={getApiBase()}
     userId={installId || effectiveReferralCode || "anon"}
   />
 ) : null}
@@ -14311,8 +14299,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
           .filter((w) => w.query && Number.isFinite(toNumber(w.lastBest)))
           .map((w) => [w.query, toNumber(w.lastBest)])
       )}
-      apiBase={process.env.EXPO_PUBLIC_API_URL ??
-        (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001")}
+      apiBase={getApiBase()}
       onRefresh={loadRadar}
       onPressItem={(url) => { try { Linking.openURL(url); } catch {} }}
     />
@@ -16482,7 +16469,7 @@ onPress={() => {
     budget is exhausted (paywall bail via bailScanForPaywall). */}
 <BatchScanScreen
   visible={batchInventoryOpen}
-  apiBase={process.env.EXPO_PUBLIC_API_URL ?? (Platform.OS === "ios" ? "http://192.168.1.227:3001" : "http://10.0.2.2:3001")}
+  apiBase={getApiBase()}
   zipCode={zipCode || null}
   onClose={() => setBatchInventoryOpen(false)}
   isFreeLimitReached={isFreeLimitReached}
@@ -20305,11 +20292,7 @@ async function _copyShareText(result: any) {
 // API WRAPPER (PRODUCTION SAFE)
 // ===============================
 
-const API_URL =
-  process.env.EXPO_PUBLIC_API_URL ||
-  (Platform.OS === "ios"
-    ? "http://192.168.1.227:3001"
-    : "http://10.0.2.2:3001");
+const API_URL = getApiBase();
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
