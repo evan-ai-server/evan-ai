@@ -90,6 +90,12 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
-    "owner": "evanyoung"
+    "owner": "evanyoung",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/7b575efe-7d7e-4db8-ae72-a509c0f7715e"
+    }
   }
 }
