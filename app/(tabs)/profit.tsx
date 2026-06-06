@@ -1,11 +1,15 @@
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import ProfitDashboard from "../../components/profit/ProfitDashboard";
 import { useAuth } from "../../components/auth/AuthContext";
 import { C, SP, TY } from "../../components/design/DS";
 
-const API_BASE = "http://192.168.1.227:3001";
+// Production: set EXPO_PUBLIC_API_URL in eas.json (preview/production env).
+// Dev fallback: localhost (iOS) or 10.0.2.2 (Android emulator) — no LAN IP needed.
+const API_BASE =
+  process.env.EXPO_PUBLIC_API_URL ??
+  (Platform.OS === "ios" ? "http://localhost:3001" : "http://10.0.2.2:3001");
 
 export default function ProfitTab() {
   const { userId } = useAuth();
