@@ -14,14 +14,6 @@
       "deploymentTarget": "16.0",
       "buildNumber": "1",
       "infoPlist": {
-        "NSAppTransportSecurity": {
-          "NSExceptionDomains": {
-            "192.168.1.227": {
-              "NSExceptionAllowsInsecureHTTPLoads": true,
-              "NSIncludesSubdomains": false
-            }
-          }
-        },
         "NSCameraUsageDescription": "Evan AI uses your camera to identify items and check their resale price instantly.",
         "NSPhotoLibraryUsageDescription": "Evan AI uses your photo library so you can scan items from your camera roll.",
         "NSPhotoLibraryAddUsageDescription": "Evan AI saves scan results to your photo library when you share a deal card.",
@@ -79,7 +71,7 @@
         }
       ],
       "react-native-vision-camera",
-[
+      [
         "./plugins/withEvanWidget",
         {
           "bundleIdentifier": "com.evanai.app.EvanWidget",
@@ -89,13 +81,15 @@
       "expo-sqlite"
     ],
     "extra": {
+      "router": {},
       "eas": {
-        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+        "projectId": "7b575efe-7d7e-4db8-ae72-a509c0f7715e"
       }
     },
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "owner": "evanyoung"
   }
 }

@@ -11,7 +11,7 @@
         "simulator": true
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://192.168.1.227:3001"
+        "EXPO_PUBLIC_DEV_API_URL": "http://localhost:3001"
       }
     },
     "preview": {
@@ -21,14 +21,14 @@
         "simulator": false
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://REPLACE_WITH_YOUR_SERVER_URL"
+        "EXPO_PUBLIC_API_URL": "https://evan-ai-server.onrender.com"
       }
     },
     "production": {
       "autoIncrement": true,
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://REPLACE_WITH_YOUR_SERVER_URL"
+        "EXPO_PUBLIC_API_URL": "https://evan-ai-server.onrender.com"
       }
     }
   },
