@@ -37,6 +37,18 @@ import { Text as _DreiText } from "@react-three/drei/native";
 const DreiText: typeof _DreiText = Platform.OS === "web"
   ? _DreiText
   : ((() => null) as any);
+
+// Expo GL (iOS/Android native) does not implement renderbufferStorageMultisample,
+// so any three.js feature that builds a MULTISAMPLED render target hard-crashes
+// the app with:
+//   "EXGL: renderbufferStorageMultisample() isn't implemented yet!"
+// Two things trigger that target: (1) renderer antialias:true, and (2) the
+// transmission pass (MeshPhysicalMaterial.transmission > 0 → renderTransmissionPass
+// → setupRenderTarget with samples). The Canvas already sets antialias:false; this
+// flag gates every transmission/MSAA-dependent effect so native stays on the
+// safe (no-multisample) path while web can still opt into the glass look.
+const supportsNativeThreeMSAA = Platform.OS === "web";
+
 import type { VerdictMode } from "./SpatialContext";
 
 // ─── ZONE COORDINATES ────────────────────────────────────────────────────────
@@ -866,15 +878,20 @@ function ArchiveShards({
         >
           <mesh onClick={() => handleShardClick(shard.id, i)}>
             <boxGeometry args={[2.2, 1.3, 0.06]} />
+            {/* Glass via `transmission` runs three's renderTransmissionPass, which
+                builds a multisampled render target — unsupported on Expo GL native
+                and the source of the EXGL renderbufferStorageMultisample crash.
+                Native renders an opaque-glossy obsidian shard (opacity is animated
+                in via shardMatRefs); only web opts into true glass transmission.
+                metalness is bumped on native to keep a glassy sheen without the pass. */}
             <meshPhysicalMaterial
               ref={(el) => { shardMatRefs.current[i] = el; }}
               color="#0a0a1a"
               transparent
               opacity={0}
-              transmission={0.98}
               roughness={0.05}
-              thickness={1}
-              metalness={0.1}
+              metalness={supportsNativeThreeMSAA ? 0.1 : 0.4}
+              {...(supportsNativeThreeMSAA ? { transmission: 0.98, thickness: 1 } : {})}
             />
           </mesh>
           <Suspense fallback={null}>
