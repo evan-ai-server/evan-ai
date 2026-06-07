@@ -154,6 +154,13 @@ interface ResultCardProps {
    */
   isBestMatch?: boolean;
   isWatchlisted?: boolean;
+  /**
+   * Prompt 3 Phase 6 — gate the top-right heart/share overlay so only the
+   * hero/main action card surfaces primary actions. Defaults to `isHero` when
+   * omitted, so alt cards hide heart/share without any caller change. Open-
+   * listing (image tap) and saved state are unaffected.
+   */
+  showPrimaryActions?: boolean;
   onPress?: () => void;
   onZoomImage?: (uri: string) => void;
   onToggleWatchlist?: () => void;
@@ -707,6 +714,7 @@ export function ResultCard({
   isLowest = false,
   isBestMatch = false,
   isWatchlisted = false,
+  showPrimaryActions,
   onPress,
   onZoomImage,
   onToggleWatchlist,
@@ -1030,13 +1038,17 @@ export function ResultCard({
           </View>
         ) : null}
 
-        {/* Top-right overlay actions */}
-        <View style={styles.overlayActions} pointerEvents="box-none">
-          {onToggleWatchlist ? (
-            <HeartButton isWatchlisted={isWatchlisted} onToggle={onToggleWatchlist} />
-          ) : null}
-          <ShareBtn onShare={handleShare} disabled={capturingShare || !imageUri} />
-        </View>
+        {/* Top-right overlay actions — Prompt 3 Phase 6: hero/main card only.
+            Defaults to isHero so alt cards hide heart/share. Open-listing tap
+            (handled on the image above) and saved state are unaffected. */}
+        {(showPrimaryActions ?? isHero) ? (
+          <View style={styles.overlayActions} pointerEvents="box-none">
+            {onToggleWatchlist ? (
+              <HeartButton isWatchlisted={isWatchlisted} onToggle={onToggleWatchlist} />
+            ) : null}
+            <ShareBtn onShare={handleShare} disabled={capturingShare || !imageUri} />
+          </View>
+        ) : null}
       </View>
 
       {/* ── INFO PANEL (40%) ─────────────────────────────────── */}

@@ -7042,6 +7042,7 @@ const searchMarketStream = async (
         streamHeaders["x-user-id"] = _clientId;
       }
       console.log("searchMarketStream: attempting (xhr)", url);
+      console.log("CLIENT_MARKET_STREAM_OPENED", { url, scanId: params.scanId ?? null, query: params.query });
 
       let activeScanId: string | null = null;
       let streamErr:    Error | null  = null;
@@ -7072,10 +7073,12 @@ const searchMarketStream = async (
 
             if (eventName === "provisional") {
               lastProvisional = data;
+              try { console.log("CLIENT_MARKET_STREAM_PROVISIONAL_RENDERED", { scanId: data?.scanId ?? params.scanId ?? null, count: (data?.items||[]).length }); } catch {}
               onProvisional(data);
             } else if (eventName === "complete") {
               finalData = data;
               try { console.log("FRONTEND_RESULT_ITEMS_RECEIVED", { event: "complete", count: (data?.items||[]).length, top5: (data?.items||[]).slice(0,5).map((i: any)=>({title:i?.title,price:i?.price,source:i?.source})) }); } catch {}
+              try { console.log("CLIENT_MARKET_STREAM_COMPLETE_RENDERED", { scanId: data?.scanId ?? params.scanId ?? null, count: (data?.items||[]).length }); } catch {}
               onComplete(data);
               if (params.query && data?.items?.length) writePriceCache(params.query, data);
               setOfflineCachedAt(null);
@@ -7108,7 +7111,15 @@ const searchMarketStream = async (
       const streamHasItems =
         (Array.isArray(streamResult?.items)   && streamResult.items.length   > 0) ||
         (Array.isArray(streamResult?.results) && streamResult.results.length > 0);
-      if (streamResult && streamHasItems) return streamResult;
+      if (streamResult && streamHasItems) {
+        // Stream owned first paint — no fallback needed.
+        console.log("CLIENT_MARKET_FALLBACK_SKIPPED", {
+          scanId: params.scanId ?? null,
+          source: finalData ? "stream_complete" : "stream_provisional",
+          count: (streamResult.items?.length ?? streamResult.results?.length ?? 0),
+        });
+        return streamResult;
+      }
       console.warn("searchMarketStream: stream-result empty", {
         base,
         finalDataKeys:       finalData       ? Object.keys(finalData).slice(0, 20)       : null,
@@ -7120,13 +7131,24 @@ const searchMarketStream = async (
         provMarketLen:       Array.isArray((lastProvisional as any)?.market)? (lastProvisional as any).market.length: null,
       });
     } catch (e: any) {
-      if (e?.name === "AbortError") throw e;
+      if (e?.name === "AbortError") {
+        // Outer cancel (user cancel / new scan / navigation) — do NOT fall back.
+        console.log("CLIENT_MARKET_STREAM_ABORTED", { scanId: params.scanId ?? null, reason: "outer_signal_abort" });
+        throw e;
+      }
       console.warn("searchMarketStream failed for base:", base, e?.message);
     }
   }
 
-  // Fallback: if all stream attempts fail or returned no data, use legacy searchMarket
+  // Fallback: only reached when every stream base failed or returned no usable
+  // data AND the outer signal was not aborted (abort throws above). This is the
+  // legitimate "stream unavailable/empty" path — not a double-call after success.
+  if (signal?.aborted) {
+    console.log("CLIENT_MARKET_FALLBACK_SKIPPED", { scanId: params.scanId ?? null, reason: "signal_aborted_no_fallback" });
+    return null;
+  }
   console.warn("searchMarketStream: falling back to legacy searchMarket");
+  console.log("CLIENT_MARKET_FALLBACK_SEARCH_USED", { scanId: params.scanId ?? null, query: params.query, reason: "stream_empty_or_failed" });
   const legacyData = await searchMarket(params, signal);
   if (legacyData) onComplete(legacyData);
   return legacyData;
