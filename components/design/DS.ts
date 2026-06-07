@@ -5,7 +5,11 @@
 import { Dimensions, Platform } from "react-native";
 import * as Haptics from "expo-haptics";
 import * as FileSystem from "expo-file-system/legacy";
-import { setAudioModeAsync as _setAudioModeAsync, createAudioPlayer as _createAudioPlayer } from "expo-audio";
+// expo-audio is NOT installed in this project (Expo SDK 54 ships expo-av ~16,
+// which IS a dependency). Using expo-audio here broke the Metro bundle with
+// "Unable to resolve expo-audio". Use the installed expo-av API instead — the
+// chime is a non-critical sound effect and is already fully try/catch-guarded.
+import { Audio } from "expo-av";
 
 const { width: W, height: H } = Dimensions.get("window");
 
@@ -469,14 +473,15 @@ export const SoundEffect = {
   chime: async () => {
     try {
       if (!_audioReady) {
-        await _setAudioModeAsync({ playsInSilentMode: true });
+        // expo-av uses playsInSilentModeIOS (expo-audio's playsInSilentMode is
+        // not available here). Play through the iOS silent switch like before.
+        await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
         _audioReady = true;
       }
       if (!_chimeUri) _chimeUri = await _buildChimeWav();
-      const player = _createAudioPlayer({ uri: _chimeUri });
-      player.play();
-      // Release player after sound completes (chime is ~500ms)
-      setTimeout(() => { try { player.remove(); } catch {} }, 4000);
+      const { sound } = await Audio.Sound.createAsync({ uri: _chimeUri }, { shouldPlay: true });
+      // Release the sound after it completes (chime is ~500ms)
+      setTimeout(() => { try { sound.unloadAsync(); } catch {} }, 4000);
     } catch {}
   },
 } as const;
