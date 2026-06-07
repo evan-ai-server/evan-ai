@@ -7028,6 +7028,8 @@ const searchMarketStream = async (
   let lastProvisional: any = null;
   let finalData: any = null;
 
+  console.log("CLIENT_MARKET_STREAM_START", { scanId: params.scanId ?? null, query: params.query });
+
   for (const rawBase of API_BASE_CANDIDATES) {
     const base = String(rawBase || "").replace(/\/+$/, "");
     const url  = `${base}/market/search/stream`;
@@ -7073,12 +7075,20 @@ const searchMarketStream = async (
 
             if (eventName === "provisional") {
               lastProvisional = data;
-              try { console.log("CLIENT_MARKET_STREAM_PROVISIONAL_RENDERED", { scanId: data?.scanId ?? params.scanId ?? null, count: (data?.items||[]).length }); } catch {}
+              const _provCount = (data?.items||[]).length;
+              try { console.log("CLIENT_MARKET_STREAM_PROVISIONAL_RENDERED", { scanId: data?.scanId ?? params.scanId ?? null, count: _provCount }); } catch {}
+              if (_provCount > 0) {
+                try { console.log("CLIENT_MARKET_STREAM_FIRST_PAYLOAD", { scanId: data?.scanId ?? params.scanId ?? null, event: "provisional", count: _provCount }); } catch {}
+              }
               onProvisional(data);
             } else if (eventName === "complete") {
               finalData = data;
-              try { console.log("FRONTEND_RESULT_ITEMS_RECEIVED", { event: "complete", count: (data?.items||[]).length, top5: (data?.items||[]).slice(0,5).map((i: any)=>({title:i?.title,price:i?.price,source:i?.source})) }); } catch {}
-              try { console.log("CLIENT_MARKET_STREAM_COMPLETE_RENDERED", { scanId: data?.scanId ?? params.scanId ?? null, count: (data?.items||[]).length }); } catch {}
+              const _completeCount = (data?.items||[]).length;
+              try { console.log("FRONTEND_RESULT_ITEMS_RECEIVED", { event: "complete", count: _completeCount, top5: (data?.items||[]).slice(0,5).map((i: any)=>({title:i?.title,price:i?.price,source:i?.source})) }); } catch {}
+              try { console.log("CLIENT_MARKET_STREAM_COMPLETE_RENDERED", { scanId: data?.scanId ?? params.scanId ?? null, count: _completeCount }); } catch {}
+              if (_completeCount > 0 && !lastProvisional) {
+                try { console.log("CLIENT_MARKET_STREAM_FIRST_PAYLOAD", { scanId: data?.scanId ?? params.scanId ?? null, event: "complete", count: _completeCount }); } catch {}
+              }
               onComplete(data);
               if (params.query && data?.items?.length) writePriceCache(params.query, data);
               setOfflineCachedAt(null);
@@ -7093,17 +7103,22 @@ const searchMarketStream = async (
           },
         );
       } catch (xhrErr: any) {
+        const _xhrErrReason = completeSeen ? "self_abort_after_complete" : signal?.aborted ? "outer_signal" : xhrErr?.message || "unknown";
         // If we already saw `complete` and aborted ourselves, swallow the abort.
         if (completeSeen && xhrErr?.name === "AbortError") {
           /* expected — we asked it to stop */
         } else if (signal?.aborted) {
+          try { console.log("CLIENT_MARKET_ABORT_REASON", { scanId: params.scanId ?? null, reason: "outer_signal_abort", xhrName: xhrErr?.name }); } catch {}
           throw xhrErr; // outer caller cancelled — propagate
         } else if (streamErr) {
+          try { console.log("CLIENT_MARKET_ABORT_REASON", { scanId: params.scanId ?? null, reason: "stream_error_event", message: streamErr.message }); } catch {}
           throw streamErr;
         } else {
+          try { console.log("CLIENT_MARKET_ABORT_REASON", { scanId: params.scanId ?? null, reason: _xhrErrReason, xhrName: xhrErr?.name }); } catch {}
           throw xhrErr;
         }
       } finally {
+        try { console.log("CLIENT_MARKET_STREAM_CLOSED", { scanId: params.scanId ?? null, completeSeen, hadProvisional: !!lastProvisional, hadFinal: !!finalData }); } catch {}
         try { signal?.removeEventListener("abort", cancelOnOuter); } catch {}
       }
 
@@ -7113,6 +7128,11 @@ const searchMarketStream = async (
         (Array.isArray(streamResult?.results) && streamResult.results.length > 0);
       if (streamResult && streamHasItems) {
         // Stream owned first paint — no fallback needed.
+        console.log("CLIENT_MARKET_FALLBACK_SUPPRESSED", {
+          scanId: params.scanId ?? null,
+          source: finalData ? "stream_complete" : "stream_provisional",
+          count: (streamResult.items?.length ?? streamResult.results?.length ?? 0),
+        });
         console.log("CLIENT_MARKET_FALLBACK_SKIPPED", {
           scanId: params.scanId ?? null,
           source: finalData ? "stream_complete" : "stream_provisional",
@@ -7148,6 +7168,7 @@ const searchMarketStream = async (
     return null;
   }
   console.warn("searchMarketStream: falling back to legacy searchMarket");
+  console.log("CLIENT_MARKET_FALLBACK_STARTED", { scanId: params.scanId ?? null, query: params.query, reason: "stream_empty_or_failed" });
   console.log("CLIENT_MARKET_FALLBACK_SEARCH_USED", { scanId: params.scanId ?? null, query: params.query, reason: "stream_empty_or_failed" });
   const legacyData = await searchMarket(params, signal);
   if (legacyData) onComplete(legacyData);
