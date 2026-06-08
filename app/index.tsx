@@ -8238,13 +8238,18 @@ if (!isPro) {
 }
 
   try {
-    if (scanAbortRef.current) scanAbortRef.current.abort();
+    if (scanAbortRef.current) {
+      try { console.log("CLIENT_SCAN_ABORT_REQUESTED", { reason: "new_scan_started", prevReqId: activeScanReqIdRef.current }); } catch {}
+      scanAbortRef.current.abort();
+    }
 } catch (_e) {}
 
   const controller = new AbortController();
   scanAbortRef.current = controller;
 
 const _startedAt = Date.now();
+let _firstResultReceived = false; // set true when provisional arrives; guards retry suppression
+try { console.log("CLIENT_SCAN_STARTED", { reqId, scanMode: effectiveScanMode, startedAt: _startedAt }); } catch {}
 
 const token = (scanTokenRef.current += 1);
 const hardStopToken = token;
@@ -8256,9 +8261,15 @@ const isLiveScan = () =>
 
 const softRetryTimer = setTimeout(() => {
   if (!isLiveScan() || hardStopToken !== scanTokenRef.current) return;
-
+  // Suppress retry button if the stream already gave us a first result — showing
+  // retry while results are already visible encourages accidental re-scans.
+  if (_firstResultReceived) {
+    try { console.log("CLIENT_RETRY_SUPPRESSED", { reason: "first_result_already_received", reqId }); } catch {}
+    return;
+  }
   try {
     setShowRetryWhileLoading(true);
+    console.log("CLIENT_RETRY_VISIBLE", { reqId, ms: SOFT_SCAN_UI_MS });
   } catch {}
 
   console.log("RUNSCAN WATCHDOG → keeping scan alive", {
@@ -8837,6 +8848,10 @@ try {
           // Navigate to results early — _provisionalNavigated prevents double navigation
           if (!_provisionalNavigated && tabRef?.current !== "results") {
             _provisionalNavigated = true;
+            _firstResultReceived = true;
+            const _firstResultMs = Date.now() - _startedAt;
+            try { console.log("CLIENT_SCAN_FIRST_RESULT_VISIBLE", { reqId, source: "provisional", count: provCount, elapsedMs: _firstResultMs }); } catch {}
+            try { console.log("CLIENT_SCAN_FIRST_RESULT_TIMING", { reqId, firstResultMs: _firstResultMs, source: "provisional" }); } catch {}
             requestAnimationFrame(() => { try { goTab("results"); } catch {} });
           }
         }
@@ -10111,6 +10126,12 @@ setLastScan({
   results: top3,
 });
 
+if (!_firstResultReceived) {
+  _firstResultReceived = true;
+  const _firstResultMs = Date.now() - _startedAt;
+  try { console.log("CLIENT_SCAN_FIRST_RESULT_VISIBLE", { reqId, source: "complete", elapsedMs: _firstResultMs }); } catch {}
+  try { console.log("CLIENT_SCAN_FIRST_RESULT_TIMING", { reqId, firstResultMs: _firstResultMs, source: "complete" }); } catch {}
+}
 goTab("results");
 stopLoadingSafely(reqId, {
   showVerdictBeat: true,
@@ -10705,6 +10726,7 @@ const retrySameScan = () => {
   if (!session?.photoUri || !Number.isFinite(session?.scannedPrice)) {
     return;
   }
+  try { console.log("CLIENT_RESCAN_TAPPED", { hasSession: !!session?.photoUri, hasResult: !!activeResult }); } catch {}
   hapticSelect();
   runScan({
     photoUri: session.photoUri,
