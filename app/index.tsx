@@ -6489,19 +6489,51 @@ const _dedupeQueryTokens = (input: string): string => {
   return out.join(" ");
 };
 
+// Identity tokens that must survive into any collector query.
+// If the visionQuery contains an airline/aircraft identity token, the collector
+// query must also contain it — otherwise the collector is a downgrade.
+const _IDENTITY_GUARD_TOKENS = [
+  "hawaiian", "united", "delta", "american", "southwest", "alaska", "jetblue",
+  "ana", "jal", "emirates", "qatar", "etihad", "lufthansa",
+  "boeing", "airbus", "787", "777", "747", "737", "a380", "a350", "a330", "a321", "a320",
+  "dreamliner", "jordan", "yeezy", "vaporfly", "alphafly",
+];
+
 const buildCollectorSearchQuery = (visionQuery: string, enrich: any) => {
   const maker = String(enrich?.collector?.maker || "").trim();
   const model = String(enrich?.collector?.model || "").trim();
   const era = String(enrich?.collector?.era || "").trim();
 
   const pieces = [maker, model, visionQuery].filter(Boolean);
+  let result = "";
   if (pieces.length >= 2) {
-    return _dedupeQueryTokens(normalizeTitle(pieces.join(" ")).trim());
+    result = _dedupeQueryTokens(normalizeTitle(pieces.join(" ")).trim());
+  } else if (maker && era) {
+    result = _dedupeQueryTokens(normalizeTitle(`${maker} ${era} ${visionQuery}`).trim());
   }
-  if (maker && era) {
-    return _dedupeQueryTokens(normalizeTitle(`${maker} ${era} ${visionQuery}`).trim());
+
+  if (!result) return "";
+
+  // Identity guard: if the visionQuery contains a known airline/aircraft/brand token
+  // and the collector query DROPS it, reject the collector query. Replacing
+  // "hawaiian airlines diecast airplane model" with "diecast airplane model white diecast metal"
+  // corrupts the snapshot and community comps.
+  const vNorm = normalizeTitle(visionQuery).toLowerCase();
+  const rNorm = result.toLowerCase();
+  const lostIdentity = _IDENTITY_GUARD_TOKENS.some(
+    (tok) => vNorm.includes(tok) && !rNorm.includes(tok)
+  );
+  if (lostIdentity) {
+    console.log("QUERY_IDENTITY_DOWNGRADE_BLOCKED", {
+      visionQuery, collectorQuery: result,
+      reason: "collector_dropped_identity_token",
+      note: "keeping_vision_query_as_canonical",
+    });
+    return "";
   }
-  return "";
+
+  console.log("QUERY_IDENTITY_PRESERVED", { visionQuery, collectorQuery: result });
+  return result;
 };
 
 const shouldTriggerCollectorPass = (enrich: any) => {
@@ -6910,12 +6942,14 @@ function streamSSEViaXHR(
       cleanup();
       resolve(val);
     };
+    let _chunkTimerArmedAt: number | null = null;
     const armChunkTimer = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(
-        () => settleReject(new Error("stream_read_timeout")),
-        chunkTimeoutMs,
-      );
+      _chunkTimerArmedAt = Date.now();
+      timer = setTimeout(() => {
+        try { console.log("CLIENT_MARKET_STREAM_TIMEOUT_FIRED", { chunkTimeoutMs, armedAgoMs: Date.now() - (_chunkTimerArmedAt || Date.now()) }); } catch {}
+        settleReject(new Error("stream_read_timeout"));
+      }, chunkTimeoutMs);
     };
 
     const drain = () => {
@@ -6965,6 +6999,7 @@ function streamSSEViaXHR(
       for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
       try { (xhr as any).responseType = "text"; } catch {}
       armChunkTimer();
+      try { console.log("CLIENT_MARKET_STREAM_TIMEOUT_ARMED", { chunkTimeoutMs, url }); } catch {}
       xhr.send(body);
     } catch (e: any) {
       settleReject(e);
@@ -7053,7 +7088,10 @@ const searchMarketStream = async (
       // Local controller so we can short-circuit the XHR when we see `complete`
       // (server keeps SSE connection open briefly after the final event).
       const localCtl = new AbortController();
-      const cancelOnOuter = () => localCtl.abort();
+      const cancelOnOuter = () => {
+        try { console.log("CLIENT_MARKET_STREAM_ABORTED_BY", { reason: "outer_signal", scanId: params.scanId ?? null }); } catch {}
+        localCtl.abort();
+      };
       try { signal?.addEventListener("abort", cancelOnOuter); } catch {}
 
       try {
