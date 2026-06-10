@@ -5421,10 +5421,11 @@ const res = await fetch(`${base}${cleanEp}`, {
           continue;
         }
 
-        // Phase 4H.3: hard fail tier — server confirmed no usable seed, exit immediately
-        const _visionTier = data?.visionTier || null;
+        // Phase 4H.3/4H.5: hard fail tier — server confirmed no usable seed, exit immediately
+        const _visionTier      = data?.visionTier  || null;
+        const _visionImageHash = data?.imageHash   || null;
         if (_visionTier === "hard_fail_no_seed" || _visionTier === "rejected_generic") {
-          return { query: null, variants: [], confidence: 0, visionIdentity: null, visionTier: _visionTier };
+          return { query: null, variants: [], confidence: 0, visionIdentity: null, visionTier: _visionTier, imageHash: _visionImageHash };
         }
 
         const q =
@@ -5546,6 +5547,7 @@ if (finalQuery) {
     confidence: payload.confidence,
     visionIdentity: payload.visionIdentity,
     visionTier: _visionTier || null,
+    imageHash: _visionImageHash || null,
   };
 }
 
@@ -7065,6 +7067,8 @@ const searchMarketStream = async (
     attributeCertainty: params.attributeCertainty ?? null,
     scanId:             params.scanId            ?? null,
     imageHash:          params.imageHash         ?? null,
+    scanStartedAtMs:    (params as any).scanStartedAtMs ?? null,
+    scanSlaMs:          (params as any).scanSlaMs       ?? null,
   });
 
   let lastProvisional: any = null;
@@ -8120,6 +8124,61 @@ const stopLoadingSafely = (
   _finalizeStopLoading(reqId);
 };
 
+// Phase 4H.5: poll background vision result after clean fail — salvages background master identity.
+const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null, imageHash: string | null) => {
+  if (!scanId && !imageHash) return;
+  const _pollStart = Date.now();
+  const POLL_MAX_MS = 8000;
+  const POLL_INTERVAL_MS = 750;
+  try { console.log("CLIENT_BACKGROUND_RECOVERY_POLL_START", { reqId: callerReqId, scanId, imageHash }); } catch {}
+
+  const _poll = async () => {
+    if (!isReqAlive(callerReqId)) {
+      try { console.log("CLIENT_BACKGROUND_RECOVERY_STOPPED", { reason: "req_dead", scanId }); } catch {}
+      return;
+    }
+    if (Date.now() - _pollStart >= POLL_MAX_MS) {
+      try { console.log("CLIENT_BACKGROUND_RECOVERY_STOPPED", { reason: "timeout_8s", scanId }); } catch {}
+      return;
+    }
+    try {
+      const _apiBase = getApiBase();
+      const _qs = scanId
+        ? `scanId=${encodeURIComponent(scanId)}`
+        : `imageHash=${encodeURIComponent(imageHash!)}`;
+      const _res = await fetch(`${_apiBase}/api/vision/background-result?${_qs}`, {
+        signal: AbortSignal.timeout?.(3000),
+        headers: _authJwt ? { Authorization: `Bearer ${_authJwt}` } : {},
+      });
+      if (_res.ok) {
+        const _d = await _res.json();
+        if (_d?.ready && _d?.query && isReqAlive(callerReqId)) {
+          try { console.log("CLIENT_BACKGROUND_RECOVERY_READY", { scanId, query: _d.query }); } catch {}
+          try { console.log("CLIENT_BACKGROUND_RECOVERY_APPLIED", { scanId, query: _d.query }); } catch {}
+          setSavedToast("Found it after deeper scan.");
+          const _bgCtrl = new AbortController();
+          const _bgData = await searchMarketStream(
+            { query: _d.query, variants: _d.variants || [], visionConfidence: Number(_d.confidence || 0.7), visionIdentity: _d.visionIdentity || null, scanId: scanId || undefined, imageHash: imageHash || undefined } as any,
+            _bgCtrl.signal,
+            (prov: any) => {
+              if (!isReqAlive(callerReqId)) return;
+              if ((prov?.items || []).length >= 1) setResults(prov.items);
+            },
+            (_f: any) => {},
+          );
+          if (_bgData?.items?.length && isReqAlive(callerReqId)) {
+            setResults(_bgData.items);
+            goTab("results");
+          }
+          return;
+        }
+      }
+    } catch {}
+    setTimeout(_poll, POLL_INTERVAL_MS);
+  };
+  setTimeout(_poll, POLL_INTERVAL_MS);
+};
+
 const _shippingCost = (item) => {
   if (typeof item.shipping === "number") return item.shipping;
   if (typeof item.shippingCost === "number") return item.shippingCost;
@@ -8575,16 +8634,18 @@ devLog("RUNSCAN VISION QUERY →", visionQuery);
 devLog("RUNSCAN VISION CONFIDENCE →", visionConfidence);
 
 if (!visionQuery || !String(visionQuery).trim()) {
-  // Phase 4H.3: server confirmed hard fail — don't retry, show message immediately
-  const hardFailTier = visionResults.find(
+  // Phase 4H.3/4H.5: server confirmed hard fail — show clean state, then poll for background salvage
+  const hardFailTier    = visionResults.find(
     (v: any) => v?.visionTier === "hard_fail_no_seed" || v?.visionTier === "rejected_generic"
   )?.visionTier;
+  const _bgPollImageHash = visionResults.find((v: any) => v?.imageHash)?.imageHash || null;
   if (hardFailTier) {
     setResults([]);
     setActiveResult(null);
     setSavedToast("Couldn't identify item. Try a closer photo.");
     stopLoadingSafely(reqId);
     goTab("results");
+    _startBackgroundRecoveryPoll(reqId, null, _bgPollImageHash);
     return;
   }
 
@@ -8849,6 +8910,8 @@ try {
         scanMode: effectiveScanMode,
         scanId: _clientScanId,
         imageHash: _clientImageHash,
+        scanStartedAtMs: _startedAt,
+        scanSlaMs: 5000,
       } as any,
       marketController.signal,
       // onProvisional: Phase 1 marketplace results
@@ -8900,14 +8963,29 @@ try {
       clearTimeout(_statusT2);
     }
 
-    // Phase 4H.4: market timeout / generic query clean fail — show toast, don't render garbage
-    if (marketData?.displayMode === "rescan_needed" || marketData?.reason === "market_first_payload_timeout") {
+    // Phase 4H.4/4H.5: market timeout / SLA exhausted / generic — show clean fail, poll for salvage
+    if (
+      marketData?.displayMode === "rescan_needed" ||
+      marketData?.reason === "market_first_payload_timeout" ||
+      marketData?.reason === "scan_sla_exhausted_before_market"
+    ) {
       try { console.log("CLIENT_HARD_FAIL_RESULT_SHOWN", { reqId, reason: marketData?.reason, displayMode: marketData?.displayMode }); } catch {}
       setResults([]);
       setActiveResult(null);
       setSavedToast("Couldn't identify item. Try a closer photo.");
       stopLoadingSafely(reqId);
       goTab("results");
+      _startBackgroundRecoveryPoll(reqId, _clientScanId, _clientImageHash);
+      return;
+    }
+
+    // Phase 4H.5: final safety guard — never render clean-fail payloads as result cards
+    if (marketData && (
+      marketData?.displayMode === "rescan_needed" ||
+      marketData?.trust === "none" ||
+      marketData?.blocked === "generic_query_post_recovery"
+    )) {
+      try { console.log("CLIENT_CLEAN_FAIL_RENDER_BLOCKED", { reqId, reason: marketData?.reason }); } catch {}
       return;
     }
 
