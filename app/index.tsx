@@ -5421,6 +5421,12 @@ const res = await fetch(`${base}${cleanEp}`, {
           continue;
         }
 
+        // Phase 4H.3: hard fail tier — server confirmed no usable seed, exit immediately
+        const _visionTier = data?.visionTier || null;
+        if (_visionTier === "hard_fail_no_seed" || _visionTier === "rejected_generic") {
+          return { query: null, variants: [], confidence: 0, visionIdentity: null, visionTier: _visionTier };
+        }
+
         const q =
           typeof data?.query === "string" ? data.query :
           typeof data?.result?.query === "string" ? data.result.query :
@@ -5539,6 +5545,7 @@ if (finalQuery) {
     variants: [...new Set(enrichedVariants)].slice(0, 6),
     confidence: payload.confidence,
     visionIdentity: payload.visionIdentity,
+    visionTier: _visionTier || null,
   };
 }
 
@@ -7122,14 +7129,15 @@ const searchMarketStream = async (
             } else if (eventName === "complete") {
               finalData = data;
               const _completeCount = (data?.items||[]).length;
-              try { console.log("FRONTEND_RESULT_ITEMS_RECEIVED", { event: "complete", count: _completeCount, top5: (data?.items||[]).slice(0,5).map((i: any)=>({title:i?.title,price:i?.price,source:i?.source})) }); } catch {}
-              try { console.log("CLIENT_MARKET_STREAM_COMPLETE_RENDERED", { scanId: data?.scanId ?? params.scanId ?? null, count: _completeCount }); } catch {}
+              const _isTimeout = data?.displayMode === "rescan_needed" || data?.reason === "market_first_payload_timeout";
+              try { console.log("FRONTEND_RESULT_ITEMS_RECEIVED", { event: "complete", count: _completeCount, isTimeout: _isTimeout, top5: (data?.items||[]).slice(0,5).map((i: any)=>({title:i?.title,price:i?.price,source:i?.source})) }); } catch {}
+              try { console.log("CLIENT_MARKET_STREAM_COMPLETE_RENDERED", { scanId: data?.scanId ?? params.scanId ?? null, count: _completeCount, isTimeout: _isTimeout }); } catch {}
               if (_completeCount > 0 && !lastProvisional) {
                 try { console.log("CLIENT_MARKET_STREAM_FIRST_PAYLOAD", { scanId: data?.scanId ?? params.scanId ?? null, event: "complete", count: _completeCount }); } catch {}
               }
               onComplete(data);
-              if (params.query && data?.items?.length) writePriceCache(params.query, data);
-              setOfflineCachedAt(null);
+              if (params.query && data?.items?.length && !_isTimeout) writePriceCache(params.query, data);
+              if (!_isTimeout) setOfflineCachedAt(null);
               completeSeen = true;
               try { localCtl.abort(); } catch {} // stop reading; server may keep socket open
             } else if (eventName === "phase" && onPhase) {
@@ -7164,6 +7172,12 @@ const searchMarketStream = async (
       const streamHasItems =
         (Array.isArray(streamResult?.items)   && streamResult.items.length   > 0) ||
         (Array.isArray(streamResult?.results) && streamResult.results.length > 0);
+      // Phase 4H.4: server clean fail — don't fall through to legacy fallback
+      const _streamIsCleanFail = streamResult?.displayMode === "rescan_needed" || streamResult?.reason === "market_first_payload_timeout";
+      if (_streamIsCleanFail) {
+        console.log("MARKET_TIMEOUT_EMPTY_RESULT_SUPPRESSED", { scanId: params.scanId ?? null, reason: streamResult?.reason });
+        return streamResult; // caller checks displayMode and shows toast
+      }
       if (streamResult && streamHasItems) {
         // Stream owned first paint — no fallback needed.
         console.log("CLIENT_MARKET_FALLBACK_SUPPRESSED", {
@@ -8561,6 +8575,19 @@ devLog("RUNSCAN VISION QUERY →", visionQuery);
 devLog("RUNSCAN VISION CONFIDENCE →", visionConfidence);
 
 if (!visionQuery || !String(visionQuery).trim()) {
+  // Phase 4H.3: server confirmed hard fail — don't retry, show message immediately
+  const hardFailTier = visionResults.find(
+    (v: any) => v?.visionTier === "hard_fail_no_seed" || v?.visionTier === "rejected_generic"
+  )?.visionTier;
+  if (hardFailTier) {
+    setResults([]);
+    setActiveResult(null);
+    setSavedToast("Couldn't identify item. Try a closer photo.");
+    stopLoadingSafely(reqId);
+    goTab("results");
+    return;
+  }
+
   if (
     typeof scanSessionRef.current !== "object" ||
     scanSessionRef.current === null
@@ -8871,6 +8898,17 @@ try {
     } finally {
       clearTimeout(_statusT1);
       clearTimeout(_statusT2);
+    }
+
+    // Phase 4H.4: market timeout / generic query clean fail — show toast, don't render garbage
+    if (marketData?.displayMode === "rescan_needed" || marketData?.reason === "market_first_payload_timeout") {
+      try { console.log("CLIENT_HARD_FAIL_RESULT_SHOWN", { reqId, reason: marketData?.reason, displayMode: marketData?.displayMode }); } catch {}
+      setResults([]);
+      setActiveResult(null);
+      setSavedToast("Couldn't identify item. Try a closer photo.");
+      stopLoadingSafely(reqId);
+      goTab("results");
+      return;
     }
 
     const rawItems = Array.isArray(marketData?.items) ? marketData.items : [];
