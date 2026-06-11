@@ -7053,22 +7053,23 @@ const searchMarketStream = async (
   onPhase?:      (phase: string) => void,
 ): Promise<any> => {
   const body = JSON.stringify({
-    query:              params.query,
-    variants:           params.variants    || [],
-    scannedPrice:       params.scannedPrice ?? null,
-    visionConfidence:   params.visionConfidence ?? 0.5,
-    visionIdentity:     params.visionIdentity   ?? null,
-    category:           params.category         ?? "",
-    sizeHint:           params.sizeHint         ?? null,
-    zipCode:            zipCode                  || null,
-    userId:             userId || installId      || undefined,
-    scanSource:         params.scanSource        ?? null,
-    scanMode:           params.scanMode          ?? null,
-    attributeCertainty: params.attributeCertainty ?? null,
-    scanId:             params.scanId            ?? null,
-    imageHash:          params.imageHash         ?? null,
-    scanStartedAtMs:    (params as any).scanStartedAtMs ?? null,
-    scanSlaMs:          (params as any).scanSlaMs       ?? null,
+    query:                params.query,
+    variants:             params.variants    || [],
+    scannedPrice:         params.scannedPrice ?? null,
+    visionConfidence:     params.visionConfidence ?? 0.5,
+    visionIdentity:       params.visionIdentity   ?? null,
+    category:             params.category         ?? "",
+    sizeHint:             params.sizeHint         ?? null,
+    zipCode:              zipCode                  || null,
+    userId:               userId || installId      || undefined,
+    scanSource:           params.scanSource        ?? null,
+    scanMode:             params.scanMode          ?? null,
+    attributeCertainty:   params.attributeCertainty ?? null,
+    scanId:               params.scanId            ?? null,
+    imageHash:            params.imageHash         ?? null,
+    scanStartedAtMs:      (params as any).scanStartedAtMs      ?? null,
+    scanSlaMs:            (params as any).scanSlaMs            ?? null,
+    isBackgroundRecovery: (params as any).isBackgroundRecovery ?? false,
   });
 
   let lastProvisional: any = null;
@@ -8160,9 +8161,18 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
           try { console.log("CLIENT_BACKGROUND_RECOVERY_READY", { scanId, query: _d.query, needsFamilyRecovery: _d.needsFamilyRecovery || false }); } catch {}
           setSavedToast("Found it after deeper scan.");
           const _bgCtrl = new AbortController();
-          try { console.log("CLIENT_BACKGROUND_RECOVERY_MARKET_STARTED", { scanId, query: _d.query }); } catch {}
+          try { console.log("CLIENT_BACKGROUND_RECOVERY_MARKET_STARTED", { scanId, query: _d.query, needsFamilyRecovery: _d.needsFamilyRecovery || false }); } catch {}
           const _bgData = await searchMarketStream(
-            { query: _d.query, variants: _d.variants || [], visionConfidence: Number(_d.confidence || 0.7), visionIdentity: _d.visionIdentity || null, scanId: scanId || undefined, imageHash: imageHash || undefined, needsFamilyRecovery: _d.needsFamilyRecovery || false } as any,
+            {
+              query: _d.query,
+              variants: _d.variants || [],
+              visionConfidence: Number(_d.confidence || 0.7),
+              visionIdentity: _d.visionIdentity || null,
+              scanId: scanId || undefined,
+              imageHash: imageHash || undefined,
+              needsFamilyRecovery: _d.needsFamilyRecovery || false,
+              isBackgroundRecovery: true,  // signals server to use 6s deadline (no SLA pressure)
+            } as any,
             _bgCtrl.signal,
             (prov: any) => {
               if (!isReqAlive(callerReqId)) return;
@@ -8170,9 +8180,14 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
             },
             (_f: any) => {},
           );
-          if (_bgData?.items?.length && isReqAlive(callerReqId)) {
-            setResults(_bgData.items);
+          const _bgItems = _bgData?.items || [];
+          if (_bgItems.length && isReqAlive(callerReqId)) {
+            setResults(_bgItems);
             goTab("results");
+          } else if (isReqAlive(callerReqId)) {
+            // Market search completed but returned no results — clean fail, not blank
+            try { console.log("CLIENT_BACKGROUND_RECOVERY_MARKET_EMPTY", { scanId, query: _d.query, reason: _bgData?.reason || "no_results" }); } catch {}
+            setSavedToast("Found item but no market results — try a rescan.");
           }
           return;
         }
