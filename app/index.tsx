@@ -8124,13 +8124,17 @@ const stopLoadingSafely = (
   _finalizeStopLoading(reqId);
 };
 
-// Phase 4H.5: poll background vision result after clean fail — salvages background master identity.
+// Phase 4H.7: long-poll background vision result after clean fail.
+// Uses waitMs=12000 so the backend holds the connection and wakes immediately when ready,
+// rather than hammering short polls that stop before master finishes (~11s in practice).
+// POLL_MAX_MS is a safety net if the long-poll request itself fails/times out.
 const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null, imageHash: string | null) => {
   if (!scanId && !imageHash) return;
   const _pollStart = Date.now();
-  const POLL_MAX_MS = 8000;
-  const POLL_INTERVAL_MS = 750;
-  try { console.log("CLIENT_BACKGROUND_RECOVERY_POLL_START", { reqId: callerReqId, scanId, imageHash }); } catch {}
+  const POLL_MAX_MS = 20000;       // safety net window — long-poll handles the wait
+  const LONGPOLL_WAIT_MS = 12000;  // server holds connection for up to 12s per request
+  const POLL_INTERVAL_MS = 1000;   // retry interval if long-poll returns ready:false early
+  try { console.log("CLIENT_BACKGROUND_RECOVERY_POLL_START", { reqId: callerReqId, scanId, imageHash, longPollMs: LONGPOLL_WAIT_MS }); } catch {}
 
   const _poll = async () => {
     if (!isReqAlive(callerReqId)) {
@@ -8138,27 +8142,27 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
       return;
     }
     if (Date.now() - _pollStart >= POLL_MAX_MS) {
-      try { console.log("CLIENT_BACKGROUND_RECOVERY_STOPPED", { reason: "timeout_8s", scanId }); } catch {}
+      try { console.log("CLIENT_BACKGROUND_RECOVERY_STOPPED", { reason: "timeout", elapsedMs: Date.now() - _pollStart, scanId }); } catch {}
       return;
     }
     try {
       const _apiBase = getApiBase();
       const _qs = scanId
-        ? `scanId=${encodeURIComponent(scanId)}`
-        : `imageHash=${encodeURIComponent(imageHash!)}`;
+        ? `scanId=${encodeURIComponent(scanId)}&waitMs=${LONGPOLL_WAIT_MS}`
+        : `imageHash=${encodeURIComponent(imageHash!)}&waitMs=${LONGPOLL_WAIT_MS}`;
       const _res = await fetch(`${_apiBase}/api/vision/background-result?${_qs}`, {
-        signal: AbortSignal.timeout?.(3000),
+        signal: AbortSignal.timeout?.(LONGPOLL_WAIT_MS + 3000), // 3s buffer past server wait
         headers: _authJwt ? { Authorization: `Bearer ${_authJwt}` } : {},
       });
       if (_res.ok) {
         const _d = await _res.json();
         if (_d?.ready && _d?.query && isReqAlive(callerReqId)) {
-          try { console.log("CLIENT_BACKGROUND_RECOVERY_READY", { scanId, query: _d.query }); } catch {}
-          try { console.log("CLIENT_BACKGROUND_RECOVERY_APPLIED", { scanId, query: _d.query }); } catch {}
+          try { console.log("CLIENT_BACKGROUND_RECOVERY_READY", { scanId, query: _d.query, needsFamilyRecovery: _d.needsFamilyRecovery || false }); } catch {}
           setSavedToast("Found it after deeper scan.");
           const _bgCtrl = new AbortController();
+          try { console.log("CLIENT_BACKGROUND_RECOVERY_MARKET_STARTED", { scanId, query: _d.query }); } catch {}
           const _bgData = await searchMarketStream(
-            { query: _d.query, variants: _d.variants || [], visionConfidence: Number(_d.confidence || 0.7), visionIdentity: _d.visionIdentity || null, scanId: scanId || undefined, imageHash: imageHash || undefined } as any,
+            { query: _d.query, variants: _d.variants || [], visionConfidence: Number(_d.confidence || 0.7), visionIdentity: _d.visionIdentity || null, scanId: scanId || undefined, imageHash: imageHash || undefined, needsFamilyRecovery: _d.needsFamilyRecovery || false } as any,
             _bgCtrl.signal,
             (prov: any) => {
               if (!isReqAlive(callerReqId)) return;
@@ -8174,9 +8178,11 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
         }
       }
     } catch {}
+    // Long-poll returned ready:false or failed — retry after brief interval
     setTimeout(_poll, POLL_INTERVAL_MS);
   };
-  setTimeout(_poll, POLL_INTERVAL_MS);
+  // Start immediately (no initial delay — long-poll handles the wait server-side)
+  _poll();
 };
 
 const _shippingCost = (item) => {
