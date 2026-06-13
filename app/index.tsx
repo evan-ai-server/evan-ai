@@ -8191,13 +8191,14 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
           }
           return;
         } else if (_d?.ready && _d?.query && _d?.marketReady === false && isReqAlive(callerReqId)) {
-          // Backend says incomplete aircraft identity — no market search, don't waste SerpAPI.
+          // Backend says incomplete aircraft identity — skip market but keep polling.
+          // A later pass (visual/query_fast/master) may produce a complete result.
           try { console.log("BACKGROUND_RESULT_NOT_MARKET_READY_SKIP_MARKET", {
             query: _d.query, imageHash, needsFamilyRecovery: _d.needsFamilyRecovery || false,
             reason: "incomplete_aircraft_identity",
           }); } catch {}
           setSavedToast("Still refining the exact aircraft model…");
-          return;
+          // Do NOT return — fall through to retry poll below.
         }
       }
     } catch {}
