@@ -1761,6 +1761,7 @@ useEffect(() => {
 }, [tab]);
 
   const [results, setResults] = useState([]);
+  const [approximateMarketMode, setApproximateMarketMode] = useState(false);
   const [loadingResults, setLoadingResults] = useState(false);
   const [loadingPhotoUri, setLoadingPhotoUri] = useState(null);
   const [showRetryWhileLoading, setShowRetryWhileLoading] = useState(false);
@@ -5548,6 +5549,7 @@ if (finalQuery) {
     visionIdentity: payload.visionIdentity,
     visionTier: _visionTier || null,
     imageHash: _visionImageHash || null,
+    needsFamilyRecovery: data?.needsFamilyRecovery === true || false,
   };
 }
 
@@ -8191,8 +8193,44 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
           }
           return;
         } else if (_d?.ready && _d?.query && _d?.marketReady === false && isReqAlive(callerReqId)) {
-          // Backend says incomplete aircraft identity — skip market but keep polling.
-          // A later pass (visual/query_fast/master) may produce a complete result.
+          if (_d?.approximateAllowed && isReqAlive(callerReqId)) {
+            // Phase 4L: safe collectible with unconfirmed family — run approximate market search.
+            try { console.log("VISION_APPROX_MARKET_DISPLAYED", {
+              query: _d.query, imageHash, needsFamilyRecovery: _d.needsFamilyRecovery || false,
+              source: "background_poll",
+            }); } catch {}
+            const _approxCtrl = new AbortController();
+            const _approxData = await searchMarketStream(
+              {
+                query: _d.query,
+                variants: _d.variants || [],
+                visionConfidence: Number(_d.confidence || 0.5),
+                visionIdentity: _d.visionIdentity || null,
+                scanId: scanId || undefined,
+                imageHash: imageHash || undefined,
+                needsFamilyRecovery: true,
+                approximateMode: true,
+                isBackgroundRecovery: true,
+              } as any,
+              _approxCtrl.signal,
+              (prov: any) => {
+                if (!isReqAlive(callerReqId)) return;
+                if ((prov?.items || []).length >= 1) setResults(prov.items);
+              },
+              (_f: any) => {},
+            );
+            const _approxItems = _approxData?.items || [];
+            if (_approxItems.length && isReqAlive(callerReqId)) {
+              setResults(_approxItems);
+              setApproximateMarketMode(true);
+              goTab("results");
+            } else if (isReqAlive(callerReqId)) {
+              try { console.log("CLIENT_APPROX_MARKET_EMPTY", { query: _d.query, reason: _approxData?.reason || "no_results" }); } catch {}
+              setSavedToast("Found item but no market results — try a rescan.");
+            }
+            return;
+          }
+          // Not approximate allowed — show toast and keep polling for a complete result.
           try { console.log("BACKGROUND_RESULT_NOT_MARKET_READY_SKIP_MARKET", {
             query: _d.query, imageHash, needsFamilyRecovery: _d.needsFamilyRecovery || false,
             reason: "incomplete_aircraft_identity",
@@ -8549,6 +8587,8 @@ try {
 const queries: string[] = [];
 const confidences: number[] = [];
 const identityCandidates: any[] = [];
+// Phase 4L: if any vision pass returned needsFamilyRecovery, run market in approximate mode.
+const _visionNeedsFamilyRecovery = visionResults.some(v => v?.needsFamilyRecovery === true);
 
 for (const v of visionResults) {
   if (v?.query) {
@@ -8927,6 +8967,10 @@ try {
     let _provisionalNavigated = false;
     let marketData: any;
     try {
+      setApproximateMarketMode(false); // clear any previous approximate banner
+      if (_visionNeedsFamilyRecovery) {
+        try { console.log("VISION_APPROX_MARKET_DISPLAYED", { query: visionQuery, needsFamilyRecovery: true, source: "direct_scan" }); } catch {}
+      }
       marketData = await searchMarketStream(
       {
         query: visionQuery,
@@ -8942,6 +8986,7 @@ try {
         imageHash: _clientImageHash,
         scanStartedAtMs: _startedAt,
         scanSlaMs: 5000,
+        ...(_visionNeedsFamilyRecovery ? { needsFamilyRecovery: true, approximateMode: true } : {}),
       } as any,
       marketController.signal,
       // onProvisional: Phase 1 marketplace results
@@ -9017,6 +9062,11 @@ try {
     )) {
       try { console.log("CLIENT_CLEAN_FAIL_RENDER_BLOCKED", { reqId, reason: marketData?.reason }); } catch {}
       return;
+    }
+
+    // Phase 4L: set approximate banner if market returned with familyUnconfirmed flag
+    if (marketData?.familyUnconfirmed === true || marketData?.approximateMarket === true) {
+      setApproximateMarketMode(true);
     }
 
     const rawItems = Array.isArray(marketData?.items) ? marketData.items : [];
@@ -13588,6 +13638,7 @@ style={[
   loadingPhotoUri={loadingPhotoUri}
   uiError={uiError}
   priceChangeBanner={priceChangeBanner}
+  approximateBanner={approximateMarketMode ? "Approximate range — aircraft model not confirmed" : null}
   scanStage={scanStage}
   scanStageMeta={scanStageMeta}
   showRetryWhileLoading={showRetryWhileLoading}

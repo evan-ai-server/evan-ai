@@ -80,6 +80,7 @@ interface ResultsContentProps {
   loadingPhotoUri?: string | null;
   uiError?: { title: string; msg: string } | null;
   priceChangeBanner?: string | null;
+  approximateBanner?: string | null;
 
   // ── Loading state ──────────────────────────
   scanStage?: LoadingStage;
@@ -155,6 +156,7 @@ export const ResultsContent = React.memo(function ResultsContent({
   loadingPhotoUri,
   uiError,
   priceChangeBanner,
+  approximateBanner,
   scanStage = "idle",
   scanStageMeta,
   showRetryWhileLoading,
@@ -517,6 +519,14 @@ export const ResultsContent = React.memo(function ResultsContent({
             <View style={styles.priceBanner}>
               <Ionicons name="trending-down-outline" size={14} color={C.text2} style={{ marginRight: SP.xs }} />
               <Text style={styles.priceBannerText}>{priceChangeBanner}</Text>
+            </View>
+          ) : null}
+
+          {/* ── Approximate range banner (Phase 4L) */}
+          {approximateBanner && !uiError ? (
+            <View style={[styles.priceBanner, { backgroundColor: "rgba(255,200,50,0.10)" }]}>
+              <Ionicons name="alert-circle-outline" size={14} color={C.text2} style={{ marginRight: SP.xs }} />
+              <Text style={styles.priceBannerText}>{approximateBanner}</Text>
             </View>
           ) : null}
 
