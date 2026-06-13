@@ -8157,7 +8157,7 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
       });
       if (_res.ok) {
         const _d = await _res.json();
-        if (_d?.ready && _d?.query && isReqAlive(callerReqId)) {
+        if (_d?.ready && _d?.query && _d?.marketReady !== false && isReqAlive(callerReqId)) {
           try { console.log("CLIENT_BACKGROUND_RECOVERY_READY", { scanId, query: _d.query, needsFamilyRecovery: _d.needsFamilyRecovery || false }); } catch {}
           setSavedToast("Found it after deeper scan.");
           const _bgCtrl = new AbortController();
@@ -8189,6 +8189,14 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
             try { console.log("CLIENT_BACKGROUND_RECOVERY_MARKET_EMPTY", { scanId, query: _d.query, reason: _bgData?.reason || "no_results" }); } catch {}
             setSavedToast("Found item but no market results — try a rescan.");
           }
+          return;
+        } else if (_d?.ready && _d?.query && _d?.marketReady === false && isReqAlive(callerReqId)) {
+          // Backend says incomplete aircraft identity — no market search, don't waste SerpAPI.
+          try { console.log("BACKGROUND_RESULT_NOT_MARKET_READY_SKIP_MARKET", {
+            query: _d.query, imageHash, needsFamilyRecovery: _d.needsFamilyRecovery || false,
+            reason: "incomplete_aircraft_identity",
+          }); } catch {}
+          setSavedToast("Still refining the exact aircraft model…");
           return;
         }
       }
