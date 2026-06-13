@@ -8587,8 +8587,6 @@ try {
 const queries: string[] = [];
 const confidences: number[] = [];
 const identityCandidates: any[] = [];
-// Phase 4L: if any vision pass returned needsFamilyRecovery, run market in approximate mode.
-const _visionNeedsFamilyRecovery = visionResults.some(v => v?.needsFamilyRecovery === true);
 
 for (const v of visionResults) {
   if (v?.query) {
@@ -8612,6 +8610,14 @@ const rawVisionQuery =
   Object.entries(queryCounts).sort(
     (a, b) => Number(b[1] ?? 0) - Number(a[1] ?? 0)
   )[0]?.[0] || null;
+
+// Phase 4L: approximate mode follows the SELECTED final query, not any weaker candidate.
+// If vision has a strong exact result and a weaker incomplete candidate, the exact result wins
+// and approximate mode must not activate. Derive from the result matching rawVisionQuery.
+const _primaryVisionResult = rawVisionQuery
+  ? (visionResults.find(v => String(v?.query || "").toLowerCase().trim() === rawVisionQuery.toLowerCase().trim()) || visionResults[0] || null)
+  : null;
+const _visionNeedsFamilyRecovery = _primaryVisionResult?.needsFamilyRecovery === true;
 
 const visionIdentity =
   identityCandidates.find((x) => x?.exactQuery) ||
