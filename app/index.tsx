@@ -5425,6 +5425,21 @@ const res = await fetch(`${base}${cleanEp}`, {
         // Phase 4H.3/4H.5: hard fail tier — server confirmed no usable seed, exit immediately
         const _visionTier      = data?.visionTier  || null;
         const _visionImageHash = data?.imageHash   || null;
+        // Phase V3.4: model-circuit-open fail-safe — server says vision is temporarily
+        // unavailable (the model breaker is open). Carry the flags through so the caller
+        // shows a retry state and does NOT long-poll /api/vision/background-result
+        // (nothing is coming) and does NOT search market with a fabricated query.
+        if (data?.visionUnavailable === true || data?.noBackgroundPoll === true) {
+          return {
+            query: null, variants: [], confidence: 0, visionIdentity: null,
+            visionTier: _visionTier || "model_circuit_open",
+            imageHash: _visionImageHash,
+            visionUnavailable: true,
+            noBackgroundPoll: true,
+            retryable: data?.retryable !== false,
+            displayMode: data?.displayMode || "retry_vision",
+          };
+        }
         if (_visionTier === "hard_fail_no_seed" || _visionTier === "rejected_generic") {
           return { query: null, variants: [], confidence: 0, visionIdentity: null, visionTier: _visionTier, imageHash: _visionImageHash };
         }
@@ -8710,6 +8725,29 @@ devLog("RUNSCAN VISION QUERY →", visionQuery);
 devLog("RUNSCAN VISION CONFIDENCE →", visionConfidence);
 
 if (!visionQuery || !String(visionQuery).trim()) {
+  // Phase V3.4: model-circuit-open fail-safe — vision is temporarily unavailable
+  // (the model breaker is open). Show a clean retry state and STOP: do NOT
+  // long-poll /api/vision/background-result (nothing is coming), do NOT retry
+  // into the open breaker, and do NOT run market with a fabricated query. The
+  // early return also means this failed scan is not consumed (mirrors hard-fail).
+  const _unavailable = visionResults.find((v: any) => v?.visionUnavailable || v?.noBackgroundPoll);
+  if (_unavailable) {
+    try {
+      console.log("VISION_BACKGROUND_POLL_SUPPRESSED", {
+        reqId,
+        reason: "vision_unavailable",
+        visionTier: _unavailable?.visionTier || "model_circuit_open",
+        imageHash: _unavailable?.imageHash || null,
+      });
+    } catch {}
+    setResults([]);
+    setActiveResult(null);
+    setSavedToast("Scanner is busy right now — please rescan in a moment.");
+    stopLoadingSafely(reqId);
+    goTab("results");
+    return;
+  }
+
   // Phase 4H.3/4H.5: server confirmed hard fail — show clean state, then poll for background salvage
   const hardFailTier    = visionResults.find(
     (v: any) => v?.visionTier === "hard_fail_no_seed" || v?.visionTier === "rejected_generic"
