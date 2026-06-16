@@ -9296,7 +9296,36 @@ const collectorEligible =
     visionQuery
   );
 
-if (collectorEligible) {
+// V3.6 — Skip the collector re-search when the main scan already returned a
+// strong, clean identity-matched pool. The collector pass exists to chase hidden
+// upside on THIN/uncertain results; once we already have a full pool of clean
+// comps it adds no value. On the provisional-seed fast path (no stream ran, so
+// scanSessionRef.clientScanId is null) it otherwise fires a redundant
+// /market/search with an enriched query that misses the scan cache, 429s on
+// SerpAPI, and falls back to GPT Oracle — burning a paid call (and risking
+// fabricated oracle items) for nothing.
+// strictCount = items surviving local quality + title-similarity filtering (the
+// count the strict path requires >= 3 to trust the pool); on a cache-served path
+// where it isn't set this scan, fall back to the final pool size.
+const STRONG_CLEAN_POOL_MIN = 8; // mirrors server MIN_CLEAN_RESULTS_TARGET
+const cleanPoolCount =
+  typeof strictCount === "number" && strictCount > 0
+    ? strictCount
+    : Array.isArray(combined)
+    ? combined.length
+    : 0;
+const poolAlreadyStrong = cleanPoolCount >= STRONG_CLEAN_POOL_MIN;
+
+if (collectorEligible && poolAlreadyStrong) {
+  console.log("COLLECTOR_PASS_SKIPPED_STRONG_POOL", {
+    cleanPoolCount,
+    threshold: STRONG_CLEAN_POOL_MIN,
+    visionQuery,
+    reason: "main_pool_already_strong_no_collector_upside",
+  });
+}
+
+if (collectorEligible && !poolAlreadyStrong) {
   try {
     setScanStage("collector");
     setScanStageMeta("Checking for hidden collector value...");
