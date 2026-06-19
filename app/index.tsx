@@ -6849,6 +6849,13 @@ const searchMarket = async (
 ) => {
   try {
 
+  // Phase V3.10B.8: same guard as searchMarketStream — never POST a placeholder/
+  // empty query to /market/search (server blocks it as generic).
+  if (!isMarketSearchableQuery(query)) {
+    try { console.log("CLIENT_MARKET_SEARCH_BLOCKED_GENERIC", { route: "/market/search", scanId: scanId ?? null, query: query ?? null }); } catch {}
+    return { items: [], results: [], displayMode: "rescan_needed", reason: "generic_query_no_identity", blockedGeneric: true };
+  }
+
 const raw: any = await apiFetch(`/market/search`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -7069,6 +7076,14 @@ const searchMarketStream = async (
   onComplete:    (data: any) => void,
   onPhase?:      (phase: string) => void,
 ): Promise<any> => {
+  // Phase V3.10B.8: never send a placeholder/empty query to market. The server
+  // would block it (VISION_QUERY_REJECTED_GENERIC) and the app would then show a
+  // misleading "check your connection" error. Return a clean rescan-needed
+  // result instead so the caller routes to the identity/rescan UI — no round-trip.
+  if (!isMarketSearchableQuery(params.query)) {
+    try { console.log("CLIENT_MARKET_SEARCH_BLOCKED_GENERIC", { scanId: params.scanId ?? null, query: params.query ?? null }); } catch {}
+    return { items: [], results: [], displayMode: "rescan_needed", reason: "generic_query_no_identity", blockedGeneric: true };
+  }
   const body = JSON.stringify({
     query:                params.query,
     variants:             params.variants    || [],
@@ -8295,6 +8310,23 @@ const trackEvent = (event: string, payload: any = {}) => {
 };
 
 
+// ── Phase V3.10B.8: client-side market-search guard ─────────────────────────
+// Refuse to fire a market search for placeholder/empty queries the backend
+// rejects as generic (VISION_QUERY_REJECTED_GENERIC / scan_too_vague). Keeps the
+// app from a wasted round-trip + the wrong "Market unavailable — check your
+// connection" message on an identity failure. Mirrors lib/marketQueryGuard.js
+// (index.tsx has no local imports — single mega-file; a drift-guard test keeps
+// the placeholder set in sync). Intentionally narrow — never lists real Tier-1
+// hints or Tier-2 mode seeds, which stay searchable.
+const MARKET_QUERY_PLACEHOLDERS = new Set(["item for sale", "item for", "item"]);
+const isMarketSearchableQuery = (query: unknown): boolean => {
+  if (typeof query !== "string") return false;
+  const q = query.trim().toLowerCase();
+  if (!q) return false;
+  if (MARKET_QUERY_PLACEHOLDERS.has(q)) return false;
+  return true;
+};
+
 // ── Search-first: build a usable query from deterministic signals when vision
 // returns nothing. Never returns empty — always gives the backend something
 // meaningful to search with.
@@ -8321,12 +8353,15 @@ const buildDeterministicFallbackQuery = ({
   };
   if (mode && mode !== "item" && modeHints[mode]) return modeHints[mode];
 
-  // Tier 3: price-anchored generic search
-  if (Number.isFinite(scannedPrice) && (scannedPrice as number) > 0) {
-    return "item for sale";
-  }
+  // Tier 3 (REMOVED — Phase V3.10B.8): a scanned price is NOT an item identity.
+  // Returning the "item for sale" placeholder here sent a generic query to
+  // /market/search, which the server correctly rejects (VISION_QUERY_REJECTED_GENERIC
+  // / scan_too_vague) — but the app then showed "Market unavailable — check your
+  // connection", the wrong message for an identity failure. Price alone yields no
+  // searchable identity, so fall through to null and let the caller route to the
+  // identity/rescan UI. Tier 1 (typed hint) and Tier 2 (mode seeds) are unchanged.
 
-  // No usable signal — caller should hard-fail
+  // No usable signal — caller should hard-fail to a rescan prompt.
   return null;
 };
 
