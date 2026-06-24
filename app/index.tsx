@@ -8102,6 +8102,18 @@ const _finalizeStopLoading = (reqId?: number) => {
   try { retryReveal.setValue(0); } catch {}
 };
 
+const forceReleaseScanLocks = (reason: string) => {
+  if (!isMountedRef.current) return;
+  const wasLocked = scanLockRef.current;
+  scanLockRef.current = false;
+  setIsCapturing(false);
+  setLoadingResults(false);
+  setLoadingPhotoUri(null);
+  if (wasLocked) {
+    try { console.log("CLIENT_SCAN_LOCK_FORCE_RELEASED", { reason }); } catch {}
+  }
+};
+
 const stopLoadingSafely = (
   reqId?: number,
   opts?: { showVerdictBeat?: boolean; heroImageUri?: string | null },
@@ -8779,6 +8791,8 @@ if (!visionQuery || !String(visionQuery).trim()) {
     setActiveResult(null);
     setSavedToast("Scanner is busy right now — please rescan in a moment.");
     stopLoadingSafely(reqId);
+    forceReleaseScanLocks("scanner_busy");
+    setPriceSubmitted(false);
     goTab("results");
     return;
   }
@@ -8793,6 +8807,8 @@ if (!visionQuery || !String(visionQuery).trim()) {
     setActiveResult(null);
     setSavedToast("Couldn't identify item. Try a closer photo.");
     stopLoadingSafely(reqId);
+    forceReleaseScanLocks("hard_fail_" + hardFailTier);
+    setPriceSubmitted(false);
     goTab("results");
     _startBackgroundRecoveryPoll(reqId, null, _bgPollImageHash);
     return;
@@ -11045,6 +11061,8 @@ const startNewScan = () => {
   setResults([]);
   setActiveResult(null);
   nextScanSession();
+  scanLockRef.current = false;
+  setIsCapturing(false);
   setLoadingResults(false);
   setPriceSubmitted(false);
   setScanPriceInput("");
