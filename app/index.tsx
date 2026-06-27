@@ -1733,6 +1733,8 @@ const isReqAlive = (reqId: number) =>
     };
   }, []);
 const [tab, setTab] = useState("camera");
+const [prevTab, setPrevTab] = useState<string | null>(null); // card-shuffle: outgoing tab during transition
+const [isCardShuffling, setIsCardShuffling] = useState(false); // true during the 220ms card-shuffle animation
 const [_neuralLearningLevel, setNeuralLearningLevel] = useState(0);
 
 // ✅ MUST exist before showOnlyActiveTab reads it
@@ -1747,7 +1749,19 @@ const TAB_COOLDOWN_MS = 260;
 
 const _showOnlyActiveTab = true;
 
-const tabFade = useRef(new RNAnimated.Value(1)).current; // ✅ never start hidden
+const tabFade = useRef(new RNAnimated.Value(1)).current; // ✅ never start hidden — kept for recovery effects
+const transitionCoverOpacity = useRef(new RNAnimated.Value(0)).current; // faint backdrop behind card shuffle
+const TRANSITION_COVER_MAX_OPACITY = 0.35; // dark deck backplate behind incoming card — hides void seams + old-tab bleed
+
+// Card shuffle — progress value 0→1 drives both outgoing and incoming card transforms
+const shuffleProgress = useRef(new RNAnimated.Value(1)).current;
+// Interpolation nodes created once (stable identity across renders)
+const shuffleInterps = useRef({
+  inY:       shuffleProgress.interpolate({ inputRange: [0, 1], outputRange: [14, 0],    extrapolate: "clamp" }),
+  inOpacity: shuffleProgress.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1],  extrapolate: "clamp" }), // gentle reveal — present from first frame, settles to full
+  outY:      shuffleProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 10],    extrapolate: "clamp" }),
+  outOpacity:shuffleProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 0],     extrapolate: "clamp" }), // instantly hidden — no bleed
+}).current;
 
 // Pillar 2.3 — persist the current tab so a screenshot or brief
 // background that kills the JS context (iOS memory pressure, dev hot
@@ -2057,6 +2071,7 @@ RNAnimated.parallel([
 
 const [isPro, setIsPro] = useState(false);
 const [scansUsed, setScansUsed] = useState(0);
+const [hydrated, setHydrated] = useState(false); // Tier 1: gates Pro-sensitive chrome until AsyncStorage resolves
 const [bonusScans, setBonusScans] = useState<number>(0);
 const [guestId, setGuestId] = useState<string | null>(null);
 const [scanResetAt, setScanResetAt] = useState<string | null>(null); // ISO string from server
@@ -3678,7 +3693,7 @@ useEffect(() => {
     const t = setTimeout(() => {
       setCameraDelayedActive(false);
       setCameraReady(false);
-    }, 350);
+    }, 8000); // 8s warm grace — return within 8s is instant; saves battery after longer idle
     return () => clearTimeout(t);
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -6201,6 +6216,7 @@ if (intelRaw) {
       setLastScan(null);
       setCycleStartMs(Date.now());
     }
+    setHydrated(true);
   })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
@@ -7447,86 +7463,84 @@ const goTab = (next) => {
   try { setTutorialConfirmOpen(false); } catch {}
   try { Keyboard.dismiss(); } catch {}
 
+  // Faint backdrop — mutes GL void seams at card edges during shuffle
+  try { transitionCoverOpacity.setValue(TRANSITION_COVER_MAX_OPACITY); } catch {}
+
   tabSwitchingRef.current = true;
-  pendingTabRef.current = next;
+  pendingTabRef.current = null;
   setTabInteractable(false);
 
-  // Failsafe recovery — if animation callback never fires
+  // Reset barcode state during switch
+  try {
+    setBarcodeMode(false);
+    setLastBarcode(null);
+    barcodeLockRef.current = false;
+  } catch {}
+
+  // Switch tab + spatial zone immediately — both cards render during shuffle animation
+  const toTab = next;
+  // Pre-warm camera before visual switch so activation starts during the 220ms shuffle
+  if (toTab === "camera") { try { setCameraDelayedActive(true); } catch {} }
+  setPrevTab(tab);
+  setTab(toTab);
+  setSpatialZone((toTab === "history" ? "archive" : toTab) as ZoneKey);
+
+  // Lazy-load disabled for watchlist tab
+  if (toTab === "watchlist") {
+    console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "tab_switch_lazy_load_disabled" });
+  }
+
+  // Reset scroll positions
+  const resetScroll = () => {
+    try {
+      if (toTab === "profile") profileScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
+      if (toTab === "history") historyScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
+      if (toTab === "watchlist") watchlistScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
+    } catch {}
+  };
+  requestAnimationFrame(() => {
+    resetScroll();
+    requestAnimationFrame(resetScroll);
+  });
+
+  // Start card shuffle animation (progress 0 = start positions, 1 = settled)
+  setIsCardShuffling(true);
+  try { shuffleProgress.stopAnimation?.(); } catch {}
+  shuffleProgress.setValue(0);
+
+  // Failsafe — if animation callback never fires, clear all stuck state
   try { if (tabFailSafeRef.current) clearTimeout(tabFailSafeRef.current); } catch {}
   tabFailSafeRef.current = setTimeout(() => {
-    try { tabFade.stopAnimation?.(); } catch {}
+    try { shuffleProgress.stopAnimation?.(); } catch {}
+    try { shuffleProgress.setValue?.(1); } catch {}
     try { tabFade.setValue?.(1); } catch {}
+    try { transitionCoverOpacity.setValue(0); } catch {}
+    setPrevTab(null);
+    setIsCardShuffling(false);
     tabSwitchingRef.current = false;
     pendingTabRef.current = null;
     setTabInteractable(true);
   }, 500);
 
-  // 1) Spring fade-out — fast exit, no linear jank
-  RNAnimated.spring(tabFade, {
-    toValue: 0,
-    damping: 28,
-    stiffness: 380,
-    mass: 0.6,
+  RNAnimated.timing(shuffleProgress, {
+    toValue: 1,
+    duration: 220,
+    easing: Easing.out(Easing.cubic),
     useNativeDriver: true,
-  }).start(() => {
-    const to = pendingTabRef.current || next;
+  }).start(({ finished }) => {
+    if (!finished) return; // failsafe already ran and stopped the animation
+    try { if (tabFailSafeRef.current) clearTimeout(tabFailSafeRef.current); } catch {}
+    tabFailSafeRef.current = null;
+    setPrevTab(null);
+    setIsCardShuffling(false);
+    try { shuffleProgress.setValue(1); } catch {}
+    try { transitionCoverOpacity.setValue(0); } catch {}
+    tabSwitchingRef.current = false;
+    setTabInteractable(true);
+    // Process queued tab switch (latest wins)
+    const queued = pendingTabRef.current;
     pendingTabRef.current = null;
-
-    // Reset barcode state during switch
-    try {
-      setBarcodeMode(false);
-      setLastBarcode(null);
-      barcodeLockRef.current = false;
-    } catch {}
-
-    // Lock at 0 before switching
-    try { tabFade.setValue?.(0); } catch {}
-
-    // Switch tab + spatial zone
-    setTab(to);
-    setSpatialZone((to === "history" ? "archive" : to) as ZoneKey);
-
-    // Lazy-load disabled for watchlist tab — both loadRelistSuggestions and
-    // loadRadar fan SerpAPI lanes across saved items. The watchlist tab must
-    // not trigger any marketplace search on focus. (Both functions are also
-    // bailed at their entry — this removal is for grep clarity.)
-    if (to === "watchlist") {
-      console.log("WATCHLIST_AUTO_SEARCH_BLOCKED", { fn: "tab_switch_lazy_load_disabled" });
-    }
-
-    // Reset scroll positions
-    const resetScroll = () => {
-      try {
-        if (to === "profile") profileScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
-        if (to === "history") historyScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
-        if (to === "watchlist") watchlistScrollRef?.current?.scrollTo?.({ y: 0, animated: false });
-      } catch {}
-    };
-    requestAnimationFrame(() => {
-      resetScroll();
-      requestAnimationFrame(resetScroll);
-    });
-
-    // 2) Spring fade-in — liquid feel
-    RNAnimated.spring(tabFade, {
-      toValue: 1,
-      damping: 22,
-      stiffness: 260,
-      mass: 0.7,
-      useNativeDriver: true,
-    }).start(() => {
-      try { if (tabFailSafeRef.current) clearTimeout(tabFailSafeRef.current); } catch {}
-      tabFailSafeRef.current = null;
-      tabSwitchingRef.current = false;
-      setTabInteractable(true);
-
-      // Process queued tab switch (latest wins)
-      if (pendingTabRef.current) {
-        const queued = pendingTabRef.current;
-        pendingTabRef.current = null;
-        goTab(queued);
-      }
-    });
+    if (queued) goTab(queued);
   });
 };
 
@@ -8872,6 +8886,8 @@ if (!visionQuery || !String(visionQuery).trim()) {
       "Try typing an item name before scanning, or retake the photo closer with the item filling the frame."
     );
     stopLoadingSafely(reqId);
+    forceReleaseScanLocks("vision_no_signal");
+    setPriceSubmitted(false);
     goTab("results");
     return;
   }
@@ -11558,6 +11574,9 @@ useEffect(() => {
 // ✅ BOOT-SAFETY: never lose HUD / tab bar after splash
 // -------------------------
 useEffect(() => {
+  // Skip during intentional card-shuffle — goTab owns state and has a 500ms failsafe
+  if (tabSwitchingRef.current) return;
+
   // when splash is gone + we are not in scan loading, UI MUST be interactive
   if (!showSplash && !loadingResults) {
 
@@ -11565,6 +11584,10 @@ useEffect(() => {
     try {
       tabFade?.stopAnimation?.();
       tabFade?.setValue?.(1);
+      transitionCoverOpacity?.setValue?.(0);
+      shuffleProgress?.setValue?.(1);
+      setPrevTab(null);
+      setIsCardShuffling(false);
       setTabInteractable(true);
       tabSwitchingRef.current = false;
       pendingTabRef.current = null;
@@ -11590,6 +11613,10 @@ useEffect(() => {
   try {
     tabFade?.stopAnimation?.();
     tabFade?.setValue?.(1);
+    transitionCoverOpacity?.setValue?.(0);
+    shuffleProgress?.setValue?.(1);
+    setPrevTab(null);
+    setIsCardShuffling(false);
   } catch {}
 
   const id = setTimeout(() => {
@@ -11598,6 +11625,10 @@ useEffect(() => {
     try {
       tabFade?.stopAnimation?.();
       tabFade?.setValue?.(1);
+      transitionCoverOpacity?.setValue?.(0);
+      shuffleProgress?.setValue?.(1);
+      setPrevTab(null);
+      setIsCardShuffling(false);
     } catch {}
   }, 60);
 
@@ -11841,7 +11872,23 @@ style={{
 >
     <View style={{ flex: 1, backgroundColor: "transparent" }}>
       <StatusBar style="light" />
-      
+
+      {/* Tier 1: Transition cover — opaque #000 overlay that hides GL void flash during tab switches.
+          Normally opacity:0 (invisible, does not block void-as-background on results/history/profile).
+          Snaps to 1 at goTab start, fades back to 0 after destination tab is visible. pointerEvents
+          none so it never intercepts touches. zIndex 50 = above tab layers (30), below splash (999). */}
+      <RNAnimated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFillObject,
+          {
+            backgroundColor: "#000",
+            opacity: transitionCoverOpacity,
+            zIndex: 50,
+          },
+        ]}
+      />
+
       {Boolean(showSplash) ? (
         <RNAnimated.View
           style={[
@@ -13118,7 +13165,7 @@ style={{
       ]}
     >
       <Text style={{ color: "white", fontSize: 16, fontWeight: "800" }} allowFontScaling={false}>
-        {isPro ? "Pro · Unlimited" : `${scansUsed || 0}/${FREE_SCAN_LIMIT_SAFE} free scans`}
+        {!hydrated ? "···" : isPro ? "Pro · Unlimited" : `${scansUsed || 0}/${FREE_SCAN_LIMIT_SAFE} free scans`}
       </Text>
       <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, fontWeight: "800", marginTop: 2 }} allowFontScaling={false}>
         Tap to upgrade
@@ -13238,7 +13285,7 @@ style={{
   </RNAnimated.View>
 ) : null}
 
-{/* CAMERA TAB — hard-isolated: display:'none' kills bleed after fade */}
+{/* CAMERA TAB — hard-isolated */}
 <RNAnimated.View
   style={[
     styles.tabFull,
@@ -13249,12 +13296,17 @@ style={{
   left: 0,
   right: 0,
   bottom: 0,
-  opacity: tab === "camera" ? tabFade : 0,
-  zIndex: tab === "camera" ? 30 : -1,
-  display: tab === "camera" ? "flex" : "none",
+  display: (tab === "camera" || prevTab === "camera") ? "flex" : "none",
+  zIndex: tab === "camera" ? 31 : prevTab === "camera" ? 30 : -1,
+  opacity: tab === "camera" ? shuffleInterps.inOpacity : prevTab === "camera" ? shuffleInterps.outOpacity : 0,
+  transform: prevTab === "camera"
+    ? [{ translateY: shuffleInterps.outY }]
+    : [{ translateY: shuffleInterps.inY }],
   overflow: "hidden",
 },
   ]}
+shouldRasterizeIOS={isCardShuffling && (tab === "camera" || prevTab === "camera")}
+renderToHardwareTextureAndroid={isCardShuffling && (tab === "camera" || prevTab === "camera")}
 pointerEvents={tab === "camera" && tabInteractable ? "auto" : "none"}
 >
 <View style={{ flex: 1 }}>
@@ -13271,8 +13323,7 @@ pointerEvents={tab === "camera" && tabInteractable ? "auto" : "none"}
     StyleSheet.absoluteFillObject, // ✅ force-fill
     styles.camera,
     {
-      opacity: showSplash ? 0.85 : 1,
-      transform: [{ scale: showSplash ? 1.02 : 1 }],
+      opacity: 1,
     },
   ]}
           facing={cameraFacing}
@@ -13684,23 +13735,23 @@ style={[
   right: 0,
   bottom: 0,
 
-  opacity: tab === "results" ? tabFade : 0,
-
-  // Tab cross-fade is opacity-only. Removed translateY 8→0 (visible swipe-up
-  // bleed during transitions) and scale 0.995→1 (sub-pixel rasterization
-  // pixelated text during the cross-fade). Per the no-pixelation /
-  // no-tab-bleed motion rules.
-
-  zIndex: tab === "results" ? 30 : -1,
-  display: tab === "results" ? "flex" : "none",
+  display: (tab === "results" || prevTab === "results") ? "flex" : "none",
+  zIndex: tab === "results" ? 31 : prevTab === "results" ? 30 : -1,
+  opacity: tab === "results" ? shuffleInterps.inOpacity : prevTab === "results" ? shuffleInterps.outOpacity : 0,
+  transform: prevTab === "results"
+    ? [{ translateY: shuffleInterps.outY }]
+    : [{ translateY: shuffleInterps.inY }],
+  // shouldRasterizeIOS set as prop (below) to prevent text pixelation during scale transforms
   overflow: "hidden",
 },
 ]}
-  pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
+shouldRasterizeIOS={isCardShuffling && (tab === "results" || prevTab === "results")}
+renderToHardwareTextureAndroid={isCardShuffling && (tab === "results" || prevTab === "results")}
+pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
 >
-<SafeAreaView style={{ flex: 1 }} edges={loadingResults ? [] : ["top", "bottom"]}>
+<SafeAreaView style={{ flex: 1 }} edges={["top", "bottom"]}>
 <ScrollView
-  style={loadingResults ? { flex: 1, backgroundColor: TOK.C.bg } : [styles.page, { flex: 1 }]}
+  style={[styles.page, { flex: 1 }]}
   contentContainerStyle={loadingResults ? { flexGrow: 1 } : { flexGrow: 1, paddingTop: 0, paddingBottom: 100, backgroundColor: "transparent" }}
   showsVerticalScrollIndicator={false}
   bounces={true}
@@ -14297,12 +14348,17 @@ style={[
   left: 0,
   right: 0,
   bottom: 0,
-  opacity: tab === "history" ? tabFade : 0,
-  zIndex: tab === "history" ? 30 : -1,
-  display: tab === "history" ? "flex" : "none",
+  display: (tab === "history" || prevTab === "history") ? "flex" : "none",
+  zIndex: tab === "history" ? 31 : prevTab === "history" ? 30 : -1,
+  opacity: tab === "history" ? shuffleInterps.inOpacity : prevTab === "history" ? shuffleInterps.outOpacity : 0,
+  transform: prevTab === "history"
+    ? [{ translateY: shuffleInterps.outY }]
+    : [{ translateY: shuffleInterps.inY }],
   overflow: "hidden",
 },
   ]}
+shouldRasterizeIOS={isCardShuffling && (tab === "history" || prevTab === "history")}
+renderToHardwareTextureAndroid={isCardShuffling && (tab === "history" || prevTab === "history")}
 pointerEvents={tab === "history" && tabInteractable ? "box-none" : "none"}
 >
   <View style={[styles.page, { backgroundColor: "transparent", paddingTop: TOP + 32 }]} pointerEvents="box-none">
@@ -14423,12 +14479,17 @@ pointerEvents={tab === "history" && tabInteractable ? "box-none" : "none"}
   left: 0,
   right: 0,
   bottom: 0,
-  opacity: tab === "watchlist" ? tabFade : 0,
-  zIndex: tab === "watchlist" ? 30 : -1,
-  display: tab === "watchlist" ? "flex" : "none",
+  display: (tab === "watchlist" || prevTab === "watchlist") ? "flex" : "none",
+  zIndex: tab === "watchlist" ? 31 : prevTab === "watchlist" ? 30 : -1,
+  opacity: tab === "watchlist" ? shuffleInterps.inOpacity : prevTab === "watchlist" ? shuffleInterps.outOpacity : 0,
+  transform: prevTab === "watchlist"
+    ? [{ translateY: shuffleInterps.outY }]
+    : [{ translateY: shuffleInterps.inY }],
   overflow: "hidden",
 },
   ]}
+shouldRasterizeIOS={isCardShuffling && (tab === "watchlist" || prevTab === "watchlist")}
+renderToHardwareTextureAndroid={isCardShuffling && (tab === "watchlist" || prevTab === "watchlist")}
 pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
 >
   <View style={[styles.page, { paddingTop: TOP + 32 }]}>
@@ -14747,12 +14808,17 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
   left: 0,
   right: 0,
   bottom: 0,
-  opacity: tab === "profile" ? tabFade : 0,
-  zIndex: tab === "profile" ? 30 : -1,
-  display: tab === "profile" ? "flex" : "none",
+  display: (tab === "profile" || prevTab === "profile") ? "flex" : "none",
+  zIndex: tab === "profile" ? 31 : prevTab === "profile" ? 30 : -1,
+  opacity: tab === "profile" ? shuffleInterps.inOpacity : prevTab === "profile" ? shuffleInterps.outOpacity : 0,
+  transform: prevTab === "profile"
+    ? [{ translateY: shuffleInterps.outY }]
+    : [{ translateY: shuffleInterps.inY }],
   overflow: "hidden",
 }
   ]}
+  shouldRasterizeIOS={isCardShuffling && (tab === "profile" || prevTab === "profile")}
+  renderToHardwareTextureAndroid={isCardShuffling && (tab === "profile" || prevTab === "profile")}
   pointerEvents={tab === "profile" && tabInteractable ? "auto" : "none"}
 >
   <RNAnimated.View style={{ flex: 1 }}>
