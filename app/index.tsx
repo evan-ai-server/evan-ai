@@ -3186,6 +3186,72 @@ async function prepareImage(uri) {
   );
   return result.uri;
 }
+
+// Log-only capture quality telemetry — never blocks scan, failure is silent.
+// Produces blurScore (edge variance proxy) and lumaMean from a 192px thumbnail.
+async function collectCaptureQualityTelemetry(uri: string): Promise<{
+  ok: boolean;
+  blurScore?: number;
+  lumaMean?: number;
+  thumbWidth?: number;
+  thumbHeight?: number;
+  decodeMs?: number;
+  reason?: string;
+}> {
+  try {
+    const t0 = Date.now();
+    // Thumbnail for analysis only — does NOT replace the 1024px Vision image
+    const thumb = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: 192 } }],
+      { compress: 0.65, format: ImageManipulator.SaveFormat.JPEG }
+    );
+    const skData = await (Skia.Data as any).fromURI(thumb.uri);
+    const skImage = Skia.Image.MakeImageFromEncoded(skData);
+    if (!skImage) return { ok: false, reason: "decode_null" };
+    const W = skImage.width();
+    const H = skImage.height();
+    const pixels = skImage.readPixels();
+    if (!pixels) return { ok: false, reason: "pixels_null" };
+    const decodeMs = Date.now() - t0;
+    // readPixels returns Float32Array (0.0–1.0) or Uint8Array (0–255)
+    const norm = pixels instanceof Float32Array ? 255 : 1;
+    let lumaSum = 0;
+    let edgeSum = 0;
+    let edgeCount = 0;
+    for (let py = 0; py < H; py++) {
+      for (let px = 0; px < W; px++) {
+        const i = (py * W + px) * 4;
+        const luma =
+          0.299 * (pixels[i] as number) * norm +
+          0.587 * (pixels[i + 1] as number) * norm +
+          0.114 * (pixels[i + 2] as number) * norm;
+        lumaSum += luma;
+        if (px + 1 < W && py + 1 < H) {
+          const iR = (py * W + (px + 1)) * 4;
+          const iD = ((py + 1) * W + px) * 4;
+          const lumaR =
+            0.299 * (pixels[iR] as number) * norm +
+            0.587 * (pixels[iR + 1] as number) * norm +
+            0.114 * (pixels[iR + 2] as number) * norm;
+          const lumaD =
+            0.299 * (pixels[iD] as number) * norm +
+            0.587 * (pixels[iD + 1] as number) * norm +
+            0.114 * (pixels[iD + 2] as number) * norm;
+          const dR = luma - lumaR;
+          const dD = luma - lumaD;
+          edgeSum += dR * dR + dD * dD;
+          edgeCount++;
+        }
+      }
+    }
+    const lumaMean = lumaSum / (W * H);
+    const blurScore = edgeCount > 0 ? edgeSum / edgeCount : 0;
+    return { ok: true, blurScore, lumaMean, thumbWidth: W, thumbHeight: H, decodeMs };
+  } catch (e: any) {
+    return { ok: false, reason: e?.message || "unknown" };
+  }
+}
   // Scan session (for retry / cancel without recount)
   // { photoUri, scannedPrice, counted, startedAt }
 const scanLockRef = useRef(false);
@@ -4594,7 +4660,6 @@ const runBarcodeLookup = async (code: string) => {
   setLastScan(null);
   setResultModalOpen(false);
   setSpatialVerdict(null);  // Clear previous verdict
-  setSpatialLaser(true);    // Neon laser ON
 
   // Direct tab swap — no goTab animation delay, prevents camera flash
   if (tab !== "results") {
@@ -5349,6 +5414,21 @@ const analyzePhotoToQuery = async (photoUri, signal, originalPrice?: number | nu
   if (!photoUri || typeof photoUri !== "string") {
     console.warn("analyzePhotoToQuery invalid photoUri");
     return;
+  }
+  // Log-only capture quality telemetry — never blocks Vision, failure is silent
+  try {
+    const _cqt = await collectCaptureQualityTelemetry(photoUri);
+    console.log("CAPTURE_QUALITY_TELEMETRY", {
+      ok: _cqt.ok,
+      blurScore: _cqt.blurScore,
+      lumaMean: _cqt.lumaMean,
+      thumbWidth: _cqt.thumbWidth,
+      thumbHeight: _cqt.thumbHeight,
+      decodeMs: _cqt.decodeMs,
+      reason: _cqt.reason,
+    });
+  } catch (_cqtErr: any) {
+    console.log("CAPTURE_QUALITY_TELEMETRY_FAILED", { message: _cqtErr?.message || String(_cqtErr) });
   }
   // Prepare image FIRST so cache is image-accurate
   let preparedUri = photoUri;
@@ -8582,7 +8662,6 @@ const successHapticTimer = setTimeout(() => {
   setScanStage("vision");
   setScanStageMeta("Identifying item...");
   setSpatialVerdict(null);  // Clear previous verdict
-  setSpatialLaser(true);    // Neon laser ON during scan pipeline
 
   // Pre-warm: background precompute cache fetch for itemHint only.
   // _lastVisionQueryRef.current is always the PREVIOUS scan's query at this point in
