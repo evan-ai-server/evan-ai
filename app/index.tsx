@@ -382,6 +382,9 @@ const AnimatedCameraView =
   (RNAnimated.createAnimatedComponent(CameraView as any) as any);
 
 const CAMERA_KEY = "main_camera";
+const CAMERA_CAPTURE_SETTLE_MS = 350;   // target ms since onCameraReady before capture
+const CAMERA_CAPTURE_HARD_CAP_MS = 500; // absolute max added settle wait — never hang
+const _CAMERA_CAPTURE_HINT_MS = 120;    // show "Hold steady…" only if waiting longer than this (Camera.1C)
 // -------------------------
 // ✅ GLOBAL HELPERS (used outside App())
 // -------------------------
@@ -3056,6 +3059,7 @@ const _hideTabBar =
   const [_refinePhotos, setRefinePhotos] = useState([]); // { uri }
   const [cameraReady, setCameraReady] = useState(false);
 const cameraReadyOp = useRef(new RNAnimated.Value(0)).current;
+const cameraReadyAtRef = useRef<number | null>(null);
 
 useEffect(() => {
   if (!loadingResults) return;
@@ -3174,9 +3178,9 @@ useEffect(() => {
 async function prepareImage(uri) {
   const result = await ImageManipulator.manipulateAsync(
     uri,
-    [{ resize: { width: 512 } }],
+    [{ resize: { width: 1024 } }],
     {
-      compress: 0.4,
+      compress: 0.72,
       format: ImageManipulator.SaveFormat.JPEG,
     }
   );
@@ -3681,6 +3685,7 @@ useEffect(() => {
       cameraReadyOp.setValue(0);
       const fallback = setTimeout(() => {
         setCameraReady(true);
+        cameraReadyAtRef.current = Date.now();
         RNAnimated.timing(cameraReadyOp, { toValue: 1, duration: 300, useNativeDriver: true }).start();
       }, 600);
       return () => clearTimeout(fallback);
@@ -3693,6 +3698,7 @@ useEffect(() => {
     const t = setTimeout(() => {
       setCameraDelayedActive(false);
       setCameraReady(false);
+      cameraReadyAtRef.current = null;
     }, 8000); // 8s warm grace — return within 8s is instant; saves battery after longer idle
     return () => clearTimeout(t);
   }
@@ -4967,6 +4973,16 @@ const takePhoto = async () => {
     return;
   }
 
+  // Camera readiness guard — prevent capture during tab transitions or before camera warms
+  if (
+    tab !== "camera" ||
+    !cameraDelayedActive ||
+    !cameraReady ||
+    tabSwitchingRef.current
+  ) {
+    return;
+  }
+
 triggerCinematicScan();
 
   // 🔒 LOCK UI IMMEDIATELY
@@ -5038,6 +5054,16 @@ RNAnimated.parallel([
     }),
   ]),
 ]).start();
+
+// Smart settle: wait only the remaining time since onCameraReady, up to HARD_CAP
+{
+  const _readyAt = cameraReadyAtRef.current;
+  const _elapsed = _readyAt ? Date.now() - _readyAt : 0;
+  const _waitMs = Math.min(Math.max(CAMERA_CAPTURE_SETTLE_MS - _elapsed, 0), CAMERA_CAPTURE_HARD_CAP_MS);
+  if (_waitMs > 0) {
+    await new Promise<void>((resolve) => setTimeout(resolve, _waitMs));
+  }
+}
 
 const pic = await cameraRef.current.takePictureAsync({
   quality: 0.92,
@@ -13330,7 +13356,7 @@ pointerEvents={tab === "camera" && tabInteractable ? "auto" : "none"}
           enableTorch={torchOn}
           animatedProps={cameraAnimatedProps}
           active={permission?.granted && cameraDelayedActive && tab === "camera"}
-          onCameraReady={() => { setCameraReady(true); RNAnimated.timing(cameraReadyOp, { toValue: 1, duration: 200, useNativeDriver: true }).start(); }}
+          onCameraReady={() => { setCameraReady(true); cameraReadyAtRef.current = Date.now(); RNAnimated.timing(cameraReadyOp, { toValue: 1, duration: 200, useNativeDriver: true }).start(); }}
           barcodeScannerSettings={{
             barcodeTypes: [
               "ean13",
