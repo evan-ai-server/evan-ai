@@ -5562,7 +5562,7 @@ const res = await fetch(`${base}${cleanEp}`, {
           };
         }
         if (_visionTier === "hard_fail_no_seed" || _visionTier === "rejected_generic") {
-          return { query: null, variants: [], confidence: 0, visionIdentity: null, visionTier: _visionTier, imageHash: _visionImageHash };
+          return { query: null, variants: [], confidence: 0, visionIdentity: null, visionTier: _visionTier, imageHash: _visionImageHash, ...(data?.backgroundPending === true ? { backgroundPending: true } : {}) };
         }
 
         const q =
@@ -8922,9 +8922,10 @@ if (!visionQuery || !String(visionQuery).trim()) {
   )?.visionTier;
   const _bgPollImageHash = visionResults.find((v: any) => v?.imageHash)?.imageHash || null;
   if (hardFailTier) {
+    const _hardFailSoftHandoff = visionResults.some((v: any) => v?.backgroundPending === true);
     setResults([]);
     setActiveResult(null);
-    setSavedToast("Couldn't identify item. Try a closer photo.");
+    setSavedToast(_hardFailSoftHandoff ? "Still identifying…" : "Couldn't identify item. Try a closer photo.");
     stopLoadingSafely(reqId);
     forceReleaseScanLocks("hard_fail_" + hardFailTier);
     setPriceSubmitted(false);
