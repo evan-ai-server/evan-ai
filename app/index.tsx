@@ -5654,6 +5654,40 @@ if (finalConfidence > 0.75) {
   finalConfidence = Math.min(0.98, finalConfidence + 0.05);
 }
 
+// Phase 5D.1A-hotfix: high-stakes provisional response preservation.
+// Backend uses query:null to prevent market search from firing before master confirms.
+// Without this branch, the null query falls through to "no usable query" and loses all
+// provisional fields. Preserve them so the scan handler can show "Likely X — confirming…".
+if (data?.highStakesProvisional === true || (data?.provisional === true && data?.backgroundPending === true)) {
+  try { console.log("CLIENT_HIGH_STAKES_PROVISIONAL_RECEIVED", {
+    provisionalQuery: data.provisionalQuery ?? null,
+    visionTier: _visionTier ?? "high_stakes_provisional",
+    backgroundPending: true,
+  }); } catch {}
+  return {
+    query:                   null,
+    variants:                [],
+    confidence:              Number.isFinite(Number(data.confidence)) ? Number(data.confidence) : 0.5,
+    visionIdentity:          data.identity || null,
+    visionTier:              _visionTier || "high_stakes_provisional",
+    imageHash:               _visionImageHash,
+    provisional:             true,
+    highStakesProvisional:   true,
+    backgroundPending:       true,
+    provisionalQuery:        typeof data.provisionalQuery === "string" ? data.provisionalQuery : null,
+    provisionalReason:       typeof data.provisionalReason === "string" ? data.provisionalReason : null,
+    finalIdentityPending:    true,
+    marketAllowed:           false,
+    affiliateAllowed:        false,
+    verifiedLanguageAllowed: false,
+    userMessage:             typeof data.userMessage === "string"
+      ? data.userMessage
+      : (data.provisionalQuery
+          ? `Likely ${data.provisionalQuery} — confirming exact model…`
+          : "Identifying item — confirming exact model…"),
+  } as any;
+}
+
 if (finalQuery) {
   const rawIdentity =
     data?.identity ||
@@ -8940,6 +8974,37 @@ if (!visionQuery || !String(visionQuery).trim()) {
     (v: any) => v?.visionTier === "hard_fail_no_seed" || v?.visionTier === "rejected_generic"
   )?.visionTier;
   const _bgPollImageHash = visionResults.find((v: any) => v?.imageHash)?.imageHash || null;
+
+  // Phase 5D.1A-hotfix: high-stakes provisional — show "Likely X — confirming…" state.
+  // Must come BEFORE hardFailTier check: query:null is intentional trust lock, not a failure.
+  // Market search must not fire until _startBackgroundRecoveryPoll delivers master-confirmed query.
+  const _provisionalVisionResult = visionResults.find(
+    (v: any) => v?.highStakesProvisional === true || (v?.provisional === true && v?.backgroundPending === true)
+  );
+  if (_provisionalVisionResult) {
+    const _provMsg = typeof _provisionalVisionResult.userMessage === "string"
+      ? _provisionalVisionResult.userMessage
+      : (_provisionalVisionResult.provisionalQuery
+          ? `Likely ${_provisionalVisionResult.provisionalQuery} — confirming exact model…`
+          : "Identifying item — confirming exact model…");
+    try { console.log("CLIENT_HIGH_STAKES_PROVISIONAL_MARKET_BLOCKED", {
+      provisionalQuery: _provisionalVisionResult.provisionalQuery ?? null,
+      marketAllowed: false, reason: "high_stakes_provisional",
+    }); } catch {}
+    try { console.log("CLIENT_HIGH_STAKES_PROVISIONAL_POLL_STARTED", {
+      imageHash: _bgPollImageHash || _provisionalVisionResult.imageHash,
+    }); } catch {}
+    setResults([]);
+    setActiveResult(null);
+    setSavedToast(_provMsg);
+    stopLoadingSafely(reqId);
+    forceReleaseScanLocks("high_stakes_provisional");
+    setPriceSubmitted(false);
+    goTab("results");
+    _startBackgroundRecoveryPoll(reqId, null, _bgPollImageHash || _provisionalVisionResult.imageHash);
+    return;
+  }
+
   if (hardFailTier) {
     const _hardFailSoftHandoff = visionResults.some((v: any) => v?.backgroundPending === true);
     setResults([]);
