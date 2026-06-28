@@ -330,8 +330,8 @@ export function LoadingScreen({
 
         {/* 2. Static concentric rings */}
         <Path path={ring1Path} color="rgba(255,255,255,0.055)" style="stroke" strokeWidth={1} opacity={outerRingOpacity} />
-        <Path path={ring2Path} color="rgba(255,255,255,0.07)"  style="stroke" strokeWidth={1} />
-        <Path path={ring3Path} color="rgba(255,255,255,0.05)"  style="stroke" strokeWidth={1} />
+        <Path path={ring2Path} color="rgba(255,255,255,0.04)"  style="stroke" strokeWidth={1} />
+        <Path path={ring3Path} color="rgba(255,255,255,0.03)"  style="stroke" strokeWidth={1} />
 
         {/* 3. Outer rotating arc + orbit dots */}
         <Group transform={outerTransform} origin={vec(cx, cy)}>

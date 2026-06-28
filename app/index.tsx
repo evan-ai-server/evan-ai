@@ -1779,8 +1779,8 @@ const TRANSITION_COVER_MAX_OPACITY = 0.35; // dark deck backplate behind incomin
 const shuffleProgress = useRef(new RNAnimated.Value(1)).current;
 // Interpolation nodes created once (stable identity across renders)
 const shuffleInterps = useRef({
-  inY:       shuffleProgress.interpolate({ inputRange: [0, 1], outputRange: [14, 0],    extrapolate: "clamp" }),
-  inOpacity: shuffleProgress.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1],  extrapolate: "clamp" }), // gentle reveal — present from first frame, settles to full
+  inY:       shuffleProgress.interpolate({ inputRange: [0, 1], outputRange: [8, 0],     extrapolate: "clamp" }),
+  inOpacity: shuffleProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 1],    extrapolate: "clamp" }),
   outY:      shuffleProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 10],    extrapolate: "clamp" }),
   outOpacity:shuffleProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 0],     extrapolate: "clamp" }), // instantly hidden — no bleed
 }).current;
@@ -4530,7 +4530,7 @@ useEffect(() => {
     const prev = appStateRef.current;
     appStateRef.current = next;
 
-    if (prev === "active" && (next === "inactive" || next === "background")) {
+    if (prev === "active" && next === "background") {
       try { scanAbortRef.current?.abort(); } catch {}
       scanAbortRef.current = null;
 
@@ -7649,7 +7649,7 @@ const goTab = (next) => {
 
   RNAnimated.timing(shuffleProgress, {
     toValue: 1,
-    duration: 220,
+    duration: 180,
     easing: Easing.out(Easing.cubic),
     useNativeDriver: true,
   }).start(({ finished }) => {
@@ -14947,20 +14947,6 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
   pointerEvents={tab === "profile" && tabInteractable ? "auto" : "none"}
 >
   <RNAnimated.View style={{ flex: 1 }}>
-
-{/* Status-bar scroll guard: prevents content from showing through status bar while scrolling */}
-<View
-  pointerEvents="none"
-  style={{
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: TOP + 18,
-    backgroundColor: "#000",
-    zIndex: 10,
-  }}
-/>
 
 <ScrollView
   ref={profileScrollRef}
