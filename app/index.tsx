@@ -404,6 +404,25 @@ const toNumber = (v) => {
 };
 const money = (n) =>
   Number.isFinite(n) ? `$${Number(n).toFixed(2)}` : "—";
+
+// Profile-only compact formatters — do NOT use globally (keeps money() intact)
+function compactProfileMoney(n: number): string {
+  if (!Number.isFinite(n)) return "$0";
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (abs >= 1_000_000) {
+    const v = abs / 1_000_000;
+    return `${sign}$${v >= 10 ? v.toFixed(0) : v.toFixed(1)}M`;
+  }
+  if (abs >= 10_000) {
+    const v = abs / 1_000;
+    return `${sign}$${v >= 100 ? v.toFixed(0) : v.toFixed(1)}K`;
+  }
+  return `${sign}$${Math.round(abs).toLocaleString("en-US")}`;
+}
+function compactProfileCount(n: number): string {
+  return Number.isFinite(n) ? Math.round(n).toLocaleString("en-US") : "0";
+}
 const percent = (n) =>
   Number.isFinite(n) ? `${Math.round(Number(n))}%` : "—";
 
@@ -2431,7 +2450,7 @@ const computeProfitPerHour = useCallback(async () => {
       const verdict = effectiveHourlyRate <= 0
         ? "You're losing money. Stop flipping these items."
         : belowMinWage
-        ? `$${effectiveHourlyRate}/hr — below minimum wage. You're working for nothing.`
+        ? `$${effectiveHourlyRate}/hr effective rate — below market average.`
         : `$${effectiveHourlyRate}/hr effective rate. Keep it up.`;
       setProfitPerHour({ effectiveHourlyRate, totalProfit: Math.round(totalProfit), totalTimeHours: Math.round(totalTimeHours * 10) / 10, verdict, belowMinWage });
     }
@@ -12510,15 +12529,15 @@ style={{
       transform: [{ translateY: gotAwayY }], opacity: gotAwayOp,
     }}>
       <Text style={{ color: "rgba(255,100,100,0.5)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>MISSED OPPORTUNITIES</Text>
-      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 6 }}>💔 The One That Got Away</Text>
-      <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, marginBottom: 20 }}>Items you passed on. Prices they sold for. Pure pain.</Text>
+      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 6 }}>Missed flips</Text>
+      <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, marginBottom: 20 }}>Items you passed on that later sold for more.</Text>
       {regretItems.length > 0 ? (
         <Text style={{ color: "#ff6b6b", fontWeight: "900", fontSize: 16, marginBottom: 20 }}>
           Total missed: ${regretItems.reduce((s, i) => s + Math.max(0, (i.currentPrice || i.passedPrice) - i.passedPrice), 0)} in potential profit
         </Text>
       ) : null}
       {regretItems.length === 0 ? (
-        <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 14, textAlign: "center", paddingVertical: 30 }}>No regrets yet. Keep scanning.</Text>
+        <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 14, textAlign: "center", paddingVertical: 30 }}>No missed flips yet. Keep scanning.</Text>
       ) : regretItems.slice(0, 5).sort((a, b) => Math.max(0, (b.currentPrice || b.passedPrice) - b.passedPrice) - Math.max(0, (a.currentPrice || a.passedPrice) - a.passedPrice)).map((item, i) => (
         <View key={i} style={{
           backgroundColor: "rgba(255,60,60,0.06)", borderRadius: 14,
@@ -12563,7 +12582,7 @@ style={{
       transform: [{ translateY: graveyardY }], opacity: graveyardOp,
     }}>
       <Text style={{ color: "rgba(80,255,150,0.5)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>PRICE DROP ALERTS</Text>
-      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 6 }}>⚰️ Scan Graveyard</Text>
+      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 6 }}>Passed items</Text>
       <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 13, marginBottom: 20 }}>Items you passed on that finally dropped in price.</Text>
       {graveyardItems.length > 0 ? (
         <Text style={{ color: "#50ff96", fontWeight: "900", fontSize: 15, marginBottom: 20 }}>
@@ -12675,8 +12694,8 @@ style={{
       padding: 24, paddingBottom: 40,
       transform: [{ translateY: profitY }], opacity: profitOp,
     }}>
-      <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>HUSTLE REALITY CHECK</Text>
-      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 20 }}>💰 Profit Per Hour</Text>
+      <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 6 }}>PROFIT TRACKER</Text>
+      <Text style={{ color: "#fff", fontWeight: "900", fontSize: 20, marginBottom: 20 }}>Profit Per Hour</Text>
       {profitPerHour ? (
         <>
           <View style={{
@@ -14929,16 +14948,30 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
 >
   <RNAnimated.View style={{ flex: 1 }}>
 
+{/* Status-bar scroll guard: prevents content from showing through status bar while scrolling */}
+<View
+  pointerEvents="none"
+  style={{
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: TOP + 18,
+    backgroundColor: "#000",
+    zIndex: 10,
+  }}
+/>
+
 <ScrollView
   ref={profileScrollRef}
   style={{ flex: 1, backgroundColor: "#000" }}
-  contentContainerStyle={{ paddingBottom: TAB_BAR_H + TAB_BAR_MARGIN + BOTTOM + 40, flexGrow: 1, backgroundColor: "#000" }}
+  contentContainerStyle={{ paddingBottom: TAB_BAR_H + TAB_BAR_MARGIN + BOTTOM + 120, flexGrow: 1, backgroundColor: "#000" }}
   showsVerticalScrollIndicator={false}
   bounces={true}
   alwaysBounceVertical={true}
   overScrollMode="always"
   scrollEventThrottle={16}
-  contentInsetAdjustmentBehavior="always"
+  contentInsetAdjustmentBehavior="never"
   keyboardShouldPersistTaps="handled"
 >
 
@@ -14957,78 +14990,71 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
     shadowOffset: { width: 0, height: 0 },
   }}
 >
-{/* Referral Program moved to bottom */}
-<View style={[styles.profileHeaderRow, { gap: 12 }]}>
-  <View style={{ flex: 1, paddingRight: 10 }}>
+{/* Profile header: title + sign-in on top row; subtitle/status/rank below at full width */}
+<View style={{ marginBottom: 14 }}>
+  {/* Row 1: title + sign-in aligned, no text pressure */}
+  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
     <Text style={styles.pageTitle}>Profile</Text>
-
-    <Text
-      style={{
-        color: "rgba(255,255,255,0.55)",
-        fontWeight: "800",
-        marginTop: 2,
+    <Pressable
+      onPress={() => {
+        hapticSelect();
+        if (isSignedIn) {
+          setIsSignedIn(false);
+          _authJwt = null;
+          AsyncStorage.removeItem("evan_jwt_v1").catch(() => {});
+          // NOTE: isPro is NOT cleared on sign-out — subscription is tied to
+          // the device/app install. User keeps access after signing back in.
+          useEvanBrain.getState().hidePaywall();
+        } else {
+          setAuthModalOpen(true);
+        }
       }}
-      numberOfLines={1}
-      ellipsizeMode="tail"
+      style={({ pressed }) => [
+        styles.signInBtn,
+        pressed && styles.tabPressed,
+        {
+          maxWidth: 130,
+          paddingHorizontal: 10,
+          paddingVertical: 9,
+          borderRadius: 14,
+        },
+      ]}
     >
-      {`Your resale intelligence is compounding${loadingDots}`}
-    </Text>
-
-    <Text style={styles.subStatus} numberOfLines={1} ellipsizeMode="tail">
-      {statusLabel}
-    </Text>
-
-    {/* Rank badge */}
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 7, marginTop: 10 }}>
-      <View style={{
-        flexDirection: "row", alignItems: "center", gap: 6,
-        paddingHorizontal: 10, paddingVertical: 5,
-        borderRadius: 99,
-        backgroundColor: "rgba(255,255,255,0.06)",
-        borderWidth: 1, borderColor: "rgba(255,255,255,0.10)",
-        alignSelf: "flex-start",
-      }}>
-        <Ionicons name={userRank.icon as any} size={12} color={userRank.color} />
-        <Text style={{ color: userRank.color, fontSize: 10, fontWeight: "800", letterSpacing: 1.6 }}>
-          {userRank.rank}
-        </Text>
-      </View>
-      <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, fontWeight: "600" }}>
-        {weaponStats.scans} scans total
+      <Ionicons name="person-circle-outline" size={18} color="white" />
+      <Text style={[styles.signInText, { fontSize: 13 }]} numberOfLines={1}>
+        {isSignedIn ? "Sign out" : "Sign in"}
+      </Text>
+    </Pressable>
+  </View>
+  {/* Row 2: subtitle — full width, up to 2 lines, no button pressure */}
+  <Text
+    style={{ color: "rgba(255,255,255,0.55)", fontWeight: "800", marginTop: 2 }}
+    numberOfLines={2}
+  >
+    {`Your resale intelligence is compounding${loadingDots}`}
+  </Text>
+  <Text style={styles.subStatus} numberOfLines={2}>
+    {statusLabel}
+  </Text>
+  {/* Rank badge */}
+  <View style={{ flexDirection: "row", alignItems: "center", gap: 7, marginTop: 10 }}>
+    <View style={{
+      flexDirection: "row", alignItems: "center", gap: 6,
+      paddingHorizontal: 10, paddingVertical: 5,
+      borderRadius: 99,
+      backgroundColor: "rgba(255,255,255,0.06)",
+      borderWidth: 1, borderColor: "rgba(255,255,255,0.10)",
+      alignSelf: "flex-start",
+    }}>
+      <Ionicons name={userRank.icon as any} size={12} color={userRank.color} />
+      <Text style={{ color: userRank.color, fontSize: 10, fontWeight: "800", letterSpacing: 1.6 }}>
+        {userRank.rank}
       </Text>
     </View>
-  </View>
-
-  <Pressable
-    onPress={() => {
-      hapticSelect();
-      if (isSignedIn) {
-        setIsSignedIn(false);
-        _authJwt = null;
-        AsyncStorage.removeItem("evan_jwt_v1").catch(() => {});
-        // NOTE: isPro is NOT cleared on sign-out — subscription is tied to
-        // the device/app install. User keeps access after signing back in.
-        useEvanBrain.getState().hidePaywall();
-      } else {
-        setAuthModalOpen(true);
-      }
-    }}
-    style={({ pressed }) => [
-      styles.signInBtn,
-      pressed && styles.tabPressed,
-      {
-        maxWidth: 130,        // ✅ prevents off-screen
-        paddingHorizontal: 10, // ✅ slightly tighter
-        paddingVertical: 9,
-        borderRadius: 14,
-      },
-    ]}
-  >
-    <Ionicons name="person-circle-outline" size={18} color="white" />
-    <Text style={[styles.signInText, { fontSize: 13 }]} numberOfLines={1}>
-      {isSignedIn ? "Sign out" : "Sign in"}
+    <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, fontWeight: "600" }}>
+      {weaponStats.scans} scans total
     </Text>
-  </Pressable>
+  </View>
 </View>
 
 {/* Feature 14: Public Savings Profile Card */}
@@ -15073,15 +15099,15 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
 
     <View style={{ flexDirection: "row", gap: 10 }}>
       <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(80,255,150,0.07)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(80,255,150,0.22)" }}>
-        <Text style={{ color: "#50ff96", fontSize: 22, fontWeight: "900" }}>{money(savingsTotal)}</Text>
+        <Text style={{ color: "#50ff96", fontSize: 22, fontWeight: "900" }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{compactProfileMoney(savingsTotal)}</Text>
         <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Total Saved</Text>
       </View>
       <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(130,200,255,0.07)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(130,200,255,0.22)" }}>
-        <Text style={{ color: "#82c8ff", fontSize: 22, fontWeight: "900" }}>{scansUsed}</Text>
+        <Text style={{ color: "#82c8ff", fontSize: 22, fontWeight: "900" }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{compactProfileCount(scansUsed)}</Text>
         <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Scans Run</Text>
       </View>
       <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(255,200,0,0.07)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(255,200,0,0.22)" }}>
-        <Text style={{ color: "#ffd060", fontSize: 22, fontWeight: "900" }}>{history?.length ?? 0}</Text>
+        <Text style={{ color: "#ffd060", fontSize: 22, fontWeight: "900" }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{compactProfileCount(history?.length ?? 0)}</Text>
         <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Items Found</Text>
       </View>
     </View>
@@ -15262,7 +15288,7 @@ setSavedToast("Checking…");
     <Ionicons name="rocket-outline" size={20} color="white" />
   </View>
   <View style={{ flex: 1 }}>
-    <Text style={{ color: "white", fontWeight: "900", fontSize: 15 }}>Billionaire features</Text>
+    <Text style={{ color: "white", fontWeight: "900", fontSize: 15 }}>Seller suite</Text>
     <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginTop: 2 }}>
       Seller mode · inventory · multi-item scan
     </Text>
@@ -15337,7 +15363,7 @@ setSavedToast("Checking…");
     borderWidth: 1, borderColor: "rgba(255,255,255,0.07)",
     padding: 16, marginBottom: 10,
   }}>
-    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 4 }}>FLIP PERSONALITY</Text>
+    <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", marginBottom: 4 }}>SELLING PROFILE</Text>
     <Text style={{ color: "#fff", fontWeight: "900", fontSize: 16 }}>{flipPersonality.type}</Text>
     <Text style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, marginTop: 4 }}>{flipPersonality.description}</Text>
     <Text style={{ color: "rgba(255,255,255,0.25)", fontSize: 11, marginTop: 6 }}>{flipPersonality.totalScans} total scans</Text>
@@ -15363,9 +15389,11 @@ setSavedToast("Checking…");
 >
   <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
     <View style={styles.inlineRow}>
-      <Text style={{ fontSize: 18, marginRight: 4 }}>💔</Text>
+      <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+        <Ionicons name="trending-up-outline" size={16} color="white" />
+      </View>
       <View style={{ flex: 1 }}>
-        <Text style={{ color: "rgba(255,255,255,0.9)", fontWeight: "800", fontSize: 13 }}>The One That Got Away</Text>
+        <Text style={{ color: "rgba(255,255,255,0.9)", fontWeight: "800", fontSize: 13 }}>Missed flips</Text>
         <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>{regretItems.length} missed flip{regretItems.length !== 1 ? "s" : ""} in 30 days</Text>
       </View>
     </View>
@@ -15381,9 +15409,11 @@ setSavedToast("Checking…");
 >
   <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
     <View style={styles.inlineRow}>
-      <Text style={{ fontSize: 18, marginRight: 4 }}>⚰️</Text>
+      <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+        <Ionicons name="archive-outline" size={16} color="white" />
+      </View>
       <View style={{ flex: 1 }}>
-        <Text style={{ color: "rgba(255,255,255,0.9)", fontWeight: "800", fontSize: 13 }}>Scan Graveyard</Text>
+        <Text style={{ color: "rgba(255,255,255,0.9)", fontWeight: "800", fontSize: 13 }}>Passed items</Text>
         <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>Items you passed that finally dropped</Text>
       </View>
     </View>
@@ -15399,10 +15429,12 @@ setSavedToast("Checking…");
 >
   <View style={[styles.inlineRow, { justifyContent: "space-between" }]}>
     <View style={styles.inlineRow}>
-      <Text style={{ fontSize: 18, marginRight: 4 }}>💰</Text>
+      <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: "rgba(255,255,255,0.08)", alignItems: "center", justifyContent: "center" }}>
+        <Ionicons name="timer-outline" size={16} color="white" />
+      </View>
       <View style={{ flex: 1 }}>
         <Text style={{ color: "#fff", fontWeight: "800", fontSize: 13 }}>Profit Per Hour</Text>
-        <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>Are you working below minimum wage?</Text>
+        <Text style={{ color: "rgba(255,255,255,0.35)", fontSize: 12 }}>See your effective hourly profit</Text>
       </View>
     </View>
     <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
@@ -17984,7 +18016,7 @@ style={[
   <View style={styles.modalBackdrop}>
     <View style={styles.modalCard}>
       <View style={styles.modalTopRow}>
-        <Text style={styles.modalTitle}>Billionaire features</Text>
+        <Text style={styles.modalTitle}>Seller suite</Text>
         <Pressable onPress={() => { hapticSelect?.(); setProfileModal(null); }} style={styles.backPill}>
           <Ionicons name="close" size={16} color="white" />
           <Text style={styles.backText}>Close</Text>
