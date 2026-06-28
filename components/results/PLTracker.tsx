@@ -202,10 +202,15 @@ const SCORE_COLOR = (roi: number) =>
   roi >= 50 ? "#50ff96" : roi >= 20 ? "#ffd060" : roi >= 0 ? "#82c8ff" : "#ff5050";
 
 function fmt(n: number) {
-  return `$${Math.abs(n).toFixed(0)}`;
+  const abs = Math.abs(n);
+  if (abs >= 10_000) {
+    const k = abs / 1_000;
+    return `$${k >= 100 ? k.toFixed(0) : k.toFixed(1)}K`;
+  }
+  return `$${Math.round(abs).toLocaleString("en-US")}`;
 }
 function pct(roi: number) {
-  return `${roi >= 0 ? "+" : ""}${roi.toFixed(0)}%`;
+  return `${roi >= 0 ? "+" : ""}${Math.round(roi).toLocaleString("en-US")}%`;
 }
 function isoToDisplay(iso: string) {
   try {
@@ -567,11 +572,11 @@ export function PLTracker({ flips, onAdd, onDelete, onMarkSold, isNet = false, o
         </Pressable>
       </View>
 
-      {/* Stats row */}
+      {/* Stats row — 3 columns (year profit removed: duplicates total when all flips are same-year) */}
       {flips.length > 0 && (
         <View style={styles.statsRow}>
           <View style={styles.statBox}>
-            <Text style={[styles.statVal, { color: stats.totalProfit >= 0 ? (isNet ? "#00d4a0" : "#50ff96") : "#ff5050" }]}>
+            <Text style={[styles.statVal, { color: stats.totalProfit >= 0 ? (isNet ? "#00d4a0" : "#50ff96") : "#ff5050" }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
               {stats.totalProfit >= 0 ? "+" : ""}{fmt(stats.totalProfit)}
             </Text>
             <Text style={styles.statLabel}>{isNet ? "Net Profit" : "Total Profit"}</Text>
@@ -579,22 +584,15 @@ export function PLTracker({ flips, onAdd, onDelete, onMarkSold, isNet = false, o
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statBox}>
-            <Text style={[styles.statVal, { color: SCORE_COLOR(stats.avgROI) }]}>
+            <Text style={[styles.statVal, { color: SCORE_COLOR(stats.avgROI) }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
               {pct(stats.avgROI)}
             </Text>
             <Text style={styles.statLabel}>Avg ROI</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statBox}>
-            <Text style={[styles.statVal, { color: "#82c8ff" }]}>{stats.flipCount}</Text>
+            <Text style={[styles.statVal, { color: "#82c8ff" }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{stats.flipCount}</Text>
             <Text style={styles.statLabel}>Flips</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statBox}>
-            <Text style={[styles.statVal, { color: "#ffd060" }]}>
-              {stats.yearProfit >= 0 ? "+" : ""}{fmt(stats.yearProfit)}
-            </Text>
-            <Text style={styles.statLabel}>{new Date().getFullYear()}</Text>
           </View>
         </View>
       )}
