@@ -4371,7 +4371,10 @@ const runFlipScanner = async (category: string) => {
     const apiBase = getApiBase();
     const resp = await fetch(`${apiBase}/api/arbitrage/flip-scanner`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(_authJwt ? { Authorization: `Bearer ${_authJwt}` } : (_clientId ? { "x-user-id": _clientId } : {})),
+      },
       body: JSON.stringify({
         category: category || activeResult?.category || "sneakers",
         zipCode,
@@ -5190,7 +5193,10 @@ if (receiptMode) {
     const apiBase = getApiBase();
     const resp = await fetch(`${apiBase}/api/receipt/analyze`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(_authJwt ? { Authorization: `Bearer ${_authJwt}` } : (_clientId ? { "x-user-id": _clientId } : {})),
+      },
       body: JSON.stringify({ imageBase64: b64 }),
       signal: abortAfter(45000),
     });
@@ -10541,7 +10547,10 @@ if (photoUri && (card?.category || (card as any)?.visionIdentity?.brand || (card
         setDeepAuthLoading(true);
         fetch(`${apiBase}/api/auth/deep-scan`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(_authJwt ? { Authorization: `Bearer ${_authJwt}` } : (_clientId ? { "x-user-id": _clientId } : {})),
+          },
           body: JSON.stringify({ imageBase64: b64, brand: _brand, category: _category, knownFakeTells: _knownTells }),
           signal: abortAfter(30000),
         })
