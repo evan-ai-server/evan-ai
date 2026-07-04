@@ -3,6 +3,7 @@ import { getApiBase } from "../utils/apiBase";
 import { sanitizeHint, sanitizePropContext, devLog, devWarn } from "../lib/security";
 import { SubscriptionModal } from "../components/subscription/SubscriptionModal";
 import { ResultsContent } from "../components/results/ResultsContent";
+import { evidenceLabelShort as _mkEvidenceLabelShort } from "../components/results/marketIntel";
 import { ConfettiBurst } from "../components/results/ConfettiBurst";
 import {
   useNetworkStatus,
@@ -989,7 +990,7 @@ const TUTORIAL_STEPS = [
     accentColor: "rgba(255,255,255,0.55)",
     subtitle: "WELCOME",
     title: "Scan smarter.\nSell better.",
-    body: "Evan AI is your camera-powered deal scanner. Point at any item and get real market prices, flip potential, and AI-verified condition — in seconds.",
+    body: "Evan AI is your camera-powered deal scanner. Point at any item and get real market prices, flip potential, and AI-graded condition — in seconds.",
   },
   {
     icon: "camera-outline" as const,
@@ -10140,7 +10141,7 @@ const _bullets_rank: string[] = [];
   // Bullet 3 — vision match tier
   const conf = Number(visionConfidence) || 0;
   if (conf >= 0.85) {
-    _bullets_rank.push(`Brand and model verified (${Math.round(conf * 100)}%)`);
+    _bullets_rank.push(`Brand and model match (${Math.round(conf * 100)}%)`);
   } else if (conf >= 0.70) {
     _bullets_rank.push(`Strong visual match (${Math.round(conf * 100)}%)`);
   } else if (conf >= 0.50) {
@@ -16745,8 +16746,7 @@ const store =
                   {it?.title || "Listing"}
                 </Text>
                 <Text style={styles.listingMeta}>
-                  {money(toNumber(it?.price))} · {store}
-                  {it?.clickable === false ? " · Pricing ref." : ""}
+                  {money(toNumber(it?.price))} · {store} · {_mkEvidenceLabelShort(it)}
                 </Text>
               </View>
               <Ionicons

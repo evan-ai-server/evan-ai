@@ -26,6 +26,19 @@
  *   trust-language change: "pricing signal" reads like jargon; "market
  *   signal" tells the user honestly that there's evidence but no direct
  *   verified listing. One name, one place.
+ *
+ * Phase 2B.5 — backend evidenceTier vocabulary (Phase 2B.1-2B.4):
+ *   The backend now stamps a richer per-item evidenceTier alongside (not
+ *   instead of) the legacy evidenceQuality field: verified_listing (real
+ *   eBay Browse API proof only, tightened in 2B.3) / marketplace_direct /
+ *   merchant_direct / pricing_signal_only / older_price_reference (cache-
+ *   stale demotion, 2B.4) / model_estimate. resolveEvidenceTier() is the
+ *   single reader for this vocabulary — it prefers evidenceTier/verified/
+ *   stale/pricingSignalOnly when present and only falls back to the legacy
+ *   evidenceQuality/clickable contract for cards that predate that schema.
+ *   "Verified" is never shown unless the new verified flag is true or the
+ *   legacy verified_listing+clickable contract is met — never inferred
+ *   from evidenceQuality alone once the new tier field is present.
  */
 
 import { fmtMoney } from "../design/DS";
@@ -38,6 +51,69 @@ export type EvidenceQuality =
   | "legacy_unknown"
   | null
   | undefined;
+
+// Phase 2B.5 — per-item backend evidenceTier vocabulary. Distinct from the
+// legacy EvidenceQuality enum above (a card may carry either or both; the
+// new fields, when present, are always authoritative — see resolveEvidenceTier).
+export type EvidenceTier =
+  | "verified_listing"
+  | "marketplace_direct"
+  | "merchant_direct"
+  | "pricing_signal_only"
+  | "older_price_reference"
+  | "model_estimate"
+  | string
+  | null
+  | undefined;
+
+export type EvidenceTierBucket =
+  | "verified"
+  | "marketplace_direct"
+  | "merchant_direct"
+  | "pricing_signal"
+  | "older_price_reference"
+  | "model_estimate";
+
+export interface EvidenceTierInfo {
+  /** Coarse bucket — drives chip styling / delta-pill gating (3-4 buckets). */
+  tier: EvidenceTierBucket;
+  /** Long-form label for surfaces with room (rail subtitle, dock-adjacent). */
+  label: string;
+  /** Tight-context label for chip surfaces that truncate. */
+  shortLabel: string;
+  /** True only for real API-backed proof that is also clickable. Never true
+   *  from evidenceQuality alone once the new evidenceTier field is present. */
+  verified: boolean;
+  /** True for older_price_reference / any tier explicitly flagged stale. */
+  isStaleOrOlder: boolean;
+  /** True when no real transactable listing backs the price (signal-only,
+   *  stale, or an AI estimate) — used to gate confident-arithmetic copy. */
+  isPricingSignalOnly: boolean;
+}
+
+// Phase 2B.1/2B.4 — scan-level evidenceSummary attached to activeResult
+// (aggregated across all items server-side; NOT a per-item MarketCard field).
+export type SavingsMode = "confident" | "estimated" | "range_only" | "none";
+
+export interface EvidenceSummary {
+  scanEvidenceTier?: string | null;
+  verifiedListingCount?: number;
+  marketplaceDirectCount?: number;
+  merchantDirectCount?: number;
+  pricingSignalCount?: number;
+  olderReferenceCount?: number;
+  modelEstimateCount?: number;
+  providersUsed?: string[];
+  freshestFetchAt?: number | null;
+  servedFromCache?: boolean;
+  snapshotAgeMs?: number | null;
+  canSayVerified?: boolean;
+  savingsMode?: SavingsMode | null;
+  headline?: string | null;
+  userExplanation?: string | null;
+  affiliateEligible?: boolean;
+  [key: string]: any;
+}
 
 // ─── Phase 4A.2: Evidence calibration reader ────────────────────────────────
 // Normalized view of the backend's confidenceCalibration object. Used by
@@ -199,6 +275,15 @@ export interface MarketCard {
   matchScore?: number | null;
   visionConfidence?: number | null;
   buyVerdict?: string | null;
+  // Phase 2B.5 — Phase 2B.1-2B.4 backend evidence fields (optional: absent
+  // on cards that predate this schema, e.g. older cached snapshots).
+  evidenceTier?: EvidenceTier;
+  evidenceBadge?: string | null;
+  verified?: boolean | null;
+  pricingSignalOnly?: boolean | null;
+  stale?: boolean | null;
+  sourceFreshness?: string | null;
+  cacheStatus?: string | null;
   [key: string]: any;
 }
 
@@ -279,11 +364,110 @@ const safeNum = (n: any): number | null => {
 };
 
 // ─── Trust predicates ───────────────────────────────────────────────────────
+
+function _tierInfo(
+  tier: EvidenceTierBucket,
+  label: string,
+  shortLabel: string,
+  extra: Partial<EvidenceTierInfo> = {},
+): EvidenceTierInfo {
+  return {
+    tier,
+    label,
+    shortLabel,
+    verified: false,
+    isStaleOrOlder: false,
+    isPricingSignalOnly: false,
+    ...extra,
+  };
+}
+
+/**
+ * Phase 2B.5 — single source of truth for evidence-tier label/trust
+ * resolution. Reads the Phase 2B.1-2B.4 backend fields (evidenceTier /
+ * verified / pricingSignalOnly / stale) when present; falls back to the
+ * legacy evidenceQuality/clickable contract for cards that predate that
+ * schema (older cached snapshots, non-market-search paths). The new
+ * evidenceTier field, whenever present, is always authoritative over the
+ * legacy evidenceQuality field — mirrors the backend's own 2B.3 fix where
+ * a merchant-direct URL is no longer allowed to claim verified_listing.
+ * Never returns verified:true without an explicit new-schema verified
+ * signal or the legacy verified_listing + clickable !== false combination.
+ */
+export function resolveEvidenceTier(
+  card: MarketCard | null | undefined,
+): EvidenceTierInfo {
+  if (!card) {
+    return _tierInfo("pricing_signal", "Market signal", "Signal", {
+      isPricingSignalOnly: true,
+    });
+  }
+
+  const rawTier = typeof card.evidenceTier === "string" ? card.evidenceTier : null;
+
+  if (rawTier) {
+    // AI estimate — no real fetch timestamp to go stale against, always
+    // weak regardless of cache state. Checked first so a cache-served
+    // estimate never gets relabeled "Earlier price" below.
+    if (rawTier === "model_estimate") {
+      return _tierInfo("model_estimate", "AI estimate", "AI");
+    }
+    // Staleness overrides tier-specific copy for every remaining tier — a
+    // stale price is never shown as "Verified", regardless of which tier
+    // it was demoted from.
+    if (card.stale === true || rawTier === "older_price_reference") {
+      return _tierInfo("older_price_reference", "Earlier price", "Earlier", {
+        isStaleOrOlder: true,
+        isPricingSignalOnly: true,
+      });
+    }
+    if (rawTier === "verified_listing" || card.verified === true) {
+      if (card.clickable === false) {
+        // Verified tier but no real openable URL — fail safe to signal
+        // framing rather than show a "Verified" claim the UI can't back.
+        return _tierInfo("pricing_signal", "Market signal", "Signal", {
+          isPricingSignalOnly: true,
+        });
+      }
+      return _tierInfo("verified", "Verified", "Verified", { verified: true });
+    }
+    if (rawTier === "marketplace_direct") {
+      return _tierInfo("marketplace_direct", "Marketplace listing", "Marketplace");
+    }
+    if (rawTier === "merchant_direct") {
+      return _tierInfo("merchant_direct", "Store price", "Store");
+    }
+    if (rawTier === "pricing_signal_only" || card.pricingSignalOnly === true) {
+      return _tierInfo("pricing_signal", "Price signal", "Signal", {
+        isPricingSignalOnly: true,
+      });
+    }
+    // Unknown future backend tier string — fail safe rather than guess.
+    return _tierInfo("pricing_signal", "Market signal", "Signal", {
+      isPricingSignalOnly: true,
+    });
+  }
+
+  // Legacy fallback — no Phase 2B evidenceTier field present at all.
+  const eq = card.evidenceQuality;
+  if (eq === "verified_listing" && card.clickable !== false) {
+    return _tierInfo("verified", "Verified", "Verified", { verified: true });
+  }
+  if (eq === "oracle_estimate") {
+    return _tierInfo("model_estimate", "AI estimate", "AI");
+  }
+  if (card.clickable === false || eq === "pricing_signal" || card.isPricingEvidenceOnly === true) {
+    return _tierInfo("pricing_signal", "Market signal", "Signal", {
+      isPricingSignalOnly: true,
+    });
+  }
+  return _tierInfo("pricing_signal", "Market signal", "Signal", {
+    isPricingSignalOnly: true,
+  });
+}
+
 export function isVerifiedListing(card: MarketCard | null | undefined): boolean {
-  if (!card) return false;
-  return (
-    card.evidenceQuality === "verified_listing" && card.clickable !== false
-  );
+  return resolveEvidenceTier(card).verified;
 }
 
 export function isVerifiedClickable(
@@ -298,45 +482,43 @@ export function isVerifiedClickable(
 
 export function isPricingSignal(card: MarketCard | null | undefined): boolean {
   if (!card) return false;
-  if (card.clickable === false) return true;
-  if (card.evidenceQuality === "pricing_signal") return true;
-  if (card.isPricingEvidenceOnly === true) return true;
-  return false;
+  return resolveEvidenceTier(card).isPricingSignalOnly;
 }
 
 export function isOracleEstimate(
   card: MarketCard | null | undefined,
 ): boolean {
-  return !!card && card.evidenceQuality === "oracle_estimate";
+  return !!card && resolveEvidenceTier(card).tier === "model_estimate";
 }
 
 export function evidenceLabel(card: MarketCard | null | undefined): string {
-  if (!card) return "Market signal";
-  if (isVerifiedListing(card)) return "Verified listing";
-  if (isOracleEstimate(card)) return "AI estimate";
-  // Pillar 1.5 — unify pricing-only evidence under one user-facing
-  // label. Both pricing signals and unclassified rows present as
-  // "Market signal" so the UI stops bouncing between names.
-  if (isPricingSignal(card)) return "Market signal";
-  return "Market signal";
+  return resolveEvidenceTier(card).label;
 }
 
 /**
  * Pillar 1.6 — tight-context evidence label. Returns a single short
- * word ("Verified" / "Signal" / "AI") for chip surfaces where the full
- * "Market signal" string truncates (e.g. the card meta-row chip on
- * iPhone width). Dock CTA, rail subtitle, and Evan's Read keep the
- * full evidenceLabel since they have room. Same trust gates apply —
- * "Verified" still requires verified_listing + clickable !== false.
+ * word ("Verified" / "Signal" / "AI" / "Marketplace" / "Store" /
+ * "Earlier") for chip surfaces where the full label string truncates
+ * (e.g. the card meta-row chip on iPhone width). Dock CTA, rail subtitle,
+ * and Evan's Read keep the full evidenceLabel since they have room. Same
+ * trust gates apply — "Verified" still requires the verified tier/flag
+ * AND clickable !== false.
  */
 export function evidenceLabelShort(
   card: MarketCard | null | undefined,
 ): string {
-  if (!card) return "Signal";
-  if (isVerifiedListing(card)) return "Verified";
-  if (isOracleEstimate(card)) return "AI";
-  if (isPricingSignal(card)) return "Signal";
-  return "Signal";
+  return resolveEvidenceTier(card).shortLabel;
+}
+
+/** Scan-level savings-language strength (Phase 2B.1/2B.4 evidenceSummary).
+ *  Returns null when the field is absent (older payloads) so callers can
+ *  fall back to per-card tier gating instead of guessing. */
+export function readSavingsMode(activeResult: any): SavingsMode | null {
+  const mode = activeResult?.evidenceSummary?.savingsMode;
+  if (mode === "confident" || mode === "estimated" || mode === "range_only" || mode === "none") {
+    return mode;
+  }
+  return null;
 }
 
 export function cardActionLabel(
@@ -1001,19 +1183,29 @@ export function deriveCardBullets(
   if (matchPct != null && matchPct >= 50) {
     out.push(`Visual match ${matchPct}%`);
   }
+  const tierInfo = resolveEvidenceTier(card);
   if (isLowest) {
-    if (isVerifiedListing(card)) out.push("Lowest verified price");
+    if (tierInfo.verified) out.push("Lowest verified price");
+    else if (tierInfo.tier === "marketplace_direct") out.push("Lowest marketplace listing");
+    else if (tierInfo.tier === "merchant_direct") out.push("Lowest store price");
+    else if (tierInfo.isStaleOrOlder) out.push("Lowest — earlier price");
     // Pillar 2.1 — "Lowest market signal" → "Lowest pricing signal".
     // Avoids the third repetition of "market signal" on the same screen.
-    else if (isPricingSignal(card)) out.push("Lowest pricing signal");
-    else if (isOracleEstimate(card)) out.push("AI estimate · lowest");
+    else if (tierInfo.tier === "model_estimate") out.push("AI estimate · lowest");
+    else if (tierInfo.isPricingSignalOnly) out.push("Lowest pricing signal");
     else out.push("Lowest in current set");
-  } else if (isVerifiedListing(card)) {
+  } else if (tierInfo.verified) {
     out.push("Direct listing available");
-  } else if (isPricingSignal(card)) {
-    out.push("Pricing signal only");
-  } else if (isOracleEstimate(card)) {
+  } else if (tierInfo.tier === "marketplace_direct") {
+    out.push("Marketplace listing available");
+  } else if (tierInfo.tier === "merchant_direct") {
+    out.push("Store price available");
+  } else if (tierInfo.isStaleOrOlder) {
+    out.push("Earlier price — may have changed");
+  } else if (tierInfo.tier === "model_estimate") {
     out.push("AI market estimate");
+  } else if (tierInfo.isPricingSignalOnly) {
+    out.push("Pricing signal only");
   }
   return out.slice(0, 2);
 }

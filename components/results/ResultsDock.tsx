@@ -21,7 +21,7 @@ import { PressableScale } from "../primitives/PressableScale";
 import { getApiBase } from "../../utils/apiBase";
 import { DecisionSheet } from "./DecisionSheet";
 import { OutcomeEditorSheet } from "./OutcomeEditorSheet";
-import { cardActionLabel } from "./marketIntel";
+import { cardActionLabel, resolveEvidenceTier, readSavingsMode } from "./marketIntel";
 
 const IS_ANDROID = Platform.OS === "android";
 const panthere = Easing.bezier(EASE_PANTHERE[0], EASE_PANTHERE[1], EASE_PANTHERE[2], EASE_PANTHERE[3]);
@@ -154,7 +154,17 @@ export function ResultsDock({
   // those cases so the intel strip stays honest.
   const verdict     = String(activeResult?.buyVerdict || "").toUpperCase();
   const isWinVerdict = verdict === "BUY" || verdict.includes("GREAT") || verdict.includes("FLIP") || verdict.includes("GOOD");
-  const hasSaved    = isWinVerdict && saved != null && saved > 0;
+  // Phase 2B.5 — savingsMode gates both whether "Save $X" shows at all
+  // ("none" → no confident savings claim) and whether it reads "Save" or
+  // the hedged "Est. save". Falls back to the card's own evidence tier
+  // when the scan-level evidenceSummary field isn't present (older payloads).
+  const savingsMode = readSavingsMode(activeResult);
+  const cardTierInfo = resolveEvidenceTier(card);
+  const hasSaved    = isWinVerdict && saved != null && saved > 0 && savingsMode !== "none";
+  const saveWord =
+    savingsMode === "confident" ? "Save" :
+    savingsMode === "estimated" || savingsMode === "range_only" ? "Est. save" :
+    cardTierInfo.verified ? "Save" : "Est. save";
   const cheaperPct  = Number.isFinite(Number(activeResult?.cheaperPct)) ? Number(activeResult.cheaperPct) : null;
   const totalMatches = activeResult?.totalMatches ?? 0;
   const store       = card?.store || card?.source || null;
@@ -213,7 +223,7 @@ export function ResultsDock({
                 shouldRasterizeIOS={!IS_ANDROID}
               />
               <Text style={styles.intelText} allowFontScaling={false} numberOfLines={1}>
-                Save {fmtMoney(saved)}{cheaperPct != null ? ` · ${Math.round(cheaperPct)}% below market` : " vs what you paid"}
+                {saveWord} {fmtMoney(saved)}{cheaperPct != null ? ` · ${Math.round(cheaperPct)}% below market` : " vs what you paid"}
               </Text>
             </>
           ) : price != null ? (
