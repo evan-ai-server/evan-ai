@@ -115,7 +115,7 @@ export function LoadingScreen({
   slowNetwork,
   onOrbPress,
 }: LoadingScreenProps) {
-  const { width: screenW } = useWindowDimensions();
+  const { width: screenW, height: screenH } = useWindowDimensions();
 
   // Orb center within the canvas
   const CANVAS_H = 300;
@@ -319,14 +319,17 @@ export function LoadingScreen({
   return (
     <View style={styles.container}>
 
+      {/* Full-screen ambient glow — separate Canvas so BlurMask is not clipped to the
+          300px orbit Canvas. Soft radial illumination bleeds across the entire screen. */}
+      <Canvas pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+        <Circle cx={cx} cy={screenH / 2} r={220} color="rgba(255,255,255,0.022)">
+          <BlurMask blur={120} style="normal" />
+        </Circle>
+      </Canvas>
+
       {/* ── SKIA CANVAS — crisp GPU-rendered orb ── */}
       <Pressable onPressIn={onOrbPress} style={{ width: screenW, height: CANVAS_H }}>
       <Canvas style={{ width: screenW, height: CANVAS_H }}>
-
-        {/* 1. Background ambient glow */}
-        <Circle cx={cx} cy={cy} r={155} color="rgba(255,255,255,0.03)">
-          <BlurMask blur={60} style="normal" />
-        </Circle>
 
         {/* 2. Static concentric rings */}
         <Path path={ring1Path} color="rgba(255,255,255,0.055)" style="stroke" strokeWidth={1} opacity={outerRingOpacity} />
@@ -337,9 +340,9 @@ export function LoadingScreen({
         <Group transform={outerTransform} origin={vec(cx, cy)}>
           <Path
             path={outerArcPath}
-            color="rgba(255,255,255,0.70)"
+            color="rgba(255,255,255,0.45)"
             style="stroke"
-            strokeWidth={1.5}
+            strokeWidth={1}
             strokeCap="round"
           />
           {/* 8 outer orbit dots */}

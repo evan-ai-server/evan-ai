@@ -13960,7 +13960,7 @@ shouldRasterizeIOS={isCardShuffling && (tab === "results" || prevTab === "result
 renderToHardwareTextureAndroid={isCardShuffling && (tab === "results" || prevTab === "results")}
 pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
 >
-<SafeAreaView style={{ flex: 1 }} edges={["top", "bottom"]}>
+<View style={{ flex: 1 }}>
 <ScrollView
   style={[styles.page, { flex: 1 }]}
   contentContainerStyle={loadingResults ? { flexGrow: 1 } : { flexGrow: 1, paddingTop: 0, paddingBottom: 100, backgroundColor: "transparent" }}
@@ -13984,7 +13984,7 @@ pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
         // module owns the eye-stop. 10 → 14 reads as intentional
         // whitespace separating the chrome from the intelligence.
         marginBottom: 14,
-        paddingTop: 0,
+        paddingTop: TOP,
         backgroundColor: "transparent",
         zIndex: 20,
       },
@@ -14525,9 +14525,9 @@ pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
 </>) : null}
 
 </ScrollView>
-</SafeAreaView>
+</View>
 
-{/* CONFETTI — sibling of SafeAreaView, screen-anchored.
+{/* CONFETTI — sibling of results View, screen-anchored.
     pointerEvents="none" at every wrapper level + inside ConfettiBurst's
     own root + on every particle. Replaces the previous Modal mount that
     captured touches on iOS and froze the dock for the burst's ~3.8s

@@ -488,19 +488,23 @@ const styles = StyleSheet.create({
   // doesn't start as far down inside the dock.
   dockWrap: {
     position: "absolute",
-    left: 0,
-    right: 0,
+    left: 14,
+    right: 14,
     bottom: 0,
     paddingTop: 22,
     paddingHorizontal: SP.lg,
     borderTopLeftRadius: 40,
     borderTopRightRadius: 40,
+    borderBottomLeftRadius: 40,
+    borderBottomRightRadius: 40,
+    borderWidth: 0.5,
+    borderColor: "rgba(255,255,255,0.09)",
     overflow: "hidden",
     ...SH.dock,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: -10 },
-    shadowOpacity: 0.20,
-    shadowRadius: 36,
+    shadowOffset: { width: 0, height: -12 },
+    shadowOpacity: 0.35,
+    shadowRadius: 40,
     elevation: 16,
   },
   // Main fill — neutral near-black. Any emerald undertone was reading
@@ -512,7 +516,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(4,4,4,0.50)",
+    backgroundColor: "rgba(4,4,4,0.86)",
   },
   // Bottom vignette — a single short dark band at the device edge.
   // Pure black at low alpha, no green. Softens the optical edge where
@@ -560,7 +564,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: "rgba(255,255,255,0.05)",
+    backgroundColor: "rgba(255,255,255,0.10)",
   },
 
   // Intelligence strip — sits at the top of the dock's content grid.
@@ -699,13 +703,13 @@ const styles = StyleSheet.create({
     height: 40,
     paddingHorizontal: SP.md,
     borderRadius: R.md,
-    backgroundColor: "rgba(255,255,255,0.05)",
+    backgroundColor: "rgba(255,255,255,0.09)",
     flexBasis: "48%",
     flexGrow: 0,
   },
   chipText: {
     ...TY.label,
-    color: "rgba(255,255,255,0.55)",
+    color: "rgba(255,255,255,0.68)",
     fontSize: 12,
     fontWeight: "600" as const,
   },
