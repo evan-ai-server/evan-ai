@@ -8368,6 +8368,12 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
     }
     if (Date.now() - _pollStart >= POLL_MAX_MS) {
       try { console.log("CLIENT_BACKGROUND_RECOVERY_STOPPED", { reason: "timeout", elapsedMs: Date.now() - _pollStart, scanId }); } catch {}
+      // Phase 4D: recovery gave up silently before — user was left on an empty
+      // results screen with no signal anything had stopped. Give a clear,
+      // retryable terminal state via the existing toast pattern.
+      if (isReqAlive(callerReqId)) {
+        setSavedToast("Couldn't confirm this item — try scanning again.");
+      }
       return;
     }
     try {
@@ -9357,6 +9363,11 @@ try {
       setActiveResult(null);
       setSavedToast("Couldn't identify item. Try a closer photo.");
       stopLoadingSafely(reqId);
+      // Phase 4D: this path was missing the lock/state release the other two
+      // _startBackgroundRecoveryPoll call sites already do — priceSubmitted
+      // stayed true, silently disabling the "Use Photo" retry button.
+      forceReleaseScanLocks("market_rescan_needed");
+      setPriceSubmitted(false);
       goTab("results");
       _startBackgroundRecoveryPoll(reqId, _clientScanId, _clientImageHash);
       return;
