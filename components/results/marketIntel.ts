@@ -1073,10 +1073,10 @@ export function deriveEvansRead(
       calib.capReasons.includes("pass_on_pricing_signal_above_market");
     if (isSignalPass) {
       sentence =
-        "Pricing signals place this above the current resale range. Evan hasn't found verified direct listings — treat this as a signal-based assessment.";
+        "Pricing signals place this above the current resale range. Evan hasn't found verified direct listings — use the low end as your reference, not a buy trigger.";
     } else if (stats.hasOnlyPricingSignals) {
       sentence =
-        "This is a risky buy. Evan found price evidence below your entered cost, but no verified direct listing from this source. Treat this as a market signal, not a guaranteed sell-through price.";
+        "Useful price signal — Evan found price evidence below your entered cost, but no verified direct listing backs it yet. Verify the source before you rely on the resale number.";
     } else if (stats.totalMatches <= 2) {
       sentence =
         "Evan can see the listing but not a real market around it. Without more comps, there's no upside Evan can stand behind.";
@@ -1093,10 +1093,10 @@ export function deriveEvansRead(
       sentence = calib.explanationForUI + " Verify the market yourself before committing.";
     } else if (isEvidenceLimited) {
       sentence =
-        "Evan found pricing signals but no verified direct listings. This is caution, not a call — verify the market before buying.";
+        "Evan found pricing signals but no verified direct listings. Use them as directional pricing — verify the market before buying.";
     } else {
       sentence =
-        "Comparables exist, but the spread is wide and the verified evidence is thin. Treat this as caution, not a confident call.";
+        "Comparables exist but prices vary widely — use the low end as directional pricing, then verify the listing yourself.";
     }
   } else {
     // BUY path — use calibration to pick the right confidence level in copy.

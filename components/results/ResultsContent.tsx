@@ -54,6 +54,7 @@ import {
   evidenceLabelShort,
   isVerifiedListing,
   isPricingSignal,
+  readSavingsMode,
   type MarketCard,
   type MarketStats,
   type VerdictCopy,
@@ -819,10 +820,10 @@ function deriveSilentReason(args: {
     if (scanned != null && avg != null) {
       const diffPct = ((scanned - avg) / avg) * 100;
       if (Math.abs(diffPct) < 7) {
-        return "Price tracks the market — no clear edge in either direction. Treat this as caution, not conviction.";
+        return "Price tracks the market — fair, but no clear flip edge in either direction.";
       }
       if (diffPct > 0) {
-        return "Price risk is elevated, and the evidence is too mixed for a confident call. Treat this as caution.";
+        return "Priced above the market signal Evan found — use the low end of comps as your reference, not a buy trigger.";
       }
       // diffPct < 0 — below market but HOLD
       if (cheaperPct != null && cheaperPct >= 15) {
@@ -854,6 +855,20 @@ function CompactVerdict({
 }) {
   const kind = verdictKind(verdictCopy.word);
   const tone = VERDICT_TONE[kind];
+
+  // UI.5A-2 — presentation-only trust hedge. Same math, softer display when
+  // the evidence can't carry a confident headline: fewer than 3 priced
+  // comps, a backend savings mode of "none", or a silent verdict. "estimated"
+  // and "range_only" modes deliberately do NOT hedge here, so multi-comp
+  // results keep their strong display (the dock already prefixes those
+  // savings with "Est.").
+  const pricedCompCount = Array.isArray(results)
+    ? results.filter((r) => Number.isFinite(Number(r?.price))).length
+    : 0;
+  const thinEvidence =
+    pricedCompCount < 3 ||
+    readSavingsMode(activeResult) === "none" ||
+    verdictCopy.silent === true;
 
   // Enhanced silent sentence — drop in deriveSilentReason output when
   // marketIntel flagged silent. Keeps the smart per-gap copy that the
@@ -922,6 +937,15 @@ function CompactVerdict({
       directionTone = tone.dim;
     }
   }
+  // UI.5A-2 — hedged direction caption. When evidence is thin the caption
+  // names the comp count instead of shouting a market-relative percentage
+  // derived from 1–2 comps.
+  if (thinEvidence && directionLine) {
+    directionLine = pricedCompCount > 0
+      ? `EST. VS ${pricedCompCount} COMP${pricedCompCount === 1 ? "" : "S"}`
+      : "THIN EVIDENCE · VERIFY FIRST";
+    directionTone = tone.dim;
+  }
 
   // Sequenced opacity-only entrance — matches the rest of the screen's
   // text-glyph-safe reveal policy (no transforms on text).
@@ -932,7 +956,7 @@ function CompactVerdict({
   // sweepProgress goes 0 → 1 once per fresh activeResult; the sweep
   // renders an absolutely-positioned `pointerEvents: none` slab that
   // translateX-es across the card from off-left to off-right, opacity
-  // peaking at 0.5 and feathering to 0 at the edges. Card has
+  // peaking at 0.18 and feathering to 0 at the edges. Card has
   // `overflow: hidden` so the slab is clipped to the capsule. No
   // perpetual loop — when the timing finishes, the slab sits off-screen
   // and the worklet stops. Same one-shot pattern the existing
@@ -961,12 +985,13 @@ function CompactVerdict({
       { translateX: interpolate(sweepProgress.value, [0, 1], [-160, 440], Extrapolation.CLAMP) },
       { rotate: "8deg" },
     ] as any,
-    // Triangle opacity envelope: 0 → 0.5 → 0 across the sweep so the
-    // band feathers in and out cleanly. Settles at 0.
+    // Triangle opacity envelope: 0 → 0.18 → 0 across the sweep — a quiet
+    // sheen. The prior 0.5 peak read as a solid light slab when a
+    // screenshot caught it mid-flight. Settles at 0.
     opacity: interpolate(
       sweepProgress.value,
       [0, 0.15, 0.5, 0.85, 1],
-      [0, 0.32, 0.5, 0.18, 0],
+      [0, 0.10, 0.18, 0.08, 0],
       Extrapolation.CLAMP,
     ),
   }));
@@ -1036,9 +1061,9 @@ function CompactVerdict({
             renderToHardwareTextureAndroid={IS_ANDROID}
             shouldRasterizeIOS={!IS_ANDROID}
           >
-            <Text allowFontScaling={false} style={[compactVerdictStyles.dollar, { color: headline.tone }]}>
-              <Text style={[compactVerdictStyles.dollarSign, { color: headline.tone }]}>
-                {headline.sign}
+            <Text allowFontScaling={false} style={[compactVerdictStyles.dollar, thinEvidence && compactVerdictStyles.dollarHedged, { color: headline.tone }]}>
+              <Text style={[compactVerdictStyles.dollarSign, thinEvidence && compactVerdictStyles.dollarSignHedged, { color: headline.tone }]}>
+                {thinEvidence ? `≈${headline.sign}` : headline.sign}
               </Text>
               {headline.amount}
             </Text>
@@ -1249,6 +1274,17 @@ const compactVerdictStyles = StyleSheet.create({
     fontSize: 30,
     fontWeight: "900",
     letterSpacing: -0.8,
+  },
+  // UI.5A-2 — hedged variants. Thin-evidence headlines render ~0.63× so an
+  // estimate never carries verified-grade visual weight.
+  dollarHedged: {
+    fontSize: 19,
+    lineHeight: 21,
+    letterSpacing: -0.4,
+  },
+  dollarSignHedged: {
+    fontSize: 19,
+    letterSpacing: -0.4,
   },
   directionWrap: {
     paddingBottom: 4,

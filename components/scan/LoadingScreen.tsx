@@ -122,6 +122,14 @@ export function LoadingScreen({
   const cx = screenW / 2;
   const cy = 148;
 
+  // UI.5A-2 — measured on-screen Y of the orb's center. The centered flex
+  // column places the orbit block above the geometric screen center (text,
+  // pills, progress and buttons stack below it), so a glow anchored at
+  // screenH/2 rendered visibly below the orb. onLayout gives the orbit
+  // block's top within the full-screen container; + cy = true orb center.
+  // Falls back to screen center for the first frame before layout lands.
+  const [orbCenterY, setOrbCenterY] = useState<number | null>(null);
+
   // ── Reanimated shared values ─────────────────────────────────────────────
   const outerRot   = useSharedValue(0);   // 0 → 2π, clockwise
   const innerRot   = useSharedValue(0);   // 2π → 0, counter-clockwise
@@ -320,15 +328,23 @@ export function LoadingScreen({
     <View style={styles.container}>
 
       {/* Full-screen ambient glow — separate Canvas so BlurMask is not clipped to the
-          300px orbit Canvas. Soft radial illumination bleeds across the entire screen. */}
+          300px orbit Canvas. Soft radial illumination bleeds across the entire screen,
+          anchored to the orb's measured center so halo and orbit stay concentric. */}
       <Canvas pointerEvents="none" style={StyleSheet.absoluteFillObject}>
-        <Circle cx={cx} cy={screenH / 2} r={220} color="rgba(255,255,255,0.022)">
+        <Circle cx={cx} cy={orbCenterY ?? screenH / 2} r={220} color="rgba(255,255,255,0.022)">
           <BlurMask blur={120} style="normal" />
         </Circle>
       </Canvas>
 
       {/* ── SKIA CANVAS — crisp GPU-rendered orb ── */}
-      <Pressable onPressIn={onOrbPress} style={{ width: screenW, height: CANVAS_H }}>
+      <Pressable
+        onPressIn={onOrbPress}
+        style={{ width: screenW, height: CANVAS_H }}
+        onLayout={(e) => {
+          const y = e?.nativeEvent?.layout?.y;
+          if (Number.isFinite(y)) setOrbCenterY(y + cy);
+        }}
+      >
       <Canvas style={{ width: screenW, height: CANVAS_H }}>
 
         {/* 2. Static concentric rings */}
