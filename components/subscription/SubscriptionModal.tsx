@@ -1,5 +1,5 @@
 /**
- * SubscriptionModal — Evan AI Singularity Paywall
+ * SubscriptionModal — Evan AI Pro Paywall
  *
  * Physics-based bottom-sheet. Spring entrance with bounce. Rubber-band
  * resistance when dragging up past rest position. Fast weighted exit.
@@ -93,13 +93,13 @@ interface Feature {
 }
 
 const FEATURES: Feature[] = [
-  { label: "Sourcing Pace",        go: "Active thrifting",           plus: "\u2713  Unlimited sourcing"    },
-  { label: "Market Intelligence",  go: "\u2713  Verified comps",     plus: "\u2713  Priority retrieval"    },
-  { label: "HOT DEAL Alerts",      go: "\u2713  Instant",            plus: "\u2713  Pre-market drops"      },
-  { label: "Comp Pool Depth",      go: "\u2713  Expanded",           plus: "\u2713  Maximum coverage"      },
-  { label: "Price Trend Signals",  go: "\u2713  Rising / Falling",   plus: "\u2713  Real-time velocity"    },
-  { label: "Rarity Detection",     go: false,                        plus: "\u2713  Advanced signals"      },
-  { label: "Profit Tracking",      go: false,                        plus: "\u2713  Full resale history"   },
+  { label: "Scans",                go: "\u2713  Boosted daily limit", plus: "\u2713  Unlimited"            },
+  { label: "Verified Comps",       go: "\u2713  Included",           plus: "\u2713  Priority"              },
+  { label: "Deal Alerts",          go: "\u2713  Instant",            plus: "\u2713  Early access"          },
+  { label: "Comp Coverage",        go: "\u2713  Expanded",           plus: "\u2713  Full"                  },
+  { label: "Trend Signals",        go: "\u2713  Rising / Falling",   plus: "\u2713  Real-time"             },
+  { label: "Rarity Detection",     go: false,                        plus: "\u2713  Included"              },
+  { label: "Profit Tracking",      go: false,                        plus: "\u2713  Full history"          },
 ];
 
 // ─── Color tokens ─────────────────────────────────────────────────────────────
@@ -331,8 +331,8 @@ function CTAButton({ plan, loading, onPress }: CTAButtonProps) {
   }));
 
   const label = plan === "go"
-    ? "Start Hunting \u2014 $7.77/month"
-    : "Get the Edge \u2014 $22.22/month";
+    ? "Start Hunter \u2014 $7.77/month"
+    : "Go Pro \u2014 $22.22/month";
 
   return (
     <Reanimated.View style={[styles.ctaWrap, btnStyle]}>
@@ -683,11 +683,11 @@ export function SubscriptionModal({
             {isAspiration && aspiration ? (
               <View style={styles.aspirationHook}>
                 {aspiration.triggerType === "VIRAL" ? (
-                  <Text style={styles.aspirationBadge}>VIRAL FLIP DETECTED</Text>
+                  <Text style={styles.aspirationBadge}>TRENDING FLIP</Text>
                 ) : aspiration.triggerType === "HOT_DEAL" ? (
-                  <Text style={styles.aspirationBadgeHot}>HOT DEAL FOUND</Text>
+                  <Text style={styles.aspirationBadgeHot}>STRONG DEAL FOUND</Text>
                 ) : (
-                  <Text style={styles.aspirationBadgeProfit}>HIGH PROFIT ALERT</Text>
+                  <Text style={styles.aspirationBadgeProfit}>HIGH-MARGIN FIND</Text>
                 )}
                 <Text style={styles.aspirationWin}>{aspiration.winFrame}</Text>
                 {aspiration.gapFrame ? (
@@ -703,9 +703,9 @@ export function SubscriptionModal({
                 <SparkleIcon />
 
                 {/* Headlines */}
-                <Text style={styles.headline}>Evan AI Singularity</Text>
+                <Text style={styles.headline}>Evan AI Pro</Text>
                 <Text style={styles.subHeadline}>
-                  The Invisible Army. Working 24 hours.{"\n"}For you.
+                  Your always-on sourcing engine.
                 </Text>
               </>
             )}

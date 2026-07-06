@@ -2,7 +2,7 @@
  * SingularityPipeline — "How Evan AI is Different"
  *
  * Technical pipeline schematic: Standard Marketplaces (dim/grey)
- * vs. Evan AI: The Singularity (violet, animated).
+ * vs. Evan AI: Resale intelligence (violet, animated).
  *
  * Four stage-gates animate in staggered. Evan AI side populates
  * 3× faster than the standard side — visually communicating
@@ -68,17 +68,17 @@ const STAGES: Stage[] = [
   {
     num: "02", label: "DATA HARVESTING", icon: "git-network-outline",
     std:  { title: "Retail API",             sub: "Amazon · Target MSRP only",                                   tag: "~3 SOURCES"    },
-    evan: { title: "The Swarm™",             sub: "eBay Completed · Etsy · niche forums · local classifieds",    tag: "12+ SOURCES"   },
+    evan: { title: "Multi-Market Sweep",     sub: "eBay Completed · Etsy · niche forums · local classifieds",    tag: "12+ SOURCES"   },
   },
   {
     num: "03", label: "RANKING LOGIC", icon: "analytics-outline",
     std:  { title: "Ad-Driven Algorithm",    sub: "Shows sponsored listings first",                              tag: "PAID FIRST"    },
-    evan: { title: "Value-First Engine",     sub: "Price × Condition × Velocity · Game Theory Logic",            tag: "VALUE-FIRST"   },
+    evan: { title: "Value-First Engine",     sub: "Price × Condition × Velocity · profit-first ranking",         tag: "VALUE-FIRST"   },
   },
   {
     num: "04", label: "THE OUTCOME", icon: "flash-outline",
     std:  { title: "Buy Now",                sub: "Retail price · consumer mode",                                tag: "YOU PAY MORE"  },
-    evan: { title: "Extract Profit",         sub: "The Invisible Army · 24 hours a day · working for you",       tag: "YOU WIN"       },
+    evan: { title: "Profit Verdict",         sub: "Resale value · margin estimate · always-on price watch",      tag: "YOU PROFIT"    },
   },
 ];
 
@@ -306,7 +306,7 @@ export function SingularityPipelineModal({
               <Ionicons name="sparkles" size={9} color={V} style={{ marginRight: 4 }} />
               <Text style={P.evanBadgeTxt}>EVAN AI</Text>
             </View>
-            <Text style={P.colSubEvan}>The Singularity</Text>
+            <Text style={P.colSubEvan}>Resale intelligence</Text>
           </View>
         </View>
 

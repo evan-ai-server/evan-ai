@@ -424,6 +424,26 @@ function compactProfileMoney(n: number): string {
 function compactProfileCount(n: number): string {
   return Number.isFinite(n) ? Math.round(n).toLocaleString("en-US") : "0";
 }
+// History-only display formatters (UI.5A-4) — do NOT use globally (keeps money() intact)
+const formatCurrencyGrouped = (n: number) =>
+  Number.isFinite(Number(n))
+    ? `$${Number(n).toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`
+    : "—";
+function formatHistoryTime(value: any) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value || "");
+  return date
+    .toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    })
+    .replace(",", " ·");
+}
 const percent = (n) =>
   Number.isFinite(n) ? `${Math.round(Number(n))}%` : "—";
 
@@ -2204,11 +2224,14 @@ const showRegretAlert = useCallback((items: any[]) => {
 }, [regretAlertOp, regretAlertY]);
 
 // ── Thrift Heat Map ────────────────────────────────────────────────────
+// UI.5A-4B — open the sheet FIRST so the tap feels instant, then fetch in
+// the background. Mirrors the openLowball fix below: the prior order
+// awaited /intel/thrift-heat before opening, so the tap looked dead for
+// however long the request took (the render below already has a sane
+// default store list for when thriftStores is still empty, so opening
+// before data arrives is safe).
 const openThriftHeat = useCallback(async () => {
-  try {
-    const raw = await apiFetch("/intel/thrift-heat", { method: "POST", body: JSON.stringify({}) });
-    if ((raw as any)?.ok && (raw as any)?.stores) setThriftStores((raw as any).stores);
-  } catch {}
+  if (__DEV__) console.log("[THRIFT_MAP] tap");
   setThriftHeatOpen(true);
   thriftHeatOp.setValue(0);
   thriftHeatY.setValue(60);
@@ -2216,6 +2239,12 @@ const openThriftHeat = useCallback(async () => {
     RNAnimated.timing(thriftHeatOp, { toValue: 1, duration: 280, useNativeDriver: true }),
     RNAnimated.spring(thriftHeatY, { toValue: 0, damping: 22, stiffness: 200, useNativeDriver: true }),
   ]).start();
+  if (__DEV__) console.log("[THRIFT_MAP] modal_visible_requested");
+  try {
+    if (__DEV__) console.log("[THRIFT_MAP] heavy_work_start");
+    const raw = await apiFetch("/intel/thrift-heat", { method: "POST", body: JSON.stringify({}) });
+    if ((raw as any)?.ok && (raw as any)?.stores) setThriftStores((raw as any).stores);
+  } catch {}
 }, [thriftHeatOp, thriftHeatY]);
 
 // Feature 6: open lowball sheet.
@@ -2669,9 +2698,15 @@ const tutorialOpenLockRef = useRef(false);
 const openTutorial = () => {
   if (tutorialOpenLockRef.current) return;
   tutorialOpenLockRef.current = true;
-  tutorialOpacity.setValue(0);
+  // UI.5A-4C — tutorialOpacity used to be this function's own fade-in, but
+  // openInteractiveTutorial() below already runs its own entrance sequence
+  // (iTutBgOp then iTutCardOp). Re-animating tutorialOpacity 0→1 at the same
+  // time compounded two opacity ramps on the same overlay — the dimmed
+  // background faded in twice as slow, then the card popped in a beat later
+  // on its own separate timer, reading as "appears twice / bounces". Leave
+  // tutorialOpacity at its default 1 (see useRef(new RNAnimated.Value(1)))
+  // so openInteractiveTutorial's animation is the only entrance motion.
   openInteractiveTutorial();
-  RNAnimated.timing(tutorialOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
 };
 
 // ── Tutorial confirm modal animation ────────────────────────────────────────
@@ -2732,6 +2767,7 @@ const animITutCardIn = useCallback(() => {
   // Fade-only to prevent overlay bleed/pixelation. Removed the translateY
   // 26→0 spring — combined with the bg-opacity ramp it produced a visible
   // staircase effect on the tutorial card's entry.
+  if (__DEV__) console.log("[TOUR_DEBUG] animation_start", "animITutCardIn");
   iTutCardY.setValue(0);
   iTutCardOp.setValue(0);
   RNAnimated.timing(iTutCardOp, {
@@ -2816,6 +2852,7 @@ const openInteractiveTutorial = useCallback(() => {
   // State lock: if tutorial is already opening or open, ignore the call
   if (iTutOpenLockRef.current) return;
   iTutOpenLockRef.current = true;
+  if (__DEV__) console.log("[TOUR_DEBUG] open_source", "openInteractiveTutorial:bg-fade");
   setITutStep(0);
   setShowITutorial(true);
   iTutBgOp.setValue(0);
@@ -2823,10 +2860,22 @@ const openInteractiveTutorial = useCallback(() => {
   iTutSpotOp.setValue(0);
   iTutRingOpacity.setValue(0);
   iTutRingScale.setValue(1.0);
+  // UI.5A-4D — removed the .start(() => animITutCardIn()) callback that used
+  // to chain here. setShowITutorial(true) above ALSO fires the step-
+  // transition effect below (keyed on [iTutStep, showITutorial]), which for
+  // step 0 (tab: null) schedules its own 80ms setTimeout that calls
+  // animITutCardIn() too. Both call sites fired on the very first open: the
+  // effect's call landed at ~80ms and started fading the card in; this
+  // callback's call landed at ~320ms (when the bg fade finished) and reset
+  // iTutCardOp back to 0 mid-fade before re-animating it — a visible
+  // snap-to-invisible then re-fade-in, which read as "appears twice". The
+  // step-transition effect is the single correct place for this (it already
+  // handles every subsequent step the same way), so the direct call here
+  // is removed — one trigger, not two.
   RNAnimated.timing(iTutBgOp, {
     toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true,
-  }).start(() => animITutCardIn());
-}, [iTutBgOp, iTutCardOp, iTutSpotOp, iTutRingOpacity, iTutRingScale, animITutCardIn]);
+  }).start();
+}, [iTutBgOp, iTutCardOp, iTutSpotOp, iTutRingOpacity, iTutRingScale]);
 
 useEffect(() => {
   if (showSplash) return;
@@ -2872,6 +2921,7 @@ useEffect(() => {
     } else {
       stopITutRipple();
     }
+    if (__DEV__) console.log("[TOUR_DEBUG] open_source", "step-effect", { iTutStep, delay });
     animITutCardIn();
   }, delay);
   return () => clearTimeout(timer);
@@ -4904,6 +4954,7 @@ intuitionLine: buildIntuitionLine({
           uri: null,
           title: card.itemName || "Barcode scan",
           timestamp: new Date().toLocaleString(),
+          scannedAt: Date.now(),
           resultCard: card,
         },
         ...prev,
@@ -9178,6 +9229,7 @@ if (scanCacheRef.current.has(cacheKey)) {
               uri: photoUri,
               title: cachedCard?.itemName || "Scan",
               timestamp: new Date().toLocaleString(),
+              scannedAt: Date.now(),
               resultCard: cachedCard,
             },
             ...prev,
@@ -10435,6 +10487,7 @@ if (countScan && !scanLockRef.current) {
       uri: photoUri,
       title: card.itemName || "Scan",
       timestamp: new Date().toLocaleString(),
+      scannedAt: Date.now(),
       resultCard: card,
     },
     ...prev,
@@ -14630,11 +14683,11 @@ renderToHardwareTextureAndroid={isCardShuffling && (tab === "history" || prevTab
 pointerEvents={tab === "history" && tabInteractable ? "box-none" : "none"}
 >
   <View style={[styles.page, { backgroundColor: "transparent", paddingTop: TOP + 32 }]} pointerEvents="box-none">
-          <Text style={styles.pageTitle}>Archive</Text>
+          <Text style={styles.pageTitle}>History</Text>
           <View style={styles.savingsBox}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
               <Text style={styles.savingsTitle}>
-                Total saved: {money(savingsTotal)}
+                Total saved: {formatCurrencyGrouped(savingsTotal)}
               </Text>
               {savingsTotal > 0 ? (
                 <Pressable
@@ -14726,7 +14779,7 @@ pointerEvents={tab === "history" && tabInteractable ? "box-none" : "none"}
         <Text numberOfLines={1} style={styles.historyTitle}>
           {h.title || "Scan"}
         </Text>
-        <Text style={styles.historyTime}>{h.timestamp}</Text>
+        <Text style={styles.historyTime}>{formatHistoryTime(h.scannedAt ?? h.timestamp ?? h.ts)}</Text>
       </View>
     </Pressable>
   );
@@ -15160,7 +15213,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
     style={{ color: "rgba(255,255,255,0.55)", fontWeight: "800", marginTop: 2 }}
     numberOfLines={2}
   >
-    {`Your resale intelligence is compounding${loadingDots}`}
+    Track your scans, savings, and seller tools in one place.
   </Text>
   <Text style={styles.subStatus} numberOfLines={2}>
     {statusLabel}
@@ -15231,12 +15284,12 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
         <Text style={{ color: "#50ff96", fontSize: 22, fontWeight: "900" }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{compactProfileMoney(savingsTotal)}</Text>
         <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Total Saved</Text>
       </View>
-      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(130,200,255,0.07)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(130,200,255,0.22)" }}>
-        <Text style={{ color: "#82c8ff", fontSize: 22, fontWeight: "900" }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{compactProfileCount(weaponStats.scans)}</Text>
+      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(255,255,255,0.04)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" }}>
+        <Text style={{ color: "rgba(255,255,255,0.92)", fontSize: 22, fontWeight: "900" }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{compactProfileCount(weaponStats.scans)}</Text>
         <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Scans Run</Text>
       </View>
-      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(255,200,0,0.07)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(255,200,0,0.22)" }}>
-        <Text style={{ color: "#ffd060", fontSize: 22, fontWeight: "900" }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{compactProfileCount(history?.length ?? 0)}</Text>
+      <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(255,255,255,0.04)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(255,255,255,0.12)" }}>
+        <Text style={{ color: "rgba(255,208,96,0.85)", fontSize: 22, fontWeight: "900" }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{compactProfileCount(history?.length ?? 0)}</Text>
         <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Items Found</Text>
       </View>
     </View>
@@ -15476,8 +15529,8 @@ setSavedToast("Checking…");
       <Text style={styles.profileBtnText}>Thrift Heat Map</Text>
     </View>
     <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 }}>
-      <View style={{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: "rgba(255,50,50,0.18)", borderWidth: 1, borderColor: "rgba(255,60,60,0.35)" }}>
-        <Text style={{ color: "#ff4444", fontSize: 10, fontWeight: "900", letterSpacing: 0.5 }}>● LIVE</Text>
+      <View style={{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, backgroundColor: "rgba(255,255,255,0.07)", borderWidth: 1, borderColor: "rgba(255,255,255,0.14)" }}>
+        <Text style={{ color: "rgba(255,255,255,0.55)", fontSize: 10, fontWeight: "800", letterSpacing: 0.5 }}>Market watch</Text>
       </View>
       <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.3)" />
     </View>

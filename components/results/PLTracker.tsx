@@ -73,13 +73,35 @@ interface ProfitPoint { x: number; y: number; cum: number; date: string }
 
 function buildProfitPoints(flips: PLFlip[], width: number): ProfitPoint[] {
   if (width <= 0) return [];
+  // UI.5A-4D — normalize persisted values defensively. AsyncStorage
+  // round-trips numbers correctly in practice (confirmed: computeStats uses
+  // the identical filter/math and stats display fine after reset), but
+  // don't let a bad/legacy record (string price, odd-cased status) silently
+  // zero out the chart. Number(...) is a no-op for values already correct.
   const sold = flips
-    .filter((f) => f.status === "sold" && f.soldPrice != null)
+    .filter((f) => String(f.status).toLowerCase() === "sold" && Number.isFinite(Number(f.soldPrice)))
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  if (sold.length < 2) return [];
+  if (__DEV__) console.log("[PL_GRAPH] buildProfitPoints", { flipsIn: flips.length, sold: sold.length, width });
+  if (sold.length === 0) return [];
+  if (sold.length === 1) {
+    // UI.5A-4B — one sold flip has no real "path" between two points, but
+    // falling through to the ghost/"log your first flip" state is wrong
+    // once a sale actually exists. Synthesize a flat start→profit line so
+    // the real chart (which already requires pts.length >= 2) can draw it.
+    const only = sold[0];
+    const profit = Number(only.soldPrice) - Number(only.boughtPrice);
+    const minC = Math.min(0, profit);
+    const maxC = Math.max(0, profit);
+    const range = maxC - minC || 1;
+    const yFor = (c: number) => PCHART_PAD_T + PCHART_H - ((c - minC) / range) * PCHART_H * 0.85;
+    return [
+      { x: 0, y: yFor(0), cum: 0, date: only.date },
+      { x: width, y: yFor(profit), cum: profit, date: only.date },
+    ];
+  }
   let running = 0;
   const raw = sold.map((f) => {
-    running += f.soldPrice! - f.boughtPrice;
+    running += Number(f.soldPrice) - Number(f.boughtPrice);
     return { cum: running, date: f.date };
   });
   const cums    = raw.map((r) => r.cum);
@@ -210,11 +232,16 @@ function fmt(n: number) {
   return `$${Math.round(abs).toLocaleString("en-US")}`;
 }
 function pct(roi: number) {
+  if (!Number.isFinite(roi)) return "—";
+  // Display-only cap: extreme-but-true ROI (≥1000%) reads more credibly as a multiple.
+  if (Math.abs(roi) >= 1000) return `${Math.round(roi / 100).toLocaleString("en-US")}×`;
   return `${roi >= 0 ? "+" : ""}${Math.round(roi).toLocaleString("en-US")}%`;
 }
 function isoToDisplay(iso: string) {
   try {
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
+    return new Date(iso)
+      .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
+      .replace(/, (\d{2})$/, " '$1");
   } catch { return iso; }
 }
 
@@ -451,6 +478,13 @@ export function PLTracker({ flips, onAdd, onDelete, onMarkSold, isNet = false, o
   const drawProg   = useSharedValue(0);
   const stats      = computeStats(flips, isNet);
   const displayFlips = showAll ? flips : flips.slice(0, 5);
+  // UI.5A-4B — chartW is 0 until the wrapping View's onLayout fires, and
+  // resets to 0 again on every remount (e.g. reopening the Profile modal).
+  // During that gap the chart rendered nothing (chartShareWrap collapsed
+  // to its 4px minHeight), which read as the chart "disappearing". Fall
+  // back to a reasonable estimate so it paints immediately; the real
+  // onLayout value corrects it a frame later with no visible jump.
+  const effectiveChartW = chartW > 0 ? chartW : 300;
 
   const handleSharePath = useCallback(async () => {
     if (sharing) return;
@@ -471,19 +505,38 @@ export function PLTracker({ flips, onAdd, onDelete, onMarkSold, isNet = false, o
   }, [sharing]);
 
   const profitPts  = useMemo(
-    () => buildProfitPoints(flips, chartW),
-    [flips, chartW],
+    () => buildProfitPoints(flips, effectiveChartW),
+    [flips, effectiveChartW],
   );
 
-  const ghostPath = useMemo(() => buildGhostPath(chartW), [chartW]);
+  const ghostPath = useMemo(() => buildGhostPath(effectiveChartW), [effectiveChartW]);
+
+  // UI.5A-4D — key the reveal animation on the DATA (cum + date), not on
+  // effectiveChartW. profitPts.length/effectiveChartW alone meant every time
+  // chartW settled from its pre-layout fallback (300) to the real measured
+  // width — which always happens once on mount, and can happen again on
+  // rotation/relayout — the effect re-fired and reset drawProg back to 0,
+  // restarting the whole 1100ms reveal. If persisted flips loaded (or a
+  // second onLayout pass landed) while a prior reveal was still in-flight,
+  // this could repeatedly snap the stroke's trim (end={drawProg} in
+  // ProfitPathChart) back to 0 before it ever finished — invisible line,
+  // even though linePath/areaPath were computed correctly (hence the
+  // header/stats/area-fill still showing). x/y are pixel-space and
+  // irrelevant to "did the underlying sale data change"; cum/date are the
+  // actual data, so a pure width recalculation no longer touches this at all.
+  const profitPathKey = useMemo(
+    () => profitPts.map((p) => `${p.cum}:${p.date}`).join("|"),
+    [profitPts],
+  );
 
   useEffect(() => {
-    if (profitPts.length >= 2 && chartW > 0) {
+    if (profitPts.length >= 2) {
+      if (__DEV__) console.log("[PL_GRAPH] reveal", { profitPts: profitPts.length, chartW, effectiveChartW, profitPathKey });
       drawProg.value = 0;
       drawProg.value = withTiming(1, { duration: 1100, easing: Easing.out(Easing.cubic) });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profitPts.length, chartW]);
+  }, [profitPathKey]);
 
   const handleDelete = (id: string) => {
     Alert.alert("Delete flip?", "This cannot be undone.", [
@@ -604,7 +657,7 @@ export function PLTracker({ flips, onAdd, onDelete, onMarkSold, isNet = false, o
         style={styles.chartShareWrap}
         onLayout={(e) => setChartW(e.nativeEvent.layout.width)}
       >
-        {chartW > 0 && profitPts.length >= 2 ? (
+        {effectiveChartW > 0 && profitPts.length >= 2 ? (
           <>
             <View style={styles.profitChartHeader}>
               <Text style={styles.profitChartLabel}>PROFIT PATH</Text>
@@ -621,17 +674,17 @@ export function PLTracker({ flips, onAdd, onDelete, onMarkSold, isNet = false, o
                 </Pressable>
               </View>
             </View>
-            <ProfitPathChart pts={profitPts} width={chartW} drawProg={drawProg} />
+            <ProfitPathChart pts={profitPts} width={effectiveChartW} drawProg={drawProg} />
             <View style={styles.profitChartFooter}>
               <Text style={styles.profitChartDate}>{isoToDisplay(profitPts[0].date)}</Text>
               <Text style={styles.profitChartDate}>{isoToDisplay(profitPts[profitPts.length - 1].date)}</Text>
             </View>
             <Text style={styles.chartShareCredit}>Calculated by Evan AI · Total Flip Value {fmt(stats.totalProfit)}</Text>
           </>
-        ) : chartW > 0 && ghostPath ? (
+        ) : effectiveChartW > 0 && ghostPath ? (
           /* Ghost Path — blank state becomes an opportunity screen */
           <View style={styles.ghostWrap}>
-            <Canvas style={{ width: chartW, height: PCHART_CANVAS_H }}>
+            <Canvas style={{ width: effectiveChartW, height: PCHART_CANVAS_H }}>
               <Path
                 path={ghostPath}
                 style="stroke"
@@ -642,7 +695,7 @@ export function PLTracker({ flips, onAdd, onDelete, onMarkSold, isNet = false, o
               />
             </Canvas>
             <View style={styles.ghostPill}>
-              <Text style={styles.ghostPillText}>AVG RESELLER ROI: 42% · READY TO START?</Text>
+              <Text style={styles.ghostPillText}>Log your first flip to start your profit path</Text>
             </View>
           </View>
         ) : null}
@@ -709,7 +762,7 @@ export function PLTracker({ flips, onAdd, onDelete, onMarkSold, isNet = false, o
                 </Pressable>
               )}
               <Pressable onPress={() => handleDelete(flip.id)} hitSlop={8} style={styles.actionBtn}>
-                <Ionicons name="trash-outline" size={16} color="rgba(255,80,80,0.6)" />
+                <Ionicons name="trash-outline" size={16} color="rgba(255,110,110,0.4)" />
               </Pressable>
             </View>
           </View>
@@ -744,7 +797,10 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,200,0,0.18)",
     gap: SP.sm,
   },
-  headerRow: { flexDirection: "row", alignItems: "center", gap: SP.sm },
+  // UI.5A-4C — added justifyContent: "center" so the pill group sits as a
+  // centered block (equal left/right margin) instead of packing left with
+  // the old marginLeft: "auto" push-right hack on addBtn below.
+  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: SP.sm },
   headerBadge: {
     flexDirection: "row", alignItems: "center", gap: 5,
     backgroundColor: "rgba(255,200,0,0.10)",
@@ -752,7 +808,11 @@ const styles = StyleSheet.create({
   },
   headerBadgeText: { ...TY.label, fontSize: 11, fontWeight: "700", color: "#ffd060" },
   addBtn: {
-    marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 4,
+    // UI.5A-4C — was marginLeft: "auto". This style is shared by both the
+    // CSV pill and the Log flip pill, so the auto-margin applied to BOTH,
+    // splitting the row's free space unevenly instead of centering the
+    // group. headerRow's justifyContent: "center" now handles centering.
+    flexDirection: "row", alignItems: "center", gap: 4,
     backgroundColor: "rgba(80,255,150,0.10)", borderWidth: 1, borderColor: "rgba(80,255,150,0.22)",
     paddingHorizontal: 10, paddingVertical: 5, borderRadius: R.pill,
   },
@@ -803,7 +863,10 @@ const styles = StyleSheet.create({
 
   // ── Profit Path chart ────────────────────────────────────────────────────
   chartShareWrap: {
-    minHeight: 4, // always renders so onLayout fires
+    // UI.5A-4B — was 4 (a bare sliver just to make onLayout fire); bumped
+    // to roughly the real chart's rendered height so the space stays
+    // reserved instead of collapsing during any brief pre-layout gap.
+    minHeight: 150,
     backgroundColor: "rgba(0,0,0,0.01)", // ensures captureRef sees the view
     borderRadius: R.sm,
     padding: 2,
