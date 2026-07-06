@@ -2286,7 +2286,11 @@ const computeFlipPersonality = useCallback(async () => {
       description = "You scan everything, buy nothing. The market is your museum.";
     } else if (topCat && topCat[1] > total * 0.6) {
       type = "Category Specialist";
-      description = `You live and breathe ${topCat[0]}. Deep focus, high conviction.`;
+      const catSlug = String(topCat[0] || "").trim();
+      const catLabel = catSlug.replace(/[_-]+/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+      description = (!catSlug || catSlug === "general")
+        ? "Wide coverage, quick reads. You move on anything with margin."
+        : `You live and breathe ${catLabel}. Deep focus, high conviction.`;
     } else if (total > 100) {
       type = "Volume Trader";
       description = "High volume, wide net. You win on quantity.";
@@ -7631,6 +7635,18 @@ const goTab = (next) => {
 
   // Faint backdrop — mutes GL void seams at card edges during shuffle
   try { transitionCoverOpacity.setValue(TRANSITION_COVER_MAX_OPACITY); } catch {}
+  // Native-driven fade-out runs independently of the JS-thread shuffle
+  // completion below, so a busy JS thread can no longer strand the
+  // cover at max opacity (the stuck-dim-destination-tab bug).
+  try {
+    RNAnimated.timing(transitionCoverOpacity, {
+      toValue: 0,
+      duration: 200,
+      delay: 140,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  } catch {}
 
   tabSwitchingRef.current = true;
   pendingTabRef.current = null;
@@ -13961,6 +13977,22 @@ renderToHardwareTextureAndroid={isCardShuffling && (tab === "results" || prevTab
 pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
 >
 <View style={{ flex: 1 }}>
+{/* Fixed top scrim — keeps status bar/Dynamic Island legible as content scrolls beneath; non-interactive, sits above scroll content, spatially clear of the bottom dock/nav. */}
+<View
+  pointerEvents="none"
+  style={{
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: TOP + 16,
+    zIndex: 21,
+  }}
+>
+  <View style={{ height: TOP, backgroundColor: "#000", opacity: 1 }} />
+  <View style={{ height: 10, backgroundColor: "#000", opacity: 0.55 }} />
+  <View style={{ height: 6, backgroundColor: "#000", opacity: 0.22 }} />
+</View>
 <ScrollView
   style={[styles.page, { flex: 1 }]}
   contentContainerStyle={loadingResults ? { flexGrow: 1 } : { flexGrow: 1, paddingTop: 0, paddingBottom: 100, backgroundColor: "transparent" }}
@@ -14597,7 +14629,7 @@ pointerEvents={tab === "history" && tabInteractable ? "box-none" : "none"}
             <Text style={styles.savingsSub}>Savings across your scans.</Text>
             {!hasUnlimited ? (
               <Text style={styles.savingsSubStrong}>
-                Free scans reset every 30 days.
+                Free scans reset daily at midnight.
               </Text>
             ) : null}
             </View>
@@ -15124,7 +15156,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
       </Text>
     </View>
     <Text style={{ color: "rgba(255,255,255,0.3)", fontSize: 11, fontWeight: "600" }}>
-      {weaponStats.scans} scans total
+      {weaponStats.scans} scan{weaponStats.scans === 1 ? "" : "s"} total
     </Text>
   </View>
 </View>
@@ -15175,7 +15207,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
         <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Total Saved</Text>
       </View>
       <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(130,200,255,0.07)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(130,200,255,0.22)" }}>
-        <Text style={{ color: "#82c8ff", fontSize: 22, fontWeight: "900" }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{compactProfileCount(scansUsed)}</Text>
+        <Text style={{ color: "#82c8ff", fontSize: 22, fontWeight: "900" }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{compactProfileCount(weaponStats.scans)}</Text>
         <Text style={{ color: "rgba(255,255,255,0.45)", fontSize: 9, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 }}>Scans Run</Text>
       </View>
       <View style={{ flex: 1, alignItems: "center", backgroundColor: "rgba(255,200,0,0.07)", borderRadius: 16, padding: 14, gap: 4, borderWidth: 1, borderColor: "rgba(255,200,0,0.22)" }}>
@@ -15840,11 +15872,10 @@ ${shareLink}`
   </View>
 </View>
 
-{/* Temporary debug — long-press for reset options. Offers a quick
-    scan-limit-only reset (server quota + local counter, no reload)
-    and a full factory reset (wipes onboarding / history / cache and
-    reloads the bundle). The scan-limit option is the daily-use
-    button while testing; full reset is rarer. */}
+{/* Dev-only reset — long-press for reset options. __DEV__-gated so
+    production users can never reset their own scan quota or wipe
+    local data; resetScanLimitOnly/factoryReset stay unchanged. */}
+{__DEV__ ? (
 <Pressable
   onLongPress={() => {
     Alert.alert(
@@ -15879,6 +15910,7 @@ ${shareLink}`
     long-press to reset
   </Text>
 </Pressable>
+) : null}
 
 {helpOpen ? (
   <Pressable style={styles.helpBackdrop} onPress={closeHelp}>
