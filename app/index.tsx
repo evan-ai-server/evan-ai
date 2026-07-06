@@ -3620,6 +3620,10 @@ const barcodeLockRef = useRef(false);
 
   // Hide preview buttons AFTER user submits (presses Use Photo)
   const [priceSubmitted, setPriceSubmitted] = useState(false);
+  // UI.5A-3 — blocks same-frame double-taps on "Use photo". The state
+  // guards (priceSubmitted/canUsePhoto) only take effect on the next
+  // render, so two taps landing in the same frame both passed them.
+  const usePhotoInFlightRef = useRef(false);
   const [isCapturing, setIsCapturing] = useState(false);
 
 
@@ -10932,6 +10936,12 @@ useEffect(() => {
       return;
     }
 
+// UI.5A-3 — same-frame double-tap guard (see usePhotoInFlightRef decl).
+if (usePhotoInFlightRef.current) return;
+usePhotoInFlightRef.current = true;
+const tapAt = Date.now();
+if (__DEV__) console.log("[SCAN_HANDOFF] use_photo_tap");
+
 hapticSelect();
 setPriceSubmitted(true);
 Keyboard.dismiss();
@@ -10940,28 +10950,48 @@ const photoUri = photo.uri;
 const itemHint = sanitizeHint(itemNameInput) || null;
 const sizeHintVal = sanitizeHint(sizeInput) || null; // Feature 11
 
-// ── Offline check ──────────────────────────────────────────────────────
+// ── UI.5A-3 immediate loading handoff ─────────────────────────────────
+// The user has committed the scan: leave the photo/price screen NOW and
+// show the results loading state, THEN run the offline probe and heavy
+// scan work behind it. Previously an awaited /health check (4s timeout)
+// ran first, and the tab only switched to results deep inside the
+// vision-response handlers — the photo screen sat frozen the whole time.
+// ✅ set loading panel image BEFORE we clear photo state
+setLoadingPhotoUri(photoUri);
+setLoadingResults(true);
+setShowRetryWhileLoading(false);
+setRefinePhotos([]);
+setPhoto(null);
+setScanPriceInput("");
+setCheapestAltInput("");
+setItemNameInput("");
+setSizeInput("");
+goTab("results");
+if (__DEV__) console.log("[SCAN_HANDOFF] loading_visible_requested", { msSinceTap: Date.now() - tapAt });
+
+// Give React one frame to paint the loading screen before awaited work.
+await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+// ── Offline check (now behind the loading screen) ─────────────────────
 const currentlyOnline = await checkNetworkNow();
 if (!currentlyOnline) {
-  setPhoto(null);
-  setScanPriceInput("");
-  setCheapestAltInput("");
-  setItemNameInput("");
-  setSizeInput("");
+  // Unwind the handoff: brief loading beat, then back to camera with the
+  // scan queued — same queue/toast behavior as before. The 300ms grace
+  // keeps the return goTab outside the 260ms tab cooldown (an instant
+  // airplane-mode fetch failure would otherwise get swallowed).
+  await new Promise((r) => setTimeout(r, 300));
+  setLoadingResults(false);
+  goTab("camera");
   const { isDuplicate } = await enqueueOffline({
     photoUri, scannedPrice, cheapestAlt, itemHint, sizeHint: sizeHintVal,
   });
   if (!isDuplicate) {
     setSavedToast(`Scan queued — will send when back online (${pendingCount + 1} queued)`);
   }
+  usePhotoInFlightRef.current = false;
   return;
 }
 // ──────────────────────────────────────────────────────────────────────
-
-// ✅ set loading panel image BEFORE we clear photo state
-setLoadingPhotoUri(photoUri);
-setLoadingResults(true);
-setShowRetryWhileLoading(false);
 
 scanSessionRef.current = {
   photoUri,
@@ -10971,14 +11001,8 @@ scanSessionRef.current = {
   visionRetries: 0,
 };
 
-setRefinePhotos([]);
-setPhoto(null);
-setScanPriceInput("");
-setCheapestAltInput("");
-setItemNameInput("");
-setSizeInput("");
-
 trackEvent("scan_started", { price: scannedPrice, mode: scanMode });
+if (__DEV__) console.log("[SCAN_HANDOFF] heavy_work_start", { msSinceTap: Date.now() - tapAt });
 
 runScan({
   photoUri: scanSessionRef.current.photoUri,
@@ -10988,6 +11012,7 @@ runScan({
   sizeHint: sizeHintVal,
   countScan: true,
 });
+usePhotoInFlightRef.current = false;
   };
 // -------------------------
 // ✅ FEATURE #14: Show Me Cheaper re-search
@@ -18942,535 +18967,6 @@ function chipTextStyle(): TextStyle {
   };
 }
 
-type ResultsLoadingPanelProps = {
-  photoUri?: string | null;
-  headline?: string;
-  stage?: "idle" | "vision" | "market" | "analysis" | "collector";
-  stageMeta?: string;
-  onCancel?: () => void;
-  onRetry?: () => void;
-  showRetry?: boolean;
-  retryReveal?: any;
-  retryScale?: any;
-  loadingDots?: string;
-};
-
-const _ResultsLoadingPanel = React.memo(function ResultsLoadingPanel({
-  photoUri,
-  headline,
-  stage = "idle",
-  stageMeta = "",
-  onCancel,
-  onRetry,
-  showRetry,
-  retryReveal,
-  retryScale,
-  loadingDots = ".",
-}: ResultsLoadingPanelProps) {
-
-  const [differentOpen, setDifferentOpen] = useState(false);
-
-  const panelIn = useRef(new RNAnimated.Value(0)).current;
-  const panelY = useRef(new RNAnimated.Value(16)).current;
-  const differentAnim = useRef(new RNAnimated.Value(0)).current;
-  
-  const spinnerTurn = useRef(new RNAnimated.Value(0)).current;
-const spinnerGlow = useRef(new RNAnimated.Value(0)).current;
-
-useEffect(() => {
-  spinnerTurn.setValue(0);
-  spinnerGlow.setValue(0);
-
-  const spinLoop = RNAnimated.loop(
-    RNAnimated.timing(spinnerTurn, {
-      toValue: 1,
-      duration: 1050,
-      easing: Easing.linear,
-      useNativeDriver: true,
-    })
-  );
-
-  const glowLoop = RNAnimated.loop(
-    RNAnimated.sequence([
-      RNAnimated.timing(spinnerGlow, {
-        toValue: 1,
-        duration: 900,
-        easing: Easing.inOut(Easing.sin),
-        useNativeDriver: true,
-      }),
-      RNAnimated.timing(spinnerGlow, {
-        toValue: 0,
-        duration: 900,
-        easing: Easing.inOut(Easing.sin),
-        useNativeDriver: true,
-      }),
-    ])
-  );
-
-  spinLoop.start();
-  glowLoop.start();
-
-  return () => {
-    try { spinLoop.stop(); } catch {}
-    try { glowLoop.stop(); } catch {}
-  };
-}, [spinnerTurn, spinnerGlow]);
-
-const _spinnerRotate = spinnerTurn.interpolate({
-  inputRange: [0, 1],
-  outputRange: ["0deg", "360deg"],
-});
-
-  useEffect(() => {
-    panelIn.setValue(0);
-    panelY.setValue(16);
-
-    RNAnimated.parallel([
-      RNAnimated.timing(panelIn, {
-        toValue: 1,
-        duration: 220,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      RNAnimated.spring(panelY, {
-        toValue: 0,
-        damping: 18,
-        stiffness: 170,
-        mass: 0.8,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [panelIn, panelY]);
-
-  const toggleDifferent = () => {
-    hapticSelect?.();
-    const next = !differentOpen;
-    setDifferentOpen(next);
-
-    RNAnimated.timing(differentAnim, {
-      toValue: next ? 1 : 0,
-      duration: 180,
-      easing: Easing.inOut(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  };
-
-  return (
-    <RNAnimated.View
-      style={{
-        opacity: panelIn,
-        transform: [
-          { translateY: panelY },
-          {
-            scale: panelIn.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0.985, 1],
-            }),
-          },
-        ],
-      }}
-    >
-      <View
-        style={[
-          styles.resultsLoadingShell,
-          {
-            minHeight: 350,
-            borderRadius: 30,
-            overflow: "hidden",
-            backgroundColor: "rgba(255,255,255,0.06)",
-            borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.10)",
-          },
-        ]}
-      >
-        {photoUri ? (
-          <Image
-            source={{ uri: photoUri }}
-            style={{
-              ...StyleSheet.absoluteFillObject,
-              opacity: 0.18,
-            }}
-            blurRadius={18}
-            resizeMode="cover"
-          />
-        ) : null}
-
-        <BlurView
-          intensity={30}
-          tint="dark"
-          style={StyleSheet.absoluteFillObject}
-        />
-
-        <View
-          style={{
-            paddingHorizontal: 20,
-            paddingTop: 22,
-            paddingBottom: 18,
-            alignItems: "center",
-          }}
-        >
-
-<RingSpinner size={90} />
-          <Text
-            style={{
-              color: "white",
-              fontWeight: "900",
-              fontSize: 19,
-              textAlign: "center",
-            }}
-          >
-            {headline || "Finding the cheapest match"}
-          </Text>
-
-
-          <Text
-            style={{
-              marginTop: 10,
-              color: "rgba(255,255,255,0.82)",
-              fontWeight: "900",
-              fontSize: 13,
-              textAlign: "center",
-              lineHeight: 18,
-            }}
-          >
-            {stage === "vision"
-              ? "🧠 Identifying item"
-              : stage === "market"
-              ? "🌐 Searching marketplaces"
-              : stage === "analysis"
-              ? "📊 Calculating deal quality"
-              : stage === "collector"
-              ? "🔥 Detecting hidden value"
-              : "🔍 Finding the best result"}
-            {loadingDots}
-          </Text>
-
-          <Text
-            style={{
-              marginTop: 6,
-              color: "rgba(255,255,255,0.58)",
-              fontWeight: "800",
-              fontSize: 12,
-              textAlign: "center",
-            }}
-          >
-            {stageMeta || "Live market comparison in progress"}
-          </Text>
-
-          <View
-            style={{
-              flexDirection: "row",
-              gap: 12,
-              marginTop: 22,
-              width: "100%",
-            }}
-          >
-            <Pressable
-              onPress={onCancel}
-              style={({ pressed }) => [
-                {
-                  flex: 1,
-                  minHeight: 54,
-                  borderRadius: 18,
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.14)",
-                  backgroundColor: "rgba(255,255,255,0.06)",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flexDirection: "row",
-                  gap: 8,
-                },
-                pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
-              ]}
-            >
-              <Ionicons name="close" size={20} color="white" />
-              <Text style={{ color: "white", fontWeight: "900", fontSize: 15 }}>
-                Cancel
-              </Text>
-            </Pressable>
-
-            <RNAnimated.View
-              style={{
-                flex: 1,
-                opacity: retryReveal || 1,
-                transform: [
-                  {
-                    scale:
-                      retryScale ||
-                      1,
-                  },
-                ],
-              }}
-            >
-              <Pressable
-                onPress={showRetry ? onRetry : undefined}
-                disabled={!showRetry}
-                style={({ pressed }) => [
-                  {
-                    minHeight: 54,
-                    borderRadius: 18,
-                    borderWidth: 1,
-                    borderColor: "rgba(255,255,255,0.12)",
-                    backgroundColor: "rgba(255,255,255,0.04)",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexDirection: "row",
-                    gap: 8,
-                    opacity: showRetry ? 1 : 0.45,
-                  },
-                  pressed && showRetry && { opacity: 0.92, transform: [{ scale: 0.99 }] },
-                ]}
-              >
-                <Ionicons name="refresh" size={20} color="white" />
-                <Text style={{ color: "white", fontWeight: "900", fontSize: 15 }}>
-                  Retry
-                </Text>
-              </Pressable>
-            </RNAnimated.View>
-          </View>
-
-          {/* EXACTLY WHERE YOU CIRCLED */}
-          <Pressable
-            onPress={toggleDifferent}
-            style={({ pressed }) => [
-              {
-                marginTop: 16,
-                alignSelf: "stretch",
-                paddingVertical: 12,
-                paddingHorizontal: 14,
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: "rgba(255,255,255,0.12)",
-                backgroundColor: "rgba(255,255,255,0.05)",
-              },
-              pressed && { opacity: 0.92, transform: [{ scale: 0.995 }] },
-            ]}
-          >
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
-              <Text style={{ color: "white", fontWeight: "900", fontSize: 14 }}>
-                What makes Evan AI different?
-              </Text>
-              <Ionicons
-                name={differentOpen ? "chevron-up" : "chevron-down"}
-                size={18}
-                color="rgba(255,255,255,0.82)"
-              />
-            </View>
-          </Pressable>
-
-
-<RNAnimated.View
-  style={{
-    alignSelf: "stretch",
-    overflow: "hidden",
-    opacity: differentAnim,
-    maxHeight: differentAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0, 420],
-    }),
-    marginTop: differentOpen ? 10 : 0,
-  }}
->
-  <ScrollView
-    nestedScrollEnabled
-    bounces
-    alwaysBounceVertical
-    showsVerticalScrollIndicator
-    style={{ maxHeight: 340 }}
-    contentContainerStyle={{ paddingBottom: 14 }}
-  >
-    <View
-      style={{
-        padding: 14,
-        borderRadius: 18,
-        borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.12)",
-        backgroundColor: "rgba(255,255,255,0.06)",
-      }}
-    >
-      <Text style={{ color: "white", fontWeight: "900", marginBottom: 10 }}>
-        Why Evan AI is better
-      </Text>
-
-      <Text
-        style={{
-          color: "rgba(255,255,255,0.80)",
-          fontWeight: "800",
-          lineHeight: 24,
-          marginBottom: 14,
-        }}
-      >
-        1. It identifies the actual item first — not just random visually similar listings — so your market search starts from a smarter query.
-      </Text>
-
-      <Text
-        style={{
-          color: "rgba(255,255,255,0.80)",
-          fontWeight: "800",
-          lineHeight: 24,
-          marginBottom: 14,
-        }}
-      >
-        2. It compares real marketplace results using the cheapest true match logic, including junk filtering and ranking — not fake “lowest price” noise.
-      </Text>
-
-      <Text
-        style={{
-          color: "rgba(255,255,255,0.80)",
-          fontWeight: "800",
-          lineHeight: 24,
-          marginBottom: 14,
-        }}
-      >
-        3. It turns a scan into a decision — confidence, savings, resale value, and profit signal — so users know whether to buy, wait, or flip.
-      </Text>
-
-      <Text
-        style={{
-          color: "rgba(255,255,255,0.60)",
-          fontWeight: "800",
-          fontSize: 12,
-        }}
-      >
-        Scroll for more
-      </Text>
-    </View>
-  </ScrollView>
-</RNAnimated.View>
-        </View>
-      </View>
-    </RNAnimated.View>
-  );
-});
-
-// ✅ Premium rotating ring spinner (STABILIZED)
-const RingSpinner = React.memo(function RingSpinner({
-  size = 90,
-}: {
-  size?: number;
-}) {
-  const spin = useRef(new RNAnimated.Value(0)).current;
-  const pulse = useRef(new RNAnimated.Value(0)).current;
-
-  useEffect(() => {
-    const spinLoop = RNAnimated.loop(
-      RNAnimated.timing(spin, {
-        toValue: 1,
-        duration: 1200,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      })
-    );
-
-    const pulseLoop = RNAnimated.loop(
-      RNAnimated.sequence([
-        RNAnimated.timing(pulse, {
-          toValue: 1,
-          duration: 900,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        RNAnimated.timing(pulse, {
-          toValue: 0,
-          duration: 900,
-          easing: Easing.inOut(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ])
-    );
-
-    spinLoop.start();
-    pulseLoop.start();
-
-    return () => {
-      try { spinLoop.stop(); } catch {}
-      try { pulseLoop.stop(); } catch {}
-    };
-  }, [spin, pulse]);
-
-  const rotate = spin.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "360deg"],
-  });
-
-  const pulseScale = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.96, 1.04],
-  });
-
-  const glowOpacity = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.16, 0.30],
-  });
-
-  const coreOpacity = pulse.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.55, 0.9],
-  });
-
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <RNAnimated.View
-        pointerEvents="none"
-        style={{
-          position: "absolute",
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: 1.5,
-          borderColor: "rgba(255,255,255,0.10)",
-          opacity: glowOpacity,
-          transform: [{ scale: pulseScale }],
-        }}
-      />
-
-      <RNAnimated.View
-        style={{
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          borderWidth: 3,
-          borderColor: "rgba(255,255,255,0.08)",
-          borderTopColor: "rgba(255,255,255,0.96)",
-          borderRightColor: "rgba(255,255,255,0.38)",
-          borderBottomColor: "rgba(255,255,255,0.12)",
-          borderLeftColor: "rgba(255,255,255,0.08)",
-          transform: [{ rotate }],
-        }}
-      />
-
-      <RNAnimated.View
-        pointerEvents="none"
-        style={{
-          position: "absolute",
-          width: Math.round(size * 0.2),
-          height: Math.round(size * 0.2),
-          borderRadius: Math.round(size * 0.1),
-          backgroundColor: "rgba(255,255,255,0.78)",
-          opacity: coreOpacity,
-          shadowColor: "#fff",
-          shadowOpacity: 0.18,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 0 },
-        }}
-      />
-    </View>
-  );
-});
-
 // Liquid confidence bar
 // Liquid confidence bar (STABILIZED)
 const ConfidenceBar = React.memo(function ConfidenceBar({
@@ -22181,77 +21677,6 @@ resultsTitleBig: {
   marginTop: 18,
 },
 
-resultsLoadingShell: {
-  minHeight: 260,
-  borderRadius: 26,
-  overflow: "hidden",
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.12)",
-  backgroundColor: "rgba(255,255,255,0.05)",
-},
-
-resultsLoadingCard: {
-  flex: 1,
-  margin: 18,
-  borderRadius: 24,
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.16)",
-  backgroundColor: "rgba(20,20,20,0.58)",
-  alignItems: "center",
-  justifyContent: "center",
-  paddingHorizontal: 18,
-  paddingVertical: 20,
-},
-resultsLoadingHeadline: {
-  color: "white",
-  fontWeight: "900",
-  fontSize: 16,
-  textAlign: "center",
-  marginTop: 4,
-},
-resultsLoadingSub: {
-  marginTop: 10,
-  color: "rgba(255,255,255,0.70)",
-  fontWeight: "700",
-  textAlign: "center",
-},
-resultsLoadingFoot: {
-  marginTop: 12,
-  color: "rgba(255,255,255,0.70)",
-  fontWeight: "800",
-  textAlign: "center",
-},
-resultsLoadingBtnRow: {
-  flexDirection: "row",
-  gap: 12,
-  marginTop: 16,
-},
-resultsLoadingBtn: {
-  flexDirection: "row",
-  alignItems: "center",
-  gap: 8,
-  paddingVertical: 10,
-  paddingHorizontal: 16,
-  borderRadius: 16,
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.20)",
-  backgroundColor: "rgba(255,255,255,0.06)",
-},
-resultsLoadingBtnPrimary: {
-  flexDirection: "row",
-  alignItems: "center",
-  gap: 8,
-  paddingVertical: 10,
-  paddingHorizontal: 18,
-  borderRadius: 16,
-  borderWidth: 1,
-  borderColor: "rgba(255,255,255,0.25)",
-  backgroundColor: "rgba(255,255,255,0.12)",
-},
-resultsLoadingBtnText: {
-  color: "white",
-  fontWeight: "900",
-},
 resultsHistoryPill: {
   marginTop: 14,
   borderRadius: 18,
