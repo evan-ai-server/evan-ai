@@ -21,14 +21,14 @@
         "simulator": false
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://evan-ai-server.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://evan-ai-server-production.up.railway.app"
       }
     },
     "production": {
       "autoIncrement": true,
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://evan-ai-server.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://evan-ai-server-production.up.railway.app"
       }
     }
   },
