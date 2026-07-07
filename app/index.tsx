@@ -1531,7 +1531,7 @@ const I_STEPS = useMemo(() => [
     tab: "camera" as string | null,
     title: "You're ready\nto hunt deals.",
     subtitle: "LET'S GO",
-    body: "7 free scans loaded and waiting. Every item you see is a potential steal, flip, or fortune. Start now.",
+    body: "3 free scans loaded and waiting. Every item you see is a potential steal, flip, or fortune. Start now.",
     accentColor: "#50ff96",
     iconColor: "#50ff96",
     icon: "flash-outline" as const,
@@ -13801,7 +13801,7 @@ onBarcodeScanned={(d) => {
           </View>
 
           <Text style={styles.previewHint}>
-            Enter both prices · name helps AI find it faster
+            Enter the asking price · name helps AI find it faster
           </Text>
         </View>
       </RNAnimated.View>
@@ -14495,15 +14495,12 @@ pointerEvents={tab === "results" && tabInteractable ? "auto" : "none"}
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 3 }}>
             <Text style={{ color: "#82c8ff", fontWeight: "800", fontSize: 11, letterSpacing: 1.2, textTransform: "uppercase" }}>RESELLER RIVALRY</Text>
-            <View style={{ backgroundColor: "rgba(255,60,60,0.25)", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 }}>
-              <Text style={{ color: "#ff6b6b", fontSize: 9, fontWeight: "900", letterSpacing: 0.8 }}>● LIVE</Text>
+            <View style={{ backgroundColor: "rgba(130,200,255,0.18)", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1 }}>
+              <Text style={{ color: "#82c8ff", fontSize: 9, fontWeight: "900", letterSpacing: 0.8 }}>RECENT ACTIVITY</Text>
             </View>
           </View>
           <Text style={{ color: "rgba(255,255,255,0.75)", fontSize: 13, fontWeight: "600" }}>
             <Text style={{ color: "#82c8ff", fontWeight: "800" }}>{rivalryCount} other {rivalryCount === 1 ? "user" : "users"}</Text> scanned this in the last 2 hours.
-          </Text>
-          <Text style={{ color: "rgba(130,200,255,0.4)", fontSize: 11, marginTop: 4 }}>
-            Flipper #{Math.abs(rivalryCount * 37 + 12)} · Flipper #{Math.abs(rivalryCount * 19 + 44)} {rivalryCount > 2 ? `· +${rivalryCount - 2} more` : ""}
           </Text>
         </View>
       </View>
@@ -16594,7 +16591,7 @@ safeOpenUrl(_openUrl, activeResult.itemName || "Listing" );
             Evan AI (Free)
           </Text>
           <Text style={{ marginTop: 8, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 }}>
-            • {FREE_SCAN_LIMIT_SAFE} scans / 30 days
+            • {FREE_SCAN_LIMIT_SAFE} scans / day
           </Text>
           <Text style={{ marginTop: 6, color: "rgba(255,255,255,0.72)", fontWeight: "800", fontSize: 12 }}>
             • Watch automation

@@ -94,7 +94,7 @@ interface Feature {
 
 const FEATURES: Feature[] = [
   { label: "Scans",                go: "\u2713  Boosted daily limit", plus: "\u2713  Unlimited"            },
-  { label: "Verified Comps",       go: "\u2713  Included",           plus: "\u2713  Priority"              },
+  { label: "Market Comps",         go: "\u2713  Included",           plus: "\u2713  Priority"              },
   { label: "Deal Alerts",          go: "\u2713  Instant",            plus: "\u2713  Early access"          },
   { label: "Comp Coverage",        go: "\u2713  Expanded",           plus: "\u2713  Full"                  },
   { label: "Trend Signals",        go: "\u2713  Rising / Falling",   plus: "\u2713  Real-time"             },

@@ -68,7 +68,7 @@ const STAGES: Stage[] = [
   {
     num: "02", label: "DATA HARVESTING", icon: "git-network-outline",
     std:  { title: "Retail API",             sub: "Amazon · Target MSRP only",                                   tag: "~3 SOURCES"    },
-    evan: { title: "Multi-Market Sweep",     sub: "eBay Completed · Etsy · niche forums · local classifieds",    tag: "12+ SOURCES"   },
+    evan: { title: "Market Signal Sweep",    sub: "Marketplace comps · pricing signals · resale context",       tag: "MULTI-SIGNAL"  },
   },
   {
     num: "03", label: "RANKING LOGIC", icon: "analytics-outline",
