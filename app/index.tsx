@@ -312,11 +312,10 @@ const API_BASE = __DEV__ ? DEV_API_BASE : PROD_API_BASE;
 const SAFE_API_BASE = API_BASE;
 // In production, never guess bases. Only use PROD_API_BASE.
 
-const API_BASE_CANDIDATES = __DEV__
-  ? [
-      DEV_API_BASE,
-    ]
-  : [PROD_API_BASE];
+// Single source of truth for scan/market wiring — same resolver as guest
+// identity and scan status (utils/apiBase). EXPO_PUBLIC_API_URL wins even in
+// dev; remove it from .env to develop against a LAN server.
+const API_BASE_CANDIDATES = [getApiBase()];
 
 const smoothConfidence = (c) => {
   if (c >= 0.92) return Math.min(0.98, c);
@@ -5611,7 +5610,11 @@ const res = await fetch(`${base}${cleanEp}`, {
   method: "POST",
   body: form,
   signal,
-  headers: effectiveUid ? { "x-user-id": effectiveUid } : {},
+  headers: _authJwt
+    ? { Authorization: `Bearer ${_authJwt}` }
+    : effectiveUid
+    ? { "x-user-id": effectiveUid }
+    : {},
 });
 
         lastStatus = res.status;
