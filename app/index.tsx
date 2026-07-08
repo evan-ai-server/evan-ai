@@ -7591,6 +7591,23 @@ useEffect(() => {
   useEffect(() => {
     if (isPro && !isSignedIn) setIsSignedIn(true);
   }, [isPro, isSignedIn]);
+
+  // Phase B1A: RevenueCat app_user_id must match the backend userId so the
+  // server-side entitlement webhook (POST /api/webhooks/revenuecat) can
+  // attach purchase events to the right auth-user record. Without this,
+  // RevenueCat stays identified with the local device id set at mount (see
+  // the boot effect above) even after sign-in, and every webhook event
+  // safely no-ops with "user_not_found" instead of granting Hunter/Pro
+  // server-side. Fires once per isSignedIn/userId transition (covers both
+  // session-restore and fresh login/register, which both set these two
+  // together) — not on every render. Client isPro is still never trusted;
+  // this only aligns the id RevenueCat reports events under.
+  useEffect(() => {
+    if (isSignedIn && userId) {
+      identifyUser(userId);
+    }
+  }, [isSignedIn, userId]);
+
   // Persist whenever these change
   useEffect(() => {
     (async () => {
