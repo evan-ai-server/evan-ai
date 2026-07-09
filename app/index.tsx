@@ -5552,6 +5552,11 @@ if (cached && isFresh(cached)) {
     if (itemHint && itemHint.trim()) {
       form.append("itemHint", sanitizeHint(itemHint));
     }
+    // scanId is sent for backend usage-limit idempotency — derived from
+    // cacheKey (photo content hash + scanMode, already computed above for
+    // the vision cache), so any retry/re-view of the SAME photo always
+    // sends the SAME scanId. Nothing is stored, so nothing can go stale.
+    if (cacheKey) form.append("scanId", String(cacheKey).slice(0, 128));
 
 const uploadName = preparedUri.split("/").pop() || "scan.jpg";
 
