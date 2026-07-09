@@ -2114,6 +2114,30 @@ RNAnimated.parallel([
 const [isPro, setIsPro] = useState(false);
 const [scansUsed, setScansUsed] = useState(0);
 const [hydrated, setHydrated] = useState(false); // Tier 1: gates Pro-sensitive chrome until AsyncStorage resolves
+
+// Phase B3: backend daily/weekly usage status — the backend is the source
+// of truth (see /api/usage/status). Local scansUsed above stays as the
+// pre-B2 fallback for when this hasn't loaded yet; it is not removed.
+type BackendUsageWindow = { used: number; limit: number | null; remaining: number | null; resetAt: string | null };
+const [backendUsageStatus, setBackendUsageStatus] = useState<{
+  loading: boolean;
+  loaded: boolean;
+  error: string | null;
+  plan: "free" | "hunter" | "pro" | "internal" | null;
+  canScan: boolean | null;
+  reason: string | null;
+  daily: BackendUsageWindow | null;
+  weekly: BackendUsageWindow | null;
+}>({
+  loading: false,
+  loaded: false,
+  error: null,
+  plan: null,
+  canScan: null,
+  reason: null,
+  daily: null,
+  weekly: null,
+});
 const [bonusScans, setBonusScans] = useState<number>(0);
 const [guestId, setGuestId] = useState<string | null>(null);
 const [scanResetAt, setScanResetAt] = useState<string | null>(null); // ISO string from server
@@ -3955,12 +3979,18 @@ const upgradeIntel = useUpgradeIntelligence({
 // -------------------------
 // ✅ Profile status label (prevents runtime crash)
 // -------------------------
-const statusLabel =
-  isPro
-    ? "Pro active · Unlimited scans"
-    : isSignedIn
-    ? `${Math.max(0, FREE_SCAN_LIMIT_SAFE - scansUsed)} free scans left`
-    : "Guest · Sign in to unlock features";
+// Phase B3: prefer real backend daily/weekly counts once loaded; fall
+// back to the exact pre-B3 local logic otherwise (unauthenticated, or
+// before the first /api/usage/status response lands).
+const statusLabel = !backendUsageStatus.loaded
+  ? (isPro
+      ? "Pro active · Unlimited scans"
+      : isSignedIn
+      ? `${Math.max(0, FREE_SCAN_LIMIT_SAFE - scansUsed)} free scans left`
+      : "Guest · Sign in to unlock features")
+  : backendUsageStatus.plan === "internal" || backendUsageStatus.daily?.limit == null
+  ? "Unlimited scans"
+  : `${backendUsageStatus.daily.remaining ?? 0} ${backendUsageStatus.plan === "free" ? "free " : ""}scans left today · ${backendUsageStatus.weekly?.remaining ?? 0} this week`;
   // Animations
   const snapScale = useRef(new RNAnimated.Value(1)).current;
   const snapDepth = useRef(new RNAnimated.Value(0)).current;
@@ -5083,6 +5113,46 @@ const consumeFreeScan = (origin: string) => {
   } catch {}
 };
 
+// Phase B3: fetch the backend's daily/weekly usage status — the source
+// of truth (see /api/usage/status). No client plan/isPro is ever sent;
+// this is a pure read using the trusted JWT. Safe to call unauthenticated
+// (no-ops) and safe to call repeatedly (never throws into the caller).
+const fetchUsageStatus = async () => {
+  if (!_authJwt) {
+    setBackendUsageStatus((prev) => ({
+      ...prev, loading: false, loaded: false, error: null,
+      plan: null, canScan: null, reason: null, daily: null, weekly: null,
+    }));
+    return;
+  }
+  setBackendUsageStatus((prev) => ({ ...prev, loading: true }));
+  try {
+    const apiBase = getApiBase();
+    // abortAfter, not AbortSignal.timeout — the latter is not reliably
+    // available on Hermes (see resetScanLimitOnly's comment / the
+    // AskAIDrawer-AutoListingDrawer fix this codebase already had to make).
+    const res = await fetch(`${apiBase}/api/usage/status`, {
+      headers: { Authorization: `Bearer ${_authJwt}` },
+      signal: abortAfter(5000),
+    });
+    const data: any = await res.json().catch(() => null);
+    if (data?.ok) {
+      setBackendUsageStatus({
+        loading: false, loaded: true, error: null,
+        plan: data.plan ?? null,
+        canScan: data.canScan ?? null,
+        reason: data.reason ?? null,
+        daily: data.daily ?? null,
+        weekly: data.weekly ?? null,
+      });
+    } else {
+      setBackendUsageStatus((prev) => ({ ...prev, loading: false, error: "unavailable" }));
+    }
+  } catch {
+    setBackendUsageStatus((prev) => ({ ...prev, loading: false, error: "unavailable" }));
+  }
+};
+
 const takePhoto = async () => {
 
   // HARD GUARD: prevents double-tap duplication + freezes
@@ -5623,6 +5693,27 @@ const res = await fetch(`${base}${cleanEp}`, {
 });
 
         lastStatus = res.status;
+
+        // Phase B3: backend usage-limit/idempotency rejections are
+        // definitive answers, not "try another API base" failures — retrying
+        // against a different base would never change an account-level
+        // block. Parse and return immediately instead of falling into the
+        // generic continue-on-!ok path below, which silently discards the
+        // response body (and with it daily/weekly/reason) entirely.
+        if (res.status === 429 || res.status === 503 || res.status === 409) {
+          let usageData: any = null;
+          try { usageData = await res.json(); } catch {}
+          return {
+            query: null, variants: [], confidence: 0, visionIdentity: null,
+            _lastStatus: res.status,
+            usageBlocked: true,
+            usageError: usageData?.error || null,
+            usageReason: usageData?.reason || null,
+            usagePlan: usageData?.plan || null,
+            usageDaily: usageData?.daily || null,
+            usageWeekly: usageData?.weekly || null,
+          };
+        }
 
         if (!res.ok) continue;
 
@@ -7610,6 +7701,9 @@ useEffect(() => {
   useEffect(() => {
     if (isSignedIn && userId) {
       identifyUser(userId);
+      // Phase B3: same transition (session-restore or fresh login/register)
+      // is also the right moment to load real backend usage status.
+      fetchUsageStatus();
     }
   }, [isSignedIn, userId]);
 
@@ -8920,6 +9014,11 @@ const visionResults = await Promise.all(
   })
 );
 
+// Phase B3: refresh backend usage status after every scan attempt
+// (fire-and-forget, no-ops if unauthenticated) — keeps the daily/weekly
+// remaining display current without blocking the scan flow.
+fetchUsageStatus();
+
 // ✅ CRITICAL FIX:
 // cancel the vision-only timeout immediately after vision returns.
 // otherwise the shared controller can abort the scan during /market/search.
@@ -9053,6 +9152,46 @@ devLog("RUNSCAN VISION QUERY →", visionQuery);
 devLog("RUNSCAN VISION CONFIDENCE →", visionConfidence);
 
 if (!visionQuery || !String(visionQuery).trim()) {
+  // Phase B3: backend usage-limit/idempotency rejection — a definitive
+  // server response, not an ambiguous vision failure, so it's checked
+  // first. Backend is the source of truth here; the local
+  // isFreeLimitReached gate elsewhere is only a fast pre-check.
+  const _usageBlocked = visionResults.find((v: any) => v?.usageBlocked === true);
+  if (_usageBlocked) {
+    if (_usageBlocked.usageDaily || _usageBlocked.usageWeekly) {
+      setBackendUsageStatus((prev) => ({
+        ...prev,
+        loaded: true,
+        error: null,
+        plan: _usageBlocked.usagePlan ?? prev.plan,
+        canScan: _usageBlocked.usageError === "usage_limit_reached" ? false : prev.canScan,
+        reason: _usageBlocked.usageReason ?? null,
+        daily: _usageBlocked.usageDaily ?? prev.daily,
+        weekly: _usageBlocked.usageWeekly ?? prev.weekly,
+      }));
+    }
+
+    if (_usageBlocked.usageError === "usage_limit_reached") {
+      bailScanForPaywall(_usageBlocked.usageReason === "weekly_limit" ? "usage_weekly_limit" : "usage_daily_limit");
+      return;
+    }
+
+    // idempotency_conflict or usage_check_unavailable — not a real limit,
+    // do not open the paywall.
+    setResults([]);
+    setActiveResult(null);
+    setSavedToast(
+      _usageBlocked.usageError === "idempotency_conflict"
+        ? "Couldn't confirm this scan — please rescan."
+        : "Usage check temporarily unavailable — please try again."
+    );
+    stopLoadingSafely(reqId);
+    forceReleaseScanLocks("usage_" + (_usageBlocked.usageError || "blocked"));
+    setPriceSubmitted(false);
+    goTab("results");
+    return;
+  }
+
   // Phase V3.4: model-circuit-open fail-safe — vision is temporarily unavailable
   // (the model breaker is open). Show a clean retry state and STOP: do NOT
   // long-poll /api/vision/background-result (nothing is coming), do NOT retry
