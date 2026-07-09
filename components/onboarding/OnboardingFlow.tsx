@@ -9,10 +9,12 @@ import {
   Animated as RNAnimated,
   Dimensions,
   Easing,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import Animated, {
@@ -29,6 +31,7 @@ import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Linking } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C, R, SP, TY, MO, SH } from "../design/DS";
 import { useSpatialZone } from "../spatial/SpatialContext";
@@ -70,9 +73,17 @@ interface QuestionDef {
   hapticLevel: "light" | "medium";
 }
 
+export interface AuthResult {
+  ok: boolean;
+  /** Error code from performOnboardingAuth — mapped to copy locally. */
+  error?: string;
+}
+
 interface OnboardingFlowProps {
   cameraPermissionGranted: boolean;
   onComplete: (answers: SurveyAnswers, goTutorial: boolean) => void;
+  /** Shared with the AUTH MODAL in app/index.tsx — same endpoints, same token storage. */
+  onAuthenticate: (email: string, password: string, mode: "register" | "login") => Promise<AuthResult>;
 }
 
 // ─── Survey questions ─────────────────────────────────────────────────────────
@@ -148,7 +159,16 @@ const QUESTIONS: QuestionDef[] = [
   },
 ];
 
-const TOTAL_SCREENS = 7; // 0=Entry, 1–5=Questions, 6=Final
+// 0=Entry, 1-5=Questions, 6=Email, 7=Password, 8=Final
+const EMAIL_SCREEN_INDEX = 6;
+const PASSWORD_SCREEN_INDEX = 7;
+const TOTAL_SCREENS = 9;
+
+// Same rule as the AUTH MODAL in app/index.tsx (authEmail validation).
+const isValidEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+// Same minimum as the AUTH MODAL's password step ("at least 6 characters") —
+// kept identical so the two entry points enforce one product rule, not two.
+const isValidPassword = (v: string) => v.length >= 6;
 
 // ─── Specular edge (animated top highlight on glass cards) ────────────────────
 
@@ -277,9 +297,10 @@ interface GlowBtnProps {
   label: string;
   onPress: () => void;
   fullWidth?: boolean;
+  disabled?: boolean;
 }
 
-function GlowBtn({ label, onPress, fullWidth }: GlowBtnProps) {
+function GlowBtn({ label, onPress, fullWidth, disabled }: GlowBtnProps) {
   const scale    = useSharedValue(1);
   const glowPulse = useSharedValue(0.4);
 
@@ -301,11 +322,12 @@ function GlowBtn({ label, onPress, fullWidth }: GlowBtnProps) {
 
   return (
     <Pressable
-      onPressIn={()  => { scale.value = withSpring(0.96, MO.spring.snappy); }}
-      onPressOut={() => { scale.value = withSpring(1.0,  MO.spring.bouncy); }}
+      disabled={disabled}
+      onPressIn={()  => { if (!disabled) scale.value = withSpring(0.96, MO.spring.snappy); }}
+      onPressOut={() => { if (!disabled) scale.value = withSpring(1.0,  MO.spring.bouncy); }}
       onPress={onPress}
     >
-      <Animated.View style={[s.glowBtn, fullWidth && s.glowBtnFull, btnStyle]}>
+      <Animated.View style={[s.glowBtn, fullWidth && s.glowBtnFull, disabled && s.glowBtnDisabled, btnStyle]}>
         <Text style={s.glowBtnText}>{label}</Text>
       </Animated.View>
     </Pressable>
@@ -362,6 +384,136 @@ function EntryScreen({ onContinue }: { onContinue: () => void }) {
         <GlowBtn label="Continue" onPress={onContinue} fullWidth />
       </View>
     </View>
+  );
+}
+
+// ─── Email screen ─────────────────────────────────────────────────────────────
+
+interface EmailScreenProps {
+  email: string;
+  onChangeEmail: (v: string) => void;
+  error: string;
+  onContinue: () => void;
+}
+
+function EmailScreen({ email, onChangeEmail, error, onContinue }: EmailScreenProps) {
+  return (
+    <KeyboardAvoidingView behavior={IOS ? "padding" : undefined} style={{ flex: 1 }}>
+      <View style={s.entryWrap}>
+        <View style={s.entryGlowOrb} pointerEvents="none" />
+
+        <View style={[s.glassCard, s.entryCard]}>
+          <View style={[StyleSheet.absoluteFillObject, { overflow: "hidden", borderRadius: R.xxl }]} pointerEvents="none">
+            <ShimmerBar />
+          </View>
+          <SpecularEdge />
+
+          <Text style={s.eyebrow}>ONE LAST STEP</Text>
+          <Text style={s.entryTitle}>What's your{"\n"}email?</Text>
+          <Text style={s.entrySub}>
+            We'll save your scans and keep your account in sync.
+          </Text>
+
+          <View style={{ marginTop: SP.lg }}>
+            <TextInput
+              value={email}
+              onChangeText={onChangeEmail}
+              placeholder="you@example.com"
+              placeholderTextColor="rgba(255,255,255,0.28)"
+              style={s.authFieldInput}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="email"
+              returnKeyType="next"
+              onSubmitEditing={onContinue}
+            />
+          </View>
+
+          {error ? <Text style={s.authFieldError}>{error}</Text> : null}
+        </View>
+
+        <View style={s.entryCta}>
+          <GlowBtn label="Continue" onPress={onContinue} fullWidth disabled={!isValidEmail(email)} />
+        </View>
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+// ─── Password screen ──────────────────────────────────────────────────────────
+
+interface PasswordScreenProps {
+  email: string;
+  password: string;
+  onChangePassword: (v: string) => void;
+  pwVisible: boolean;
+  onTogglePwVisible: () => void;
+  mode: "register" | "login";
+  onSwitchMode: (mode: "register" | "login") => void;
+  error: string;
+  sending: boolean;
+  onSubmit: () => void;
+}
+
+function PasswordScreen({
+  email, password, onChangePassword, pwVisible, onTogglePwVisible,
+  mode, onSwitchMode, error, sending, onSubmit,
+}: PasswordScreenProps) {
+  const isRegister = mode === "register";
+  return (
+    <KeyboardAvoidingView behavior={IOS ? "padding" : undefined} style={{ flex: 1 }}>
+      <View style={s.entryWrap}>
+        <View style={s.entryGlowOrb} pointerEvents="none" />
+
+        <View style={[s.glassCard, s.entryCard]}>
+          <View style={[StyleSheet.absoluteFillObject, { overflow: "hidden", borderRadius: R.xxl }]} pointerEvents="none">
+            <ShimmerBar />
+          </View>
+          <SpecularEdge />
+
+          <Text style={s.eyebrow}>{isRegister ? "CREATE A PASSWORD" : "WELCOME BACK"}</Text>
+          <Text style={s.entryTitle}>{isRegister ? "Secure your\naccount." : "Sign in as\nyou."}</Text>
+          <Text style={s.entrySub} numberOfLines={2}>
+            {isRegister ? `Creating an account for ${email}` : `Signing in as ${email}`}
+          </Text>
+
+          <View style={{ marginTop: SP.lg, position: "relative" }}>
+            <TextInput
+              value={password}
+              onChangeText={onChangePassword}
+              placeholder={isRegister ? "At least 6 characters" : "Password"}
+              placeholderTextColor="rgba(255,255,255,0.28)"
+              style={[s.authFieldInput, { paddingRight: 48 }]}
+              secureTextEntry={!pwVisible}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="done"
+              onSubmitEditing={onSubmit}
+            />
+            <Pressable onPress={onTogglePwVisible} style={s.eyeToggle} hitSlop={10}>
+              <Ionicons name={pwVisible ? "eye-off-outline" : "eye-outline"} size={18} color="rgba(255,255,255,0.4)" />
+            </Pressable>
+          </View>
+
+          {error ? <Text style={s.authFieldError}>{error}</Text> : null}
+        </View>
+
+        <View style={s.entryCta}>
+          <GlowBtn
+            label={sending ? (isRegister ? "Creating…" : "Signing in…") : (isRegister ? "Create account" : "Sign in")}
+            onPress={onSubmit}
+            fullWidth
+            disabled={sending || !isValidPassword(password)}
+          />
+          {/* Auth mode toggle only — never navigates between onboarding screens. */}
+          <GhostBtn
+            label={isRegister ? "Already have an account? Sign in" : "New here? Create account"}
+            onPress={() => onSwitchMode(isRegister ? "login" : "register")}
+          />
+        </View>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -448,7 +600,7 @@ function FinalScreen({ onStartScanning, onExploreTutorial, cameraGranted, onRequ
 
 // ─── OnboardingFlow (root orchestrator) ──────────────────────────────────────
 
-export function OnboardingFlow({ cameraPermissionGranted, onComplete }: OnboardingFlowProps) {
+export function OnboardingFlow({ cameraPermissionGranted, onComplete, onAuthenticate }: OnboardingFlowProps) {
   const insets = useSafeAreaInsets();
   const { triggerWarp } = useSpatialZone();
 
@@ -461,6 +613,14 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
   const [screenIndex, setScreenIndex] = useState(0);
   const [answers, setAnswers] = useState<Partial<SurveyAnswers>>({});
   const isTransitioning = useRef(false);
+
+  // ── Account step state (Email + Password screens) ─────────────────────────
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [pwVisible, setPwVisible] = useState(false);
+  const [authMode, setAuthMode] = useState<"register" | "login">("register");
+  const [authError, setAuthError] = useState("");
+  const [authSending, setAuthSending] = useState(false);
 
   // ── Transition animations (RNAnimated for reliability) ────────────────────
   const contentOpacity = useRef(new RNAnimated.Value(0)).current;
@@ -613,9 +773,87 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
   const handleSkip = useCallback(() => {
     if (!isTransitioning.current) {
       Haptics.selectionAsync().catch(() => {});
-      navigateTo(TOTAL_SCREENS - 1, "fwd");
+      // Skips the 5 survey questions only — email/password are mandatory
+      // (signed-out users can't scan; see the runScan gate in app/index.tsx).
+      navigateTo(EMAIL_SCREEN_INDEX, "fwd");
     }
   }, [navigateTo]);
+
+  // ── Account step handlers ──────────────────────────────────────────────────
+  // Auth.1C: NO effect may auto-navigate away from EMAIL_SCREEN_INDEX or
+  // PASSWORD_SCREEN_INDEX — not on isSignedIn, not on hasAccountSession,
+  // not on a timer. The account step is mandatory whenever onboarding
+  // reaches it; the only way off either screen is handleEmailContinue or
+  // handlePasswordSubmit below, both fired from an explicit button press.
+  // Root cause of the prior auto-skip: this effect used to call
+  // navigateTo(TOTAL_SCREENS - 1, ...) whenever hasAccountSession flipped
+  // true (e.g. the async boot-time JWT restore resolving ~1s after mount
+  // on a device with a leftover session from earlier testing). Because
+  // navigateTo() queues any call that lands mid-transition and fires it
+  // moments later, that queued jump could land right after an unrelated
+  // tap (like the mode-toggle text button below), making it look like the
+  // button itself skipped a slide even though its handler never navigates.
+  // Deleting the effect removes that navigateTo call at its source.
+  // If a real session should skip onboarding entirely, that has to be
+  // decided before the survey ever mounts (see showSurvey in
+  // app/index.tsx), not by yanking a screen out from under a visible user.
+  useEffect(() => {
+    if (__DEV__) console.log("[AUTH_STEP]", { screenIndex, action: "render" });
+  }, [screenIndex]);
+
+  // Clear any stale error once the user leaves the account steps.
+  useEffect(() => {
+    if (screenIndex !== EMAIL_SCREEN_INDEX && screenIndex !== PASSWORD_SCREEN_INDEX) {
+      setAuthError("");
+    }
+  }, [screenIndex]);
+
+  // Only path off the email screen — fired exclusively by the Continue
+  // button's onPress and the TextInput's onSubmitEditing (both wired to
+  // this same function below), never by an effect.
+  const handleEmailContinue = useCallback(() => {
+    if (!isValidEmail(email)) {
+      setAuthError("Enter a valid email.");
+      return;
+    }
+    setAuthError("");
+    if (__DEV__) console.log("[AUTH_STEP]", { action: "email_continue" });
+    navigateTo(PASSWORD_SCREEN_INDEX, "fwd");
+  }, [email, navigateTo]);
+
+  // Only path off the password screen — fired exclusively by the
+  // Create account/Sign in button's onPress and the TextInput's
+  // onSubmitEditing. Only navigates (to Final) when onAuthenticate
+  // resolves ok:true; every failure path stays on this screen.
+  const handlePasswordSubmit = useCallback(async () => {
+    if (authSending) return;
+    if (!isValidPassword(password)) {
+      setAuthError("Password must be at least 6 characters.");
+      return;
+    }
+    setAuthSending(true);
+    setAuthError("");
+    Haptics.selectionAsync().catch(() => {});
+    const result = await onAuthenticate(email.trim(), password, authMode);
+    if (result.ok) {
+      // Security rule: never keep the password in state once it's done its job.
+      setPassword("");
+      setAuthSending(false);
+      navigateTo(TOTAL_SCREENS - 1, "fwd");
+      return;
+    }
+    setAuthSending(false);
+    if (result.error === "email_taken") {
+      setAuthError("That email is already registered. Sign in instead.");
+      setAuthMode("login");
+    } else if (result.error === "invalid_credentials") {
+      setAuthError("Wrong password. New here? Create an account below.");
+    } else if (result.error === "network_error") {
+      setAuthError("Network error — check your connection.");
+    } else {
+      setAuthError(authMode === "register" ? "Couldn't create your account. Try again." : "Couldn't sign in. Try again.");
+    }
+  }, [authSending, password, email, authMode, onAuthenticate, navigateTo]);
 
   // ── Completion ─────────────────────────────────────────────────────────────
   const handleComplete = useCallback((goTutorial: boolean) => {
@@ -653,7 +891,8 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
     : null;
 
   const showBack = screenIndex > 0 && screenIndex < TOTAL_SCREENS - 1;
-  const showSkip = screenIndex < TOTAL_SCREENS - 1;
+  // Skip only applies to the 5 survey questions — email/password are mandatory.
+  const showSkip = screenIndex < EMAIL_SCREEN_INDEX;
   const showProgress = screenIndex >= 1 && screenIndex <= 5;
 
   return (
@@ -723,6 +962,36 @@ export function OnboardingFlow({ cameraPermissionGranted, onComplete }: Onboardi
             question={currentQuestion}
             answers={answers}
             onAnswer={handleAnswer}
+          />
+        )}
+
+        {screenIndex === EMAIL_SCREEN_INDEX && (
+          <EmailScreen
+            email={email}
+            onChangeEmail={(v) => { setEmail(v); setAuthError(""); }}
+            error={authError}
+            onContinue={handleEmailContinue}
+          />
+        )}
+
+        {screenIndex === PASSWORD_SCREEN_INDEX && (
+          <PasswordScreen
+            email={email}
+            password={password}
+            onChangePassword={(v) => { setPassword(v); setAuthError(""); }}
+            pwVisible={pwVisible}
+            onTogglePwVisible={() => setPwVisible((v) => !v)}
+            mode={authMode}
+            onSwitchMode={(m) => {
+              // Auth mode toggle only — never navigates between onboarding screens.
+              if (__DEV__) console.log("[AUTH_STEP]", { action: "auth_mode_toggle", mode: m });
+              setAuthMode(m);
+              setAuthError("");
+              setPassword("");
+            }}
+            error={authError}
+            sending={authSending}
+            onSubmit={handlePasswordSubmit}
           />
         )}
 
@@ -887,6 +1156,32 @@ const s = StyleSheet.create({
   },
   entryCta: {
     paddingHorizontal: 0,
+    gap: SP.sm,
+  },
+
+  // ── Email / Password screens ───────────────────────────────────────────────
+  authFieldInput: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: C.borderMid,
+    borderRadius: R.lg,
+    paddingHorizontal: SP.lg,
+    paddingVertical: 14,
+    color: C.text,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  authFieldError: {
+    ...TY.label,
+    color: C.danger,
+    marginTop: SP.sm,
+  },
+  eyeToggle: {
+    position: "absolute",
+    right: 14,
+    top: 0,
+    bottom: 0,
+    justifyContent: "center",
   },
 
   // ── Question screen ────────────────────────────────────────────────────────
@@ -958,6 +1253,9 @@ const s = StyleSheet.create({
   },
   glowBtnFull: {
     alignSelf: "stretch",
+  },
+  glowBtnDisabled: {
+    opacity: 0.4,
   },
   glowBtnText: {
     ...TY.h2,

@@ -3466,6 +3466,13 @@ const [propContext, _setPropContext] = useState("");
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   // Login placeholder
   const [isSignedIn, setIsSignedIn] = useState(false);
+  // Auth.1B fix: isSignedIn can be true from legacy/Pro-healed local state
+  // with no real backend session (see "Heal old saved state" effect below,
+  // and the persisted-blob restore that does setIsSignedIn(!!parsed?.isSignedIn)
+  // regardless of JWT validity). hasAccountSession is the strict signal —
+  // true only when a real JWT was just issued/restored — and is what the
+  // onboarding skip-check and every scan gate must use instead.
+  const [hasAccountSession, setHasAccountSession] = useState(false);
 // ===============================
 // REFERRAL STATE
 // ===============================
@@ -5083,6 +5090,84 @@ const bailScanForPaywall = (origin: string) => {
   });
 };
 
+// Hard gate for signed-out scanning — same shape as bailScanForPaywall,
+// used by every scan-entry point (shutter, camera roll, "Use Photo",
+// runScan). A signed-out user must register/sign in before a scan can
+// start; this aborts any in-flight work and opens the existing auth
+// modal instead of the paywall.
+const bailScanForAuth = (origin: string) => {
+  try { scanAbortRef.current?.abort(); } catch {}
+  scanAbortRef.current = null;
+  scanLockRef.current = false;
+  try { setIsCapturing(false); } catch {}
+  try { setLoadingResults(false); } catch {}
+  try { setShowRetryWhileLoading(false); } catch {}
+  try { setLoadingPhotoUri(null); } catch {}
+  try { scanSessionRef.current = null; } catch {}
+  try { trackEvent?.("scan_blocked_signed_out", { origin }); } catch {}
+  try { triggerHaptic("error"); } catch {}
+  setSavedToast("Sign in to scan");
+  setAuthModalOpen(true);
+};
+
+// Intro survey's email/password steps call this — mirrors the AUTH MODAL's
+// register/login onPress further below (same endpoints, same token
+// storage, same guest-flip migration) so a fresh install's first sign-in
+// and the Profile tab's sign-in share identical backend contracts.
+// Returns an error CODE (not display copy) so OnboardingFlow owns its
+// own strings.
+const performOnboardingAuth = async (
+  email: string,
+  password: string,
+  mode: "register" | "login"
+): Promise<{ ok: boolean; error?: string }> => {
+  try {
+    const endpoint = mode === "register" ? "/api/auth/register" : "/api/auth/login";
+    const res = await fetch(
+      `${API_URL.replace(/\/+$/, "")}${endpoint}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) }
+    );
+    const data: any = await res.json();
+    if (!res.ok) {
+      if (data?.error === "email_taken") return { ok: false, error: "email_taken" };
+      if (data?.error === "invalid_credentials") return { ok: false, error: "invalid_credentials" };
+      return { ok: false, error: data?.error || "unknown" };
+    }
+
+    _authJwt = data.token;
+    await AsyncStorage.setItem("evan_jwt_v1", data.token);
+    if (data.userId) setUserId(data.userId);
+    setIsSignedIn(true);
+    setHasAccountSession(true);
+
+    // ── Data bridge: guest → user (same contract as the AUTH MODAL) ──────
+    if (data.userId && data.token) {
+      if (mode === "register" && plFlips.length > 0) {
+        setSavedToast("Syncing your intelligence…");
+        [...plFlips].reverse().forEach((flip) => syncFlipToServer(flip, data.userId));
+      } else if (mode === "login") {
+        fetch(`${API_URL.replace(/\/+$/, "")}/api/pl/flips/${data.userId}`, {
+          headers: { "Authorization": `Bearer ${data.token}` },
+        }).then((r) => r.json()).then((d) => {
+          if (Array.isArray(d?.flips) && d.flips.length) {
+            setPlFlips((prev: PLFlip[]) => {
+              const existingIds = new Set(prev.map((f) => f.id));
+              const fresh = d.flips.filter((f: any) => !existingIds.has(f.id));
+              if (!fresh.length) return prev;
+              return [...fresh, ...prev].sort(
+                (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
+              );
+            });
+          }
+        }).catch(() => {});
+      }
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "network_error" };
+  }
+};
+
 // Charge one free scan. Used by every non-runScan code path that talks
 // to the AI/market endpoints directly (receipt analyzer, inline batch
 // processor, BatchScanScreen). Bumps the client counter immediately so
@@ -5177,6 +5262,16 @@ const takePhoto = async () => {
     if (isShutterStep && stepIdx + 1 < I_STEPS.length) {
       goToITutStep(stepIdx + 1);
     }
+    return;
+  }
+
+  // Signed-out users cannot scan — must register/sign in first. Checked
+  // before the paywall gate since it's the more fundamental blocker. Same
+  // gate is re-checked in handleUsePhoto and runScan so no later async
+  // path can bypass it. hasAccountSession (not isSignedIn) — isSignedIn
+  // can be true from legacy/Pro-healed local state with no real JWT.
+  if (!hasAccountSession) {
+    bailScanForAuth("shutter");
     return;
   }
 
@@ -6500,6 +6595,7 @@ if (intelRaw) {
             if (payload.exp && payload.exp > nowSec) {
               _authJwt = jwt;
               setIsSignedIn(true);
+              setHasAccountSession(true);
               if (payload.sub) {
                 setUserId(payload.sub);
                 _clientId = payload.sub;
@@ -6535,6 +6631,7 @@ if (intelRaw) {
       setHistory([]);
       setWatchlist([]);
       setIsSignedIn(false);
+      setHasAccountSession(false);
       setSavingsTotal(0);
       setActiveResult(null);
       setLastScan(null);
@@ -7902,6 +7999,10 @@ const goTab = (next) => {
 
   // Camera roll picker
   const pickFromRoll = async () => {
+    if (!hasAccountSession) {
+      bailScanForAuth("camera_roll");
+      return;
+    }
     if (isFreeLimitReached) {
       bailScanForPaywall("camera_roll");
       return;
@@ -8773,6 +8874,13 @@ const runScan = async ({
   internalRetry?: boolean;
 }) => {
   if (!internalRetry && !canTriggerScan()) {
+    return;
+  }
+
+  // Final safety net — catches retries, offline-queue replay, and any other
+  // direct runScan caller that bypassed the shutter/Use Photo gates above.
+  if (!hasAccountSession) {
+    bailScanForAuth("runscan_guard");
     return;
   }
 
@@ -11148,6 +11256,10 @@ useEffect(() => {
     // cheapestAltInput is optional (input removed from UI) — pass null when absent
     const cheapestAltRaw = toNumber(cheapestAltInput);
     const cheapestAlt = Number.isFinite(cheapestAltRaw) && cheapestAltRaw > 0 ? cheapestAltRaw : null;
+    if (!hasAccountSession) {
+      bailScanForAuth("use_photo");
+      return;
+    }
     if (isFreeLimitReached) {
       bailScanForPaywall("use_photo");
       return;
@@ -13342,6 +13454,7 @@ style={{
     <OnboardingFlow
       cameraPermissionGranted={permission?.granted ?? false}
       onComplete={handleSurveyComplete}
+      onAuthenticate={performOnboardingAuth}
     />
   </View>
 ) : null}
@@ -15343,6 +15456,7 @@ pointerEvents={tab === "watchlist" && tabInteractable ? "auto" : "none"}
         hapticSelect();
         if (isSignedIn) {
           setIsSignedIn(false);
+          setHasAccountSession(false);
           _authJwt = null;
           AsyncStorage.removeItem("evan_jwt_v1").catch(() => {});
           // NOTE: isPro is NOT cleared on sign-out — subscription is tied to
@@ -17877,6 +17991,7 @@ const pick = await ImagePicker.launchImageLibraryAsync({
                 await AsyncStorage.setItem("evan_jwt_v1", data.token);
                 if (data.userId) setUserId(data.userId);
                 setIsSignedIn(true);
+                setHasAccountSession(true);
 
                 // ── Data bridge: guest → user ───────────────────────────────
                 if (data.userId && data.token) {
