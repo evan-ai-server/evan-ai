@@ -8680,7 +8680,6 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
         const _d = await _res.json();
         if (_d?.ready && _d?.query && _d?.marketReady !== false && isReqAlive(callerReqId)) {
           try { console.log("CLIENT_BACKGROUND_RECOVERY_READY", { scanId, query: _d.query, needsFamilyRecovery: _d.needsFamilyRecovery || false }); } catch {}
-          setSavedToast("Found it after deeper scan.");
           const _bgCtrl = new AbortController();
           try { console.log("CLIENT_BACKGROUND_RECOVERY_MARKET_STARTED", { scanId, query: _d.query, needsFamilyRecovery: _d.needsFamilyRecovery || false }); } catch {}
           const _bgData = await searchMarketStream(
@@ -8703,6 +8702,9 @@ const _startBackgroundRecoveryPoll = (callerReqId: number, scanId: string | null
           );
           const _bgItems = _bgData?.items || [];
           if (_bgItems.length && isReqAlive(callerReqId)) {
+            // ready:true guarantees identity, not listings — claim "found" only
+            // beside an actually surfaced result (P0 2026-07-10 false toast).
+            setSavedToast("Found it after deeper scan.");
             setResults(_bgItems);
             goTab("results");
           } else if (isReqAlive(callerReqId)) {
